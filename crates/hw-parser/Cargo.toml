@@ -6,3 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+regex = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+hw-testdata = { path = "../hw-testdata" }

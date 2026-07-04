@@ -1,0 +1,2 @@
+Bus 001 Device 004: ID 0bda:5689 Realtek Semiconductor Corp. Integrated Camera
+Bus 001 Device 005: ID 8087:0aaa Intel Corp. Bluetooth 9460/9560 Jefferson Peak (JfP)

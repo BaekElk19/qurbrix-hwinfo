@@ -1,0 +1,8 @@
+00:1f.3 Audio device [0403]: Intel Corporation Cannon Lake PCH cAVS [8086:a348] (rev 10)
+	Subsystem: Lenovo Device [17aa:2292]
+	Kernel driver in use: snd_hda_intel
+	Kernel modules: snd_hda_intel, snd_soc_avs
+02:00.0 Network controller [0280]: Intel Corporation Wireless-AC 9560 [8086:a370]
+	Subsystem: Intel Corporation Device [8086:0034]
+	Kernel driver in use: iwlwifi
+	Kernel modules: iwlwifi
