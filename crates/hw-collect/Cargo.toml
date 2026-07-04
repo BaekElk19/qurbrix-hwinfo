@@ -9,4 +9,8 @@ publish.workspace = true
 anyhow = { workspace = true }
 hw-model = { path = "../hw-model" }
 hw-probe = { path = "../hw-probe" }
+hw-source = { path = "../hw-source" }
 tokio = { workspace = true }
+
+[dev-dependencies]
+hw-source = { path = "../hw-source" }

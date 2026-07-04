@@ -184,6 +184,7 @@ dependencies = [
  "anyhow",
  "hw-model",
  "hw-probe",
+ "hw-source",
  "tokio",
 ]
 
