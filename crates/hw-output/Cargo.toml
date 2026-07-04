@@ -1,5 +1,5 @@
 [package]
-name = "hw-collect"
+name = "hw-output"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -8,5 +8,5 @@ publish.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 hw-model = { path = "../hw-model" }
-hw-probe = { path = "../hw-probe" }
-tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

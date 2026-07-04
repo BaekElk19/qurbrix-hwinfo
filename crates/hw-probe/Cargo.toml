@@ -1,5 +1,5 @@
 [package]
-name = "hw-collect"
+name = "hw-probe"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -7,6 +7,8 @@ publish.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 hw-model = { path = "../hw-model" }
-hw-probe = { path = "../hw-probe" }
-tokio = { workspace = true }
+hw-parser = { path = "../hw-parser" }
+hw-source = { path = "../hw-source" }
+serde = { workspace = true }

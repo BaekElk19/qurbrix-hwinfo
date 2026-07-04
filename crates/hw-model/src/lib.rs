@@ -506,3 +506,47 @@ impl ComponentInfo for MonitorInfo {
         format!("monitor|{key}")
     }
 }
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanReport {
+    pub schema_version: String,
+}
+
+impl ScanReport {
+    pub fn empty() -> Self {
+        Self {
+            schema_version: "qurbrix.hw.scan.v1".to_string(),
+        }
+    }
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemInfo {
+    pub schema_version: String,
+    pub cpus: Vec<CpuInfo>,
+    pub memory: Vec<MemoryInfo>,
+    pub storage: Vec<StorageInfo>,
+    pub gpus: Vec<GpuInfo>,
+    pub network: Vec<NetInfo>,
+    pub bios: Option<BiosInfo>,
+    pub board: Option<BiosInfo>,
+    pub battery: Vec<String>,
+}
+
+impl SystemInfo {
+    pub fn empty() -> Self {
+        Self {
+            schema_version: "qurbrix.hw.scan.v1".to_string(),
+            cpus: Vec::new(),
+            memory: Vec::new(),
+            storage: Vec::new(),
+            gpus: Vec::new(),
+            network: Vec::new(),
+            bios: None,
+            board: None,
+            battery: Vec::new(),
+        }
+    }
+}
