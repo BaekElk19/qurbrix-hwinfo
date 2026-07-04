@@ -1,0 +1,2 @@
+device for Office_Printer: ipp://printer.local/ipp/print
+device for PDF: cups-pdf:/

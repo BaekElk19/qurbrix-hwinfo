@@ -1,6 +1,20 @@
+pub mod audio;
+pub mod bluetooth;
+pub mod cdrom;
+pub mod input;
 pub mod pci;
+pub mod power;
+pub mod printer;
 pub mod usb;
 pub mod util;
+pub mod video;
 
+pub use audio::*;
+pub use bluetooth::*;
+pub use cdrom::*;
+pub use input::*;
 pub use pci::*;
+pub use power::*;
+pub use printer::*;
 pub use usb::*;
+pub use video::*;
