@@ -1,13 +1,27 @@
+pub mod audio;
+pub mod battery;
+pub mod bluetooth;
+pub mod camera;
+pub mod cdrom;
 pub mod context;
+pub mod input;
 pub mod other;
 pub mod pci;
+pub mod printer;
 pub mod result;
 pub mod traits;
 pub mod usb;
 
+pub use audio::*;
+pub use battery::*;
+pub use bluetooth::*;
+pub use camera::*;
+pub use cdrom::*;
 pub use context::*;
+pub use input::*;
 pub use other::*;
 pub use pci::*;
+pub use printer::*;
 pub use result::*;
 pub use traits::*;
 pub use usb::*;
