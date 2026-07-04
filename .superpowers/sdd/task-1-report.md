@@ -39,3 +39,11 @@ Implemented Task 1 in `/home/qur/Desktop/20260704_qurbrix-hw/qurbrix-hwinfo/.cla
 
 ## Commit
 Pending at report creation time; commit will use message `chore: scaffold scanner workspace` with the requested co-author trailer.
+
+
+## Review Fix: Align Task 1 Scaffold with New Model
+- Replaced `crates/hw-model/src/lib.rs` with the Task 1 temporary model only: `ScanReport { schema_version: String }` and `ScanReport::empty()`.
+- Removed old compatibility placeholders from `crates/hw-collect/src/lib.rs`, leaving only `collect_scan_report`.
+- Removed `zbus = "4"` from root workspace dependencies.
+- Converted legacy crates not part of the Task 1 skeleton (`hw-api`, `hw-parser`, `hw-source`, `hw-merge`, `hw-store`) to harmless minimal placeholder crates so the workspace builds without restoring old model/source APIs.
+- Test results after fix: `cargo test --test facade_exports` passed; `cargo check --workspace` passed.
