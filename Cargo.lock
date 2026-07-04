@@ -228,6 +228,11 @@ dependencies = [
 [[package]]
 name = "hw-source"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "tokio",
+]
 
 [[package]]
 name = "hw-store"
