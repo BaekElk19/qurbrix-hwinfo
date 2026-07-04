@@ -12,3 +12,4 @@ hw-model = { path = "../hw-model" }
 hw-parser = { path = "../hw-parser" }
 hw-source = { path = "../hw-source" }
 serde = { workspace = true }
+tokio = { workspace = true }

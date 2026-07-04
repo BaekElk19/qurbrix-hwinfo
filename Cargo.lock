@@ -228,6 +228,7 @@ dependencies = [
  "hw-parser",
  "hw-source",
  "serde",
+ "tokio",
 ]
 
 [[package]]
