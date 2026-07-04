@@ -1,0 +1,15 @@
+[package]
+name = "hw-api"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+zbus = { workspace = true }
+hw-model = { path = "../hw-model" }
+hw-collect = { path = "../hw-collect" }
+
+[dev-dependencies]
+insta = { workspace = true }

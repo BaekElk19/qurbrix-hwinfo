@@ -1,0 +1,12 @@
+[package]
+name = "hw-source"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+hw-model = { path = "../hw-model" }

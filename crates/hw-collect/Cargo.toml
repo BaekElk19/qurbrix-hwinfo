@@ -1,0 +1,16 @@
+[package]
+name = "hw-collect"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+hw-model = { path = "../hw-model" }
+hw-source = { path = "../hw-source" }
+hw-parser = { path = "../hw-parser" }
+hw-merge = { path = "../hw-merge" }
+serde_json = { workspace = true }

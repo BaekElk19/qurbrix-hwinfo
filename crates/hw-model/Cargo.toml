@@ -1,0 +1,8 @@
+[package]
+name = "hw-model"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

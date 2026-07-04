@@ -1,0 +1,10 @@
+[package]
+name = "hw-merge"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+regex = "1.0"
+hw-model = { path = "../hw-model" }
