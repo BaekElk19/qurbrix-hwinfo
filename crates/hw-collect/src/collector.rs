@@ -2,8 +2,9 @@ use crate::{merge::dedup_devices, status::status_from_warnings};
 use anyhow::Result;
 use hw_model::{ScanConfig, ScanReport};
 use hw_probe::{
-    AudioProbe, BatteryProbe, BluetoothProbe, CameraProbe, CdromProbe, CpuProbe, InputProbe,
-    NetworkProbe, PciProbe, PrinterProbe, Probe, ProbeContext, StorageProbe, UsbProbe,
+    AudioProbe, BatteryProbe, BiosProbe, BluetoothProbe, CameraProbe, CdromProbe, CpuProbe,
+    GpuProbe, InputProbe, MemoryProbe, MonitorProbe, NetworkProbe, PciProbe, PrinterProbe, Probe,
+    ProbeContext, StorageProbe, UsbProbe,
 };
 use hw_source::{RealSourceRunner, SourceRunner};
 
@@ -21,6 +22,10 @@ pub async fn collect_scan_report_with_runner(
         Box::new(PciProbe),
         Box::new(UsbProbe),
         Box::new(CpuProbe),
+        Box::new(MemoryProbe),
+        Box::new(BiosProbe),
+        Box::new(GpuProbe),
+        Box::new(MonitorProbe),
         Box::new(StorageProbe),
         Box::new(NetworkProbe),
         Box::new(AudioProbe),
