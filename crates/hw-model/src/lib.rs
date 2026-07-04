@@ -1,14 +1,17 @@
-use serde::{Deserialize, Serialize};
+pub mod bus;
+pub mod device;
+pub mod driver;
+pub mod evidence;
+pub mod id;
+pub mod kind;
+pub mod properties;
+pub mod report;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScanReport {
-    pub schema_version: String,
-}
-
-impl ScanReport {
-    pub fn empty() -> Self {
-        Self {
-            schema_version: "qurbrix.hw.scan.v1".to_string(),
-        }
-    }
-}
+pub use bus::*;
+pub use device::*;
+pub use driver::*;
+pub use evidence::*;
+pub use id as device_id;
+pub use kind::*;
+pub use properties::*;
+pub use report::*;
