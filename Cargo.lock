@@ -387,11 +387,15 @@ name = "qurbrix-hw"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
+ "hw-cli",
  "hw-collect",
  "hw-model",
  "hw-output",
  "serde",
  "serde_json",
+ "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
