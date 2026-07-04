@@ -217,6 +217,7 @@ dependencies = [
  "hw-testdata",
  "regex",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

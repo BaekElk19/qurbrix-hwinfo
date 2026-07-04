@@ -2,8 +2,8 @@ use crate::{merge::dedup_devices, status::status_from_warnings};
 use anyhow::Result;
 use hw_model::{ScanConfig, ScanReport};
 use hw_probe::{
-    AudioProbe, BatteryProbe, BluetoothProbe, CameraProbe, CdromProbe, InputProbe, PciProbe,
-    PrinterProbe, Probe, ProbeContext, UsbProbe,
+    AudioProbe, BatteryProbe, BluetoothProbe, CameraProbe, CdromProbe, CpuProbe, InputProbe,
+    NetworkProbe, PciProbe, PrinterProbe, Probe, ProbeContext, StorageProbe, UsbProbe,
 };
 use hw_source::{RealSourceRunner, SourceRunner};
 
@@ -20,6 +20,9 @@ pub async fn collect_scan_report_with_runner(
     let probes: Vec<Box<dyn Probe>> = vec![
         Box::new(PciProbe),
         Box::new(UsbProbe),
+        Box::new(CpuProbe),
+        Box::new(StorageProbe),
+        Box::new(NetworkProbe),
         Box::new(AudioProbe),
         Box::new(BluetoothProbe),
         Box::new(InputProbe),
