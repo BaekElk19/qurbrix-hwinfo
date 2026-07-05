@@ -78,3 +78,27 @@ async fn collector_can_omit_sources_and_warnings_from_report() {
         .iter()
         .all(|device| device.sources.is_empty()));
 }
+
+#[tokio::test]
+async fn default_scan_reports_unconsumed_pci_as_other_pci() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lspci",
+        ["-nn", "-k"],
+        "00:02.0 VGA compatible controller [0300]: AMD Radeon Graphics [1002:1638]\n\tKernel driver in use: amdgpu\n\
+         00:1f.3 Audio device [0403]: Intel Corporation HD Audio [8086:a348]\n\tKernel driver in use: snd_hda_intel\n",
+    );
+
+    let report = collect_scan_report_with_runner(&runner, ScanConfig::default())
+        .await
+        .unwrap();
+
+    assert!(report.devices.iter().any(|d| d.kind == DeviceKind::Gpu));
+    assert!(report
+        .devices
+        .iter()
+        .any(|d| d.kind == DeviceKind::OtherPci));
+    assert!(!report
+        .devices
+        .iter()
+        .any(|d| d.kind == DeviceKind::Pci && d.id == "pci:0000:00:1f.3"));
+}

@@ -1,9 +1,9 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, BiosInfo, BusInfo, CpuInfo, Device, DeviceKind, DeviceProperties, DriverInfo,
-    DriverStatus, GpuInfo, MemoryInfo, MonitorInfo, MotherboardInfo, NetworkInfo, SourceEvidence,
-    SourceKind, SourceStatus, StorageInfo,
+    device_id, BiosInfo, BusInfo, CpuInfo, Device, DeviceKind, DeviceProperties, DeviceRef,
+    DriverInfo, DriverStatus, GpuInfo, MemoryInfo, MonitorInfo, MotherboardInfo, NetworkInfo,
+    SourceEvidence, SourceKind, SourceStatus, StorageInfo,
 };
 use hw_parser::{
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_gpu_lspci, parse_ip_j_link,
@@ -314,9 +314,11 @@ impl Probe for GpuProbe {
         if !result.is_success() {
             return ProbeResult::source_failure(self.name(), &result);
         }
-        let devices = parse_gpu_lspci(&result.stdout)
-            .into_iter()
-            .map(|gpu| {
+        let mut probe_result = ProbeResult::default();
+        for gpu in parse_gpu_lspci(&result.stdout) {
+            let pci_id = device_id::pci(&gpu.address);
+            probe_result.consumed.push(DeviceRef { id: pci_id });
+            probe_result.devices.push(
                 Device::new(
                     device_id::other("gpu:pci", &gpu.address),
                     DeviceKind::Gpu,
@@ -346,10 +348,10 @@ impl Probe for GpuProbe {
                     kind: SourceKind::Command,
                     status: SourceStatus::Success,
                     summary: None,
-                })
-            })
-            .collect();
-        ProbeResult::with_devices(devices)
+                }),
+            );
+        }
+        probe_result
     }
 }
 
