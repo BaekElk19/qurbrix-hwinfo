@@ -1,0 +1,8 @@
+# source: synthetic lscpu sample, redacted: yes
+Architecture:            loongarch64
+CPU(s):                  32
+Vendor ID:               Loongson
+Model name:              Loongson-3A5000
+Core(s) per socket:      16
+Socket(s):               1
+Flags:                   cpucfg lam ual fpu lsx lasx

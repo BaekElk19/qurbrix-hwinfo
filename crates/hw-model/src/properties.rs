@@ -61,6 +61,7 @@ pub struct CpuInfo {
     pub sockets: Option<u32>,
     pub max_freq_mhz: Option<u32>,
     pub min_freq_mhz: Option<u32>,
+    pub current_freq_mhz: Option<u32>,
     pub flags: Vec<String>,
 }
 
@@ -88,6 +89,7 @@ pub struct StorageInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct GpuInfo {
+    pub vendor: Option<String>,
     pub memory_bytes: Option<u64>,
     pub current_resolution: Option<String>,
     pub max_resolution: Option<String>,
@@ -99,6 +101,17 @@ pub struct MonitorInfo {
     pub resolution: Option<String>,
     pub size_mm: Option<(u32, u32)>,
     pub production_date: Option<String>,
+    pub manufacturer: Option<String>,
+    pub manufacturer_name: Option<String>,
+    pub product: Option<String>,
+    pub product_code: Option<u16>,
+    pub serial: Option<String>,
+    pub manufactured_year: Option<u16>,
+    pub manufactured_week: Option<u8>,
+    pub size_cm: Option<(u8, u8)>,
+    pub preferred_width: Option<u16>,
+    pub preferred_height: Option<u16>,
+    pub preferred_refresh_hz: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

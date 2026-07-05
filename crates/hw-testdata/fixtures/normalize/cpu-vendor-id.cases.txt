@@ -1,0 +1,6 @@
+GenuineIntel	Intel
+AuthenticAMD	AMD
+HygonGenuine	Hygon
+CentaurHauls	Zhaoxin
+Shanghai	Zhaoxin
+UnknownVendor Corp	<none>

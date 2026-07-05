@@ -44,3 +44,39 @@ impl SourceResult {
         self.error_kind.is_none() && self.exit_status == Some(0)
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceBytesResult {
+    pub source: String,
+    pub bytes: Vec<u8>,
+    pub stderr: String,
+    pub error_kind: Option<SourceErrorKind>,
+}
+
+impl SourceBytesResult {
+    pub fn success(source: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            source: source.into(),
+            bytes: bytes.into(),
+            stderr: String::new(),
+            error_kind: None,
+        }
+    }
+
+    pub fn error(
+        source: impl Into<String>,
+        kind: SourceErrorKind,
+        stderr: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            bytes: Vec::new(),
+            stderr: stderr.into(),
+            error_kind: Some(kind),
+        }
+    }
+
+    pub fn is_success(&self) -> bool {
+        self.error_kind.is_none()
+    }
+}

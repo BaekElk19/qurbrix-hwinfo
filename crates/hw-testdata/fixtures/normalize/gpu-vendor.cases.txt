@@ -1,0 +1,16 @@
+NVIDIA Corporation	NVIDIA
+Advanced Micro Devices, Inc. [AMD/ATI]	AMD
+Intel Corporation	Intel
+Matrox Electronics Systems Ltd.	Matrox
+ASPEED Technology, Inc.	ASPEED
+VMware SVGA II Adapter	VMware
+Red Hat, Inc. Virtio GPU	VirtIO
+Loongson Technology	Loongson
+Jingjia Micro Electronics	Jingjia Micro
+JJM GPU	Jingjia Micro
+Zhaoxin	Zhaoxin
+Moore Threads Technology	Moore Threads
+MThreads S80	Moore Threads
+Innosilicon Fantasy	Innosilicon
+Wuhan Digital Engineering Institute	WDE
+Unknown GPU Vendor	<none>

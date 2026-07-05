@@ -1,0 +1,12 @@
+Loongson-3A5000	Loongson
+Phytium D2000/8	Phytium
+Kunpeng 920	HiSilicon
+HiSilicon Kirin 9006C	HiSilicon
+Huawei Taishan	HiSilicon
+Zhaoxin KaiXian KX-6640MA	Zhaoxin
+Hygon C86 7185	Hygon
+Sunway SW1621	Sunway
+Intel Core i7	Intel
+AMD Ryzen 7	AMD
+ARM Cortex-A72	ARM
+Mystery CPU	<none>

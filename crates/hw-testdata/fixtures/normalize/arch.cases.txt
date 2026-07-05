@@ -1,0 +1,13 @@
+x86_64	x86_64
+amd64	x86_64
+i386	i386
+i686	i386
+aarch64	aarch64
+arm64	aarch64
+loongarch64	loongarch64
+loongarch	loongarch64
+sw_64	sw_64
+mips64	mips64
+mips64el	mips64
+riscv64	riscv64
+unknown-arch	<none>

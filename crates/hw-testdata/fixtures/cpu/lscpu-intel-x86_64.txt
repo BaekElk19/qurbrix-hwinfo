@@ -1,0 +1,16 @@
+# source: synthetic lscpu sample, redacted: yes
+Architecture:            x86_64
+CPU(s):                  16
+Vendor ID:               GenuineIntel
+Model name:              Intel(R) Core(TM) i7-1185G7
+CPU family:              6
+Model:                   140
+Stepping:                1
+CPU MHz:                 1800.000
+CPU max MHz:             4800.0000
+CPU min MHz:             400.0000
+BogoMIPS:                5990.40
+Virtualization:          VT-x
+Core(s) per socket:      4
+Socket(s):               1
+Flags:                   fpu vme de pse tsc msr pae mce cx8 apic sep

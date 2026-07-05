@@ -8,6 +8,12 @@ pub struct XrandrMonitorRecord {
     pub resolution: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XrandrVerboseMonitorRecord {
+    pub connector: String,
+    pub edid: Vec<u8>,
+}
+
 pub fn parse_xrandr_query(input: &str) -> Vec<XrandrMonitorRecord> {
     input
         .lines()
@@ -30,6 +36,84 @@ pub fn parse_xrandr_query(input: &str) -> Vec<XrandrMonitorRecord> {
                 primary,
                 resolution,
             })
+        })
+        .collect()
+}
+
+pub fn parse_xrandr_verbose(input: &str) -> Vec<XrandrVerboseMonitorRecord> {
+    let mut records = Vec::new();
+    let mut connector: Option<String> = None;
+    let mut edid_hex = String::new();
+    let mut in_edid = false;
+    let mut edid_valid = true;
+
+    for line in input.lines() {
+        let trimmed = line.trim();
+        let mut parts = trimmed.split_whitespace();
+        let first = parts.next();
+        let state = parts.next();
+
+        if matches!(state, Some("connected" | "disconnected")) {
+            if let Some(connector) = connector.take() {
+                let edid = hex_to_bytes(&edid_hex);
+                if edid_valid && !edid.is_empty() {
+                    records.push(XrandrVerboseMonitorRecord { connector, edid });
+                }
+            }
+
+            connector = (state == Some("connected")).then(|| first.unwrap_or_default().to_string());
+            edid_hex.clear();
+            in_edid = false;
+            edid_valid = true;
+            continue;
+        }
+
+        if trimmed == "EDID:" {
+            in_edid = true;
+            edid_hex.clear();
+            edid_valid = true;
+            continue;
+        }
+
+        if in_edid {
+            let is_indented = line
+                .chars()
+                .next()
+                .is_some_and(|value| value.is_whitespace());
+            if !is_indented
+                || trimmed.is_empty()
+                || !trimmed.chars().all(|value| value.is_ascii_hexdigit())
+            {
+                in_edid = false;
+            } else if trimmed.len() % 2 == 0 {
+                edid_hex.push_str(trimmed);
+            } else {
+                edid_valid = false;
+                in_edid = false;
+            }
+        }
+    }
+
+    if let Some(connector) = connector {
+        let edid = hex_to_bytes(&edid_hex);
+        if edid_valid && !edid.is_empty() {
+            records.push(XrandrVerboseMonitorRecord { connector, edid });
+        }
+    }
+
+    records
+}
+
+fn hex_to_bytes(hex: &str) -> Vec<u8> {
+    hex.as_bytes()
+        .chunks(2)
+        .filter_map(|pair| {
+            if pair.len() != 2 {
+                return None;
+            }
+            std::str::from_utf8(pair)
+                .ok()
+                .and_then(|value| u8::from_str_radix(value, 16).ok())
         })
         .collect()
 }

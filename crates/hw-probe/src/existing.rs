@@ -3,13 +3,17 @@ use async_trait::async_trait;
 use hw_model::{
     device_id, BiosInfo, BusInfo, CpuInfo, Device, DeviceKind, DeviceProperties, DeviceRef,
     DriverInfo, DriverStatus, GpuInfo, MemoryInfo, MonitorInfo, MotherboardInfo, NetworkInfo,
-    SourceEvidence, SourceKind, SourceStatus, StorageInfo,
+    ScanWarning, SourceEvidence, SourceKind, SourceStatus, StorageInfo,
 };
 use hw_parser::{
-    parse_dmidecode_bios_board, parse_dmidecode_memory, parse_gpu_lspci, parse_ip_j_link,
-    parse_lsblk_json, parse_lscpu, parse_size_to_bytes, parse_speed_mtps, parse_xrandr_query,
+    infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
+    normalize_cpu_vendor_id, normalize_gpu_vendor, parse_dmidecode_bios_board,
+    parse_dmidecode_memory, parse_dmidecode_processor, parse_edid, parse_gpu_lspci,
+    parse_ip_j_link, parse_lsblk_json, parse_lscpu, parse_lshw_processor, parse_size_to_bytes,
+    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
 };
 use hw_source::CommandSpec;
+use std::{collections::HashMap, path::Path};
 
 pub struct CpuProbe;
 pub struct NetworkProbe;
@@ -30,42 +34,129 @@ impl Probe for CpuProbe {
     }
 
     async fn probe(&self, ctx: &ProbeContext<'_>) -> ProbeResult {
-        let result = ctx
+        let lscpu_result = ctx
             .runner
             .run_command(
                 &CommandSpec::new("lscpu", std::iter::empty::<&str>()),
                 ctx.timeout,
             )
             .await;
-        if !result.is_success() {
-            return ProbeResult::source_failure(self.name(), &result);
-        }
-        let cpu = parse_lscpu(&result.stdout);
-        let cores = match (cpu.cores_per_socket, cpu.sockets) {
-            (Some(cores), Some(sockets)) => Some(cores * sockets),
-            _ => None,
+        let lshw_result = ctx
+            .runner
+            .run_command(
+                &CommandSpec::new("lshw", ["-class", "processor"]),
+                ctx.timeout,
+            )
+            .await;
+        let dmi_result = ctx
+            .runner
+            .run_command(&CommandSpec::new("dmidecode", ["-t", "4"]), ctx.timeout)
+            .await;
+
+        let mut warnings = Vec::new();
+        let lscpu = if lscpu_result.is_success() {
+            let record = parse_lscpu(&lscpu_result.stdout);
+            (!record.is_empty()).then_some(record)
+        } else {
+            warnings.extend(ProbeResult::source_failure(self.name(), &lscpu_result).warnings);
+            None
         };
-        let device = Device::new(
+        let lshw = if lshw_result.is_success() {
+            let record = parse_lshw_processor(&lshw_result.stdout);
+            (!record.is_empty()).then_some(record)
+        } else {
+            warnings.extend(ProbeResult::source_failure(self.name(), &lshw_result).warnings);
+            None
+        };
+        let dmi = if dmi_result.is_success() {
+            parse_dmidecode_processor(&dmi_result.stdout)
+                .into_iter()
+                .filter(|record| record.is_useful())
+                .collect()
+        } else {
+            warnings.extend(ProbeResult::source_failure(self.name(), &dmi_result).warnings);
+            Vec::new()
+        };
+        let lscpu_contributed = lscpu.is_some();
+        let lshw_contributed = lshw.is_some();
+        let dmi_contributed = !dmi.is_empty();
+        if lscpu.is_none() && lshw.is_none() && dmi.is_empty() {
+            return ProbeResult {
+                devices: Vec::new(),
+                warnings,
+                consumed: Vec::new(),
+            };
+        }
+        let lscpu_vendor = lscpu.as_ref().and_then(|record| record.vendor.clone());
+        let lshw_vendor = lshw.as_ref().and_then(|record| record.vendor.clone());
+        let merged = merge_cpu_records(lscpu, lshw, &dmi);
+        let architecture = merged
+            .architecture
+            .as_deref()
+            .and_then(normalize_arch)
+            .map(str::to_string)
+            .or_else(|| merged.architecture.clone());
+        let vendor = merged
+            .vendor
+            .as_deref()
+            .and_then(normalize_cpu_vendor_id)
+            .map(str::to_string)
+            .or_else(|| {
+                lscpu_vendor
+                    .as_deref()
+                    .and_then(normalize_cpu_vendor_id)
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                lshw_vendor
+                    .as_deref()
+                    .and_then(normalize_cpu_vendor_id)
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                merged
+                    .name
+                    .as_deref()
+                    .and_then(infer_cpu_vendor_from_name)
+                    .map(str::to_string)
+            })
+            .or_else(|| merged.vendor.clone());
+        let mut device = Device::new(
             "cpu:0",
             DeviceKind::Cpu,
-            cpu.model_name.clone().unwrap_or_else(|| "CPU".to_string()),
+            merged.name.clone().unwrap_or_else(|| "CPU".to_string()),
             DeviceProperties::Cpu(CpuInfo {
-                name: cpu.model_name,
-                vendor: cpu.vendor,
-                architecture: cpu.architecture,
-                cores,
-                threads: cpu.threads,
-                sockets: cpu.sockets,
-                ..Default::default()
+                name: merged.name,
+                vendor,
+                architecture,
+                cores: merged.cores,
+                threads: merged.threads,
+                sockets: merged.sockets,
+                max_freq_mhz: merged.max_freq_mhz,
+                min_freq_mhz: merged.min_freq_mhz,
+                current_freq_mhz: merged.current_freq_mhz,
+                flags: merged.flags,
             }),
-        )
-        .with_source(SourceEvidence {
-            source: result.source,
-            kind: SourceKind::Command,
-            status: SourceStatus::Success,
-            summary: None,
-        });
-        ProbeResult::with_devices(vec![device])
+        );
+        for (source, contributed) in [
+            (&lscpu_result, lscpu_contributed),
+            (&lshw_result, lshw_contributed),
+            (&dmi_result, dmi_contributed),
+        ] {
+            if contributed {
+                device = device.with_source(SourceEvidence {
+                    source: source.source.clone(),
+                    kind: SourceKind::Command,
+                    status: SourceStatus::Success,
+                    summary: None,
+                });
+            }
+        }
+        ProbeResult {
+            devices: vec![device],
+            warnings,
+            consumed: Vec::new(),
+        }
     }
 }
 
@@ -317,6 +408,19 @@ impl Probe for GpuProbe {
         let mut probe_result = ProbeResult::default();
         for gpu in parse_gpu_lspci(&result.stdout) {
             let pci_id = device_id::pci(&gpu.address);
+            let vendor = gpu
+                .vendor
+                .as_deref()
+                .and_then(normalize_gpu_vendor)
+                .map(str::to_string)
+                .or_else(|| {
+                    gpu.device
+                        .as_deref()
+                        .and_then(normalize_gpu_vendor)
+                        .map(str::to_string)
+                })
+                .or_else(|| gpu.vendor.clone())
+                .or_else(|| gpu.device.clone());
             probe_result.consumed.push(DeviceRef { id: pci_id });
             probe_result.devices.push(
                 Device::new(
@@ -326,7 +430,10 @@ impl Probe for GpuProbe {
                         .clone()
                         .or(gpu.vendor.clone())
                         .unwrap_or_else(|| "GPU".to_string()),
-                    DeviceProperties::Gpu(GpuInfo::default()),
+                    DeviceProperties::Gpu(GpuInfo {
+                        vendor,
+                        ..Default::default()
+                    }),
                 )
                 .with_bus(BusInfo::Pci {
                     address: gpu.address,
@@ -373,19 +480,76 @@ impl Probe for MonitorProbe {
         if !result.is_success() {
             return ProbeResult::source_failure(self.name(), &result);
         }
+        let verbose_result = ctx
+            .runner
+            .run_command(&CommandSpec::new("xrandr", ["--verbose"]), ctx.timeout)
+            .await;
+
+        let mut warnings = Vec::new();
+        let mut edids: HashMap<String, Vec<(Vec<u8>, String)>> = HashMap::new();
+        let mut sysfs_paths: HashMap<String, Vec<_>> = HashMap::new();
+        for path in ctx.runner.glob("/sys/class/drm/*/edid").await.paths {
+            let Some(connector) = normalize_sysfs_connector(&path) else {
+                continue;
+            };
+            sysfs_paths.entry(connector).or_default().push(path);
+        }
+        for (connector, paths) in sysfs_paths {
+            if paths.len() != 1 {
+                continue;
+            }
+            let path = &paths[0];
+            let bytes_result = ctx.runner.read_file_bytes(&path).await;
+            if bytes_result.is_success() {
+                edids
+                    .entry(connector)
+                    .or_default()
+                    .push((bytes_result.bytes, bytes_result.source));
+            }
+        }
+        if verbose_result.is_success() {
+            for record in parse_xrandr_verbose(&verbose_result.stdout) {
+                edids
+                    .entry(record.connector)
+                    .or_default()
+                    .insert(0, (record.edid, verbose_result.source.clone()));
+            }
+        }
+
         let devices = parse_xrandr_query(&result.stdout)
             .into_iter()
             .filter(|mon| mon.connected)
             .map(|mon| {
+                let id = device_id::other("monitor", &mon.connector);
+                let mut info = MonitorInfo {
+                    connector: Some(mon.connector.clone()),
+                    resolution: mon.resolution,
+                    ..Default::default()
+                };
+                if let Some(candidates) = edids.get(&mon.connector) {
+                    for (bytes, source) in candidates {
+                        match parse_edid(bytes) {
+                            Ok(edid) => {
+                                apply_edid(&mut info, edid);
+                                break;
+                            }
+                            Err(err) => warnings.push(
+                                ScanWarning::new(
+                                    "edid_parse_failed",
+                                    format!("monitor EDID source '{source}' failed: {err:?}"),
+                                )
+                                .with_source(source.clone())
+                                .with_device_id(id.clone()),
+                            ),
+                        }
+                    }
+                }
+
                 Device::new(
-                    device_id::other("monitor", &mon.connector),
+                    id,
                     DeviceKind::Monitor,
-                    mon.connector.clone(),
-                    DeviceProperties::Monitor(MonitorInfo {
-                        connector: Some(mon.connector),
-                        resolution: mon.resolution,
-                        ..Default::default()
-                    }),
+                    mon.connector,
+                    DeviceProperties::Monitor(info),
                 )
                 .with_source(SourceEvidence {
                     source: result.source.clone(),
@@ -395,6 +559,37 @@ impl Probe for MonitorProbe {
                 })
             })
             .collect();
-        ProbeResult::with_devices(devices)
+        ProbeResult {
+            devices,
+            warnings,
+            consumed: Vec::new(),
+        }
     }
+}
+
+fn apply_edid(info: &mut MonitorInfo, edid: hw_parser::EdidRecord) {
+    info.manufacturer = edid.manufacturer.clone();
+    info.manufacturer_name = edid
+        .manufacturer
+        .as_deref()
+        .and_then(lookup_pnp_manufacturer)
+        .map(str::to_string);
+    info.product = edid.name;
+    info.product_code = edid.product_code;
+    info.serial = edid.serial;
+    info.manufactured_year = edid.year;
+    info.manufactured_week = edid.week;
+    info.size_cm = edid.size_cm;
+    info.preferred_width = edid.preferred_mode.as_ref().map(|mode| mode.width);
+    info.preferred_height = edid.preferred_mode.as_ref().map(|mode| mode.height);
+    info.preferred_refresh_hz = edid.preferred_mode.as_ref().map(|mode| mode.refresh_hz);
+}
+
+fn normalize_sysfs_connector(path: &Path) -> Option<String> {
+    let name = path.parent()?.file_name()?.to_str()?;
+    let connector = name
+        .strip_prefix("card")
+        .and_then(|rest| rest.split_once('-').map(|(_, connector)| connector))
+        .unwrap_or(name);
+    Some(connector.replace("HDMI-A-", "HDMI-"))
 }

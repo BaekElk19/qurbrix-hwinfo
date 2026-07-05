@@ -1,0 +1,6 @@
+# source: synthetic lshw sample, redacted: yes
+  *-cpu
+       description: CPU
+       product: null
+       vendor: Phytium
+       version: Phytium D2000/8

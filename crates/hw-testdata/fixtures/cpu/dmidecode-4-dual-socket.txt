@@ -1,0 +1,22 @@
+# source: synthetic dmidecode sample, redacted: yes
+Handle 0x0041, DMI type 4, 48 bytes
+Processor Information
+        Socket Designation: CPU 0
+        Manufacturer: HiSilicon
+        Version: Kunpeng 920
+        Family: ARMv8
+        Max Speed: 2600 MHz
+        Current Speed: 2400 MHz
+        Core Count: 48
+        Thread Count: 48
+
+Handle 0x0042, DMI type 4, 48 bytes
+Processor Information
+        Socket Designation: CPU 1
+        Manufacturer: HiSilicon
+        Version: Kunpeng 920
+        Family: ARMv8
+        Max Speed: 2600 MHz
+        Current Speed: 2400 MHz
+        Core Count: 48
+        Thread Count: 48
