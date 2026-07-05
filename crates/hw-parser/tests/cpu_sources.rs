@@ -1,6 +1,6 @@
 use hw_parser::{
     merge_cpu_records, parse_dmidecode_processor, parse_lscpu, parse_lshw_processor,
-    DmidecodeCpuRecord,
+    parse_proc_cpuinfo, DmidecodeCpuRecord,
 };
 use hw_testdata::fixture;
 
@@ -25,6 +25,41 @@ fn parse_lscpu_reads_extended_cpu_fields() {
     assert_eq!(cpu.stepping.as_deref(), Some("1"));
     assert!(cpu.flags.contains(&"fpu".to_string()));
     assert_eq!(cpu.virtualization.as_deref(), Some("VT-x"));
+}
+
+#[test]
+fn parse_proc_cpuinfo_uses_hardware_and_processor_fallbacks() {
+    let cpu = parse_proc_cpuinfo(
+        "processor\t: 0\n\
+         BogoMIPS\t: 100.00\n\
+         Features\t: fp asimd evtstrm crc32\n\
+         CPU implementer\t: 0x70\n\
+         CPU architecture: 8\n\
+         CPU variant\t: 0x1\n\
+         CPU part\t: 0x660\n\
+         CPU revision\t: 2\n\
+         cpu MHz\t\t: 2300.000\n\
+         \n\
+         processor\t: 1\n\
+         BogoMIPS\t: 100.00\n\
+         Features\t: fp asimd evtstrm crc32\n\
+         CPU implementer\t: 0x70\n\
+         CPU architecture: 8\n\
+         CPU variant\t: 0x1\n\
+         CPU part\t: 0x660\n\
+         CPU revision\t: 2\n\
+         cpu MHz\t\t: 2300.000\n\
+         \n\
+         Hardware\t: Phytium D2000/8\n\
+         Processor\t: AArch64 Processor rev 2 (aarch64)\n",
+    );
+
+    assert_eq!(cpu.model_name.as_deref(), Some("Phytium D2000/8"));
+    assert_eq!(cpu.architecture.as_deref(), Some("aarch64"));
+    assert_eq!(cpu.threads, Some(2));
+    assert_eq!(cpu.cpu_mhz, Some(2300));
+    assert_eq!(cpu.bogomips.as_deref(), Some("100.00"));
+    assert_eq!(cpu.flags, vec!["fp", "asimd", "evtstrm", "crc32"]);
 }
 
 #[test]

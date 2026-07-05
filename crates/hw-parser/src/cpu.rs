@@ -83,6 +83,57 @@ pub fn parse_lscpu(input: &str) -> CpuRecord {
     record
 }
 
+pub fn parse_proc_cpuinfo(input: &str) -> CpuRecord {
+    let mut record = CpuRecord::default();
+    let mut processor_count = 0u32;
+
+    for line in input.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "model name" => assign_if_empty(&mut record.model_name, clean_value(value)),
+            "Hardware" => assign_if_empty(&mut record.model_name, clean_value(value)),
+            "Processor" => {
+                assign_if_empty(&mut record.model_name, clean_value(value));
+                assign_if_empty(&mut record.architecture, architecture_from_processor(value));
+            }
+            "vendor_id" => assign_if_empty(&mut record.vendor, clean_value(value)),
+            "processor" => {
+                if clean_value(value)
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .is_some()
+                {
+                    processor_count = processor_count.saturating_add(1);
+                }
+            }
+            "cpu MHz" => {
+                if record.cpu_mhz.is_none() {
+                    record.cpu_mhz = parse_mhz(value);
+                }
+            }
+            "BogoMIPS" | "bogomips" => assign_if_empty(&mut record.bogomips, clean_value(value)),
+            "flags" | "Features" => {
+                if record.flags.is_empty() {
+                    record.flags = value.split_whitespace().map(str::to_string).collect();
+                }
+            }
+            "CPU architecture" | "Architecture" => {
+                assign_if_empty(&mut record.architecture, proc_architecture(value));
+            }
+            _ => {}
+        }
+    }
+
+    if processor_count > 0 {
+        record.threads = Some(processor_count);
+    }
+
+    record
+}
+
 pub fn parse_lshw_processor(input: &str) -> LshwCpuRecord {
     let mut record = LshwCpuRecord::default();
     for line in input.lines() {
@@ -305,6 +356,31 @@ fn parse_mhz(value: &str) -> Option<u32> {
         .next()
         .and_then(|value| value.parse::<f32>().ok())
         .map(|value| value.round() as u32)
+}
+
+fn assign_if_empty(target: &mut Option<String>, value: Option<String>) {
+    if target.is_none() {
+        *target = value;
+    }
+}
+
+fn proc_architecture(value: &str) -> Option<String> {
+    let value = clean_value(value)?;
+    match value.as_str() {
+        "8" => Some("aarch64".to_string()),
+        _ => Some(value),
+    }
+}
+
+fn architecture_from_processor(value: &str) -> Option<String> {
+    let value_lc = value.to_ascii_lowercase();
+    if value_lc.contains("aarch64") {
+        Some("aarch64".to_string())
+    } else if value_lc.contains("x86_64") {
+        Some("x86_64".to_string())
+    } else {
+        None
+    }
 }
 
 fn clean_value(value: &str) -> Option<String> {

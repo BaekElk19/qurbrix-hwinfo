@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hw_model::{Device, DeviceKind, DeviceProperties, SourceStatus};
+use hw_model::{Device, DeviceKind, DeviceProperties, SourceKind, SourceStatus};
 use hw_probe::{CpuProbe, NetworkProbe, Probe, ProbeContext, StorageProbe};
 use hw_source::{
     CommandSpec, FakeSourceRunner, GlobResult, SourceBytesResult, SourceErrorKind, SourceResult,
@@ -264,6 +264,65 @@ async fn cpu_probe_warns_when_dmidecode_is_permission_denied() {
     );
     assert_eq!(result.devices[0].sources.len(), 1);
     assert_source_status(&result.devices[0], "lscpu", SourceStatus::Success);
+}
+
+#[tokio::test]
+async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
+    let runner = FakeSourceRunner::new().with_file(
+        "/proc/cpuinfo",
+        "processor\t: 0\n\
+         BogoMIPS\t: 100.00\n\
+         Features\t: fp asimd evtstrm crc32\n\
+         CPU implementer\t: 0x70\n\
+         CPU architecture: 8\n\
+         CPU part\t: 0x660\n\
+         CPU revision\t: 2\n\
+         cpu MHz\t\t: 2300.000\n\
+         \n\
+         processor\t: 1\n\
+         BogoMIPS\t: 100.00\n\
+         Features\t: fp asimd evtstrm crc32\n\
+         CPU implementer\t: 0x70\n\
+         CPU architecture: 8\n\
+         CPU part\t: 0x660\n\
+         CPU revision\t: 2\n\
+         cpu MHz\t\t: 2300.000\n\
+         \n\
+         Hardware\t: Phytium D2000/8\n\
+         Processor\t: AArch64 Processor rev 2 (aarch64)\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].name, "Phytium D2000/8");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    let source = result.devices[0]
+        .sources
+        .iter()
+        .find(|source| source.source == "/proc/cpuinfo")
+        .expect("expected /proc/cpuinfo source evidence");
+    assert_eq!(source.kind, SourceKind::Procfs);
+    assert_eq!(source.status, SourceStatus::Success);
+    assert_eq!(
+        warning_pairs(&result),
+        vec![
+            (Some("dmidecode -t 4"), "source_missing"),
+            (Some("lscpu"), "source_missing"),
+            (Some("lshw -class processor"), "source_missing"),
+        ]
+    );
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.name.as_deref(), Some("Phytium D2000/8"));
+            assert_eq!(cpu.vendor.as_deref(), Some("Phytium"));
+            assert_eq!(cpu.architecture.as_deref(), Some("aarch64"));
+            assert_eq!(cpu.threads, Some(2));
+            assert_eq!(cpu.current_freq_mhz, Some(2300));
+            assert_eq!(cpu.flags, vec!["fp", "asimd", "evtstrm", "crc32"]);
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]
