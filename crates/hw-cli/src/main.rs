@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use hw_cli::args::{Cli, Command, ListFormat, OutputFormat};
+use hw_cli::exit::{classify_parse_error, exit_code_for_status, ExitCode};
 use hw_model::ScanConfig;
 
 #[tokio::main]
@@ -12,7 +13,14 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => {
+            let code = classify_parse_error(&err).code();
+            err.print()?;
+            std::process::exit(code);
+        }
+    };
     match cli.command {
         Command::Scan(args) => {
             let config = ScanConfig {
@@ -49,6 +57,10 @@ async fn main() -> Result<()> {
                     let flat = hw_output::to_flat_report(&report);
                     println!("{}", serde_json::to_string(&flat.summary)?);
                 }
+            }
+            let code = exit_code_for_status(report.status);
+            if code != ExitCode::Ok {
+                std::process::exit(code.code());
             }
         }
         Command::Summary => {

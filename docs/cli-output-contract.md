@@ -8,6 +8,27 @@
 qurbrix-hw scan --format json
 ```
 
+`scan --format json` emits one flat JSON object:
+
+- `schema_version`: currently `qurbrix.hw.scan.v1`.
+- `status`: `complete`, `partial`, or `failed`.
+- `metadata`: scanner/system metadata object.
+- `summary`: `device_count`, `counts_by_kind`, and `warning_count`.
+- `devices`: array of flat device objects.
+- `warnings`: array of scan-level warnings unless `--no-warnings` is used.
+
+Each flat device object contains:
+
+- `id`, `kind`, and `name`.
+- Optional `vendor`, `model`, `serial`, `bus`, and `driver`.
+- `capabilities`, `identifiers`, `properties`, `sources`, and `warnings`.
+
+`properties` is a tagged object with `kind` and `data`. Device and source kind strings use kebab-case. Status strings use snake_case.
+
+`--format typed-json` emits the typed `ScanReport` model. `--format jsonl` emits one flat device JSON object per line. `--format summary-json` emits only the `summary` object.
+
+`--no-sources` removes source evidence from device objects. `--no-warnings` removes warning arrays from output; `status` can still be `partial` because status is computed before output filtering.
+
 ## Status
 
 - `complete`: requested scan completed without material warnings.
@@ -18,14 +39,46 @@ qurbrix-hw scan --format json
 
 ## Device kind strings
 
-Kind strings use kebab-case. Examples:
+Supported kind strings are:
 
-- `cpu`
-- `storage`
-- `audio`
-- `bluetooth`
-- `other-pci`
-- `other-device`
+```text
+system
+motherboard
+bios
+cpu
+memory
+storage
+gpu
+monitor
+network
+audio
+bluetooth
+input
+camera
+battery
+printer
+cdrom
+usb
+pci
+other-pci
+other-device
+```
+
+`qurbrix-hw list-kinds --format json` emits the same list as a JSON array.
+
+## Schema command
+
+```bash
+qurbrix-hw schema
+```
+
+emits:
+
+```json
+{"schema_version":"qurbrix.hw.scan.v1"}
+```
+
+`qurbrix-hw schema --version` emits only `qurbrix.hw.scan.v1`.
 
 ## Exit codes
 
