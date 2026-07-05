@@ -25,6 +25,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - Battery probing falls back to `/sys/class/power_supply/BAT*` when `upower --dump` cannot run.
 - Network probing falls back to `/sys/class/net/*` when `ip -j link` cannot run.
 - Storage probing falls back to `/sys/block/*` when `lsblk` cannot run.
+- USB probing falls back to `/sys/bus/usb/devices/*` when `lsusb` cannot run.
 
 Confirmed defects fixed during this audit:
 
@@ -42,6 +43,7 @@ Confirmed defects fixed during this audit:
 - `/sys/class/power_supply` fallback now preserves battery identity, capacity, energy, voltage, cycle count, and present state when UPower cannot run.
 - `/sys/class/net` fallback now preserves interface name, MAC, operstate, speed, and duplex when `ip -j link` cannot run.
 - `/sys/block` fallback now preserves storage node, model, serial identity, size, and rotational media type when `lsblk` cannot run.
+- `/sys/bus/usb/devices` fallback now preserves USB bus/device numbers, VID/PID, device class/subclass/protocol, manufacturer, product, serial, and speed when `lsusb` cannot run.
 
 ## Component Matrix
 
@@ -62,7 +64,7 @@ Confirmed defects fixed during this audit:
 | Battery | `upower --dump`, battery capacity/energy/voltage/vendor/model/serial; filters line-power devices; falls back to `/sys/class/power_supply/BAT*` for battery fields including cycle count. | UPower-based collection, Deepin-style line-power filtering, and Linux sysfs battery fallback. | No temperature fallback or vendor normalization. | P2 |
 | Printer | `lpstat -a`, optional `lpstat -v`; URI source failures warn. | CUPS queue enumeration. | No make/model/default/state/interface. | P2 |
 | CD-ROM | `/proc/sys/dev/cdrom/info`, drive names and basic capabilities. | Proc cdrom discovery. | No lshw/hwinfo/lsscsi fallback; no vendor/model/firmware/serial. | P2 |
-| USB | `lsusb`, bus/device/VID/PID/product; filters root hubs and USB hubs. | Basic USB enumeration plus Deepin/Kylin hub filtering. | No `lsusb -v`; no interface/class/speed/maxpower/serial enrichment; USB devices consumed by Bluetooth/camera/input/printer are not deduplicated. | P2 |
+| USB | `lsusb` for bus/device/VID/PID/product; falls back to `/sys/bus/usb/devices/*` for bus/device IDs, VID/PID, device class/subclass/protocol, manufacturer, product, serial, and speed when `lsusb` cannot run; filters root hubs, USB hubs, sysfs host controllers, and sysfs interface entries. | Basic USB enumeration, Linux sysfs fallback, and Deepin/Kylin hub filtering. | No `lsusb -v`; no maxpower or detailed interface descriptor enrichment; USB devices consumed by Bluetooth/camera/input/printer are not deduplicated. | P2 |
 | PCI / Other PCI | `lspci -nn -k`, class/vendor/device IDs, driver/modules; unconsumed PCI devices become `OtherPci`. | PCI class and driver extraction. | Only GPU consumes backing PCI; network/audio/storage/camera/bluetooth may duplicate as `OtherPci`; no sysfs fallback. | P1/P2 |
 
 ## Exception Handling Audit
@@ -72,11 +74,12 @@ Absorbed and preserved:
 - `hw-source` classifies command/file errors as `Missing`, `PermissionDenied`, `Timeout`, or `Failed`, and runs commands with stable English/C locale environment.
 - CPU treats `lscpu`, `lshw`, and `dmidecode` as optional and emits warnings for failed sources while still producing a CPU when any useful source exists.
 - Monitor treats `xrandr --verbose` and sysfs EDID as optional and continues after bad EDID with `edid_parse_failed` warnings.
+- USB preserves the missing/failed `lsusb` warning while still emitting devices from `/sys/bus/usb/devices/*` when usable sysfs device directories exist.
 - Fake runners and fixture tests cover missing commands, permission-denied DMI, bad EDID, ambiguous sysfs connectors, and numeric GPU vendor IDs.
 
 Still weak:
 
-- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`UsbProbe`).
+- Bluetooth, audio, camera, input, printer, and CD-ROM still have limited fallback/enrichment coverage compared with the reference projects.
 
 ## Deferred Items
 
@@ -84,7 +87,7 @@ These are not fully implemented yet and should remain tracked:
 
 - P1: add warning-on-empty-parse for additional parsers where command success does not mean usable data.
 - P1b: decide whether parsed CPU family/model/stepping/bogomips/virtualization should be exposed in `CpuInfo` or kept parser-internal.
-- P2: add network/sysfs, storage/sysfs/SMART, USB verbose/sysfs, camera/sysfs, audio codec/sysfs, Bluetooth DBus/sysfs enrichments.
+- P2: add network driver/type/wireless, storage SMART/WWN/controller, USB verbose descriptors, camera/sysfs, audio codec/sysfs, and Bluetooth DBus/sysfs enrichments.
 - P3: optional heavy display/GPU sources such as `glxinfo`, `hwinfo`, and vendor-specific tools.
 
 ## Evidence Pointers
