@@ -499,7 +499,7 @@ impl Probe for MonitorProbe {
                 continue;
             }
             let path = &paths[0];
-            let bytes_result = ctx.runner.read_file_bytes(&path).await;
+            let bytes_result = ctx.runner.read_file_bytes(path).await;
             if bytes_result.is_success() {
                 edids
                     .entry(connector)

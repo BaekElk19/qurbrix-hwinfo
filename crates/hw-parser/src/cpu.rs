@@ -223,10 +223,10 @@ impl DmidecodeCpuRecord {
     pub fn is_useful(&self) -> bool {
         self.manufacturer.is_some()
             || self.version.is_some()
-            || self.max_speed_mhz.is_some()
-            || self.current_speed_mhz.is_some()
-            || self.core_count.is_some()
-            || self.thread_count.is_some()
+            || self.max_speed_mhz.is_some_and(|value| value > 0)
+            || self.current_speed_mhz.is_some_and(|value| value > 0)
+            || self.core_count.is_some_and(|value| value > 0)
+            || self.thread_count.is_some_and(|value| value > 0)
     }
 }
 
@@ -448,6 +448,34 @@ mod tests {
                 },
                 DmidecodeCpuRecord {
                     socket_designation: Some("CPU 1".to_string()),
+                    ..Default::default()
+                },
+            ],
+        );
+
+        assert_eq!(merged.name.as_deref(), Some("Kunpeng 920"));
+        assert_eq!(merged.sockets, Some(1));
+        assert_eq!(merged.cores, Some(48));
+        assert_eq!(merged.threads, Some(48));
+    }
+
+    #[test]
+    fn merge_ignores_zero_count_dmi_records_for_socket_and_count_totals() {
+        let merged = merge_cpu_records(
+            None,
+            None,
+            &[
+                DmidecodeCpuRecord {
+                    socket_designation: Some("CPU 0".to_string()),
+                    version: Some("Kunpeng 920".to_string()),
+                    core_count: Some(48),
+                    thread_count: Some(48),
+                    ..Default::default()
+                },
+                DmidecodeCpuRecord {
+                    socket_designation: Some("CPU 1".to_string()),
+                    core_count: Some(0),
+                    thread_count: Some(0),
                     ..Default::default()
                 },
             ],
