@@ -5,7 +5,7 @@
 更新说明（2026-07-06）：本报告保留为初始差距基线。当前实现已经吸收部分当时缺口，最新状态以
 `docs/hardware-compatibility-reference-audit.md` 为准。已完成的 CPU 关键改进包括：
 `lscpu` + `lshw -class processor` + `dmidecode -t 4` 多源合并、`/proc/cpuinfo`
-`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段。
+`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段；Camera 已在 `v4l2-ctl --list-devices` 不可用时读取 `/sys/class/video4linux/video*` 基础节点。
 
 ## 1. Executive Summary
 
@@ -159,7 +159,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | 声卡 | lshw、`/proc/asound`、SoC vendor | qurbrix 有音频类别和 fixtures | SoC/国产声卡规则不足 | P1/P2 | 是 | Deepin `.../GetInfoPool.cpp:88,119`；Kylin `.../cpuinfo.py:479-483` |
 | USB 设备 | 过滤 hub/重复/无效设备，详细描述符 | `lsusb` 基础字段；`lsusb` 缺失时读 sysfs 基础字段并过滤 hub/host controller/interface entries | 无 `lsusb -v`、maxpower、详细 interface descriptor、跨类别 consumed dedup | P2 | 是 | qurbrix `crates/hw-probe/src/usb.rs` |
 | PCI 设备 | PCI 分类、驱动识别 | lspci class/vendor/device/driver | 分类消费只对部分类别；alias 不足 | P2 | 是 | qurbrix `crates/hw-probe/src/pci.rs:22-83` |
-| 摄像头 | USB/vendor 表、video source | qurbrix 有摄像头 fixtures | 厂商 alias 和 sysfs 属性可能不足 | P2 | 是 | Kylin `.../cpuinfo.py:484-491` |
+| 摄像头 | USB/vendor 表、video source | qurbrix 使用 `v4l2-ctl --list-devices`，失败时 fallback 到 `/sys/class/video4linux/video*` 基础 name/node | 厂商 alias、driver、serial、lshw/hwinfo enrichment 仍不足 | P2 | 是 | Kylin `.../cpuinfo.py:484-491`；qurbrix `crates/hw-probe/src/camera.rs` |
 | 打印机/扫描仪 | printer source | qurbrix 有 printer fixtures | 扫描仪未明确 | P3 | 部分 | Deepin `.../GetInfoPool.cpp:89` |
 | 电池/电源 | upower/dmesg/vendor alias | qurbrix 有 UPower 和 `/sys/class/power_supply/BAT*` fallback fixtures | 温度 fallback/厂商归一化待增强 | P2 | 是 | Deepin `.../GetInfoPool.cpp:105,111`；Kylin `.../cpuinfo.py:524-525` |
 | 输入设备 | `/proc/bus/input/devices` | qurbrix 有 input fixtures | 分类和 vendor alias 可增强 | P2 | 是 | Deepin `.../GetInfoPool.cpp:118`；Kylin `.../cpuinfo.py:492-503` |

@@ -6,6 +6,7 @@ use hw_model::{
 };
 use hw_parser::parse_v4l2_list_devices;
 use hw_source::CommandSpec;
+use std::path::Path;
 
 pub struct CameraProbe;
 
@@ -28,7 +29,9 @@ impl Probe for CameraProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::source_failure(self.name(), &result);
+            let mut fallback = ProbeResult::source_failure(self.name(), &result);
+            fallback.devices = probe_sysfs_cameras(ctx).await;
+            return fallback;
         }
         let devices = parse_v4l2_list_devices(&result.stdout)
             .into_iter()
@@ -54,5 +57,54 @@ impl Probe for CameraProbe {
             })
             .collect();
         ProbeResult::with_devices(devices)
+    }
+}
+
+async fn probe_sysfs_cameras(ctx: &ProbeContext<'_>) -> Vec<Device> {
+    let mut devices = Vec::new();
+    let mut paths = ctx.runner.glob("/sys/class/video4linux/video*").await.paths;
+    paths.sort();
+
+    for path in paths {
+        let Some(node_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let video_node = format!("/dev/{node_name}");
+        let name = read_sysfs_value(ctx, &path, "name")
+            .await
+            .unwrap_or_else(|| video_node.clone());
+
+        devices.push(
+            Device::new(
+                device_id::camera(&video_node),
+                DeviceKind::Camera,
+                name,
+                DeviceProperties::Camera(CameraInfo {
+                    video_node: Some(video_node),
+                    capabilities: Vec::new(),
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: path.display().to_string(),
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            }),
+        );
+    }
+
+    devices
+}
+
+async fn read_sysfs_value(ctx: &ProbeContext<'_>, path: &Path, name: &str) -> Option<String> {
+    let result = ctx.runner.read_file(&path.join(name)).await;
+    if !result.is_success() {
+        return None;
+    }
+    let value = result.stdout.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
     }
 }

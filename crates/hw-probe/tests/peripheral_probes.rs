@@ -123,6 +123,68 @@ async fn camera_probe_emits_one_device_per_physical_camera() {
 }
 
 #[tokio::test]
+async fn camera_probe_uses_sysfs_when_v4l2_ctl_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/video4linux/video*",
+            vec![
+                PathBuf::from("/sys/class/video4linux/video1"),
+                PathBuf::from("/sys/class/video4linux/video0"),
+            ],
+        )
+        .with_file("/sys/class/video4linux/video0/name", "Integrated Camera\n")
+        .with_file("/sys/class/video4linux/video1/name", "Integrated Camera\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CameraProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    assert_eq!(result.devices[0].kind, DeviceKind::Camera);
+    assert_eq!(result.devices[0].name, "Integrated Camera");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    assert_eq!(
+        result.devices[0].sources[0].source,
+        "/sys/class/video4linux/video0"
+    );
+    assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
+    assert_eq!(result.devices[0].sources[0].status, SourceStatus::Success);
+
+    let DeviceProperties::Camera(info) = &result.devices[0].properties else {
+        panic!("expected camera properties");
+    };
+    assert_eq!(info.video_node.as_deref(), Some("/dev/video0"));
+    assert!(info.capabilities.is_empty());
+    let DeviceProperties::Camera(info) = &result.devices[1].properties else {
+        panic!("expected camera properties");
+    };
+    assert_eq!(result.devices[1].name, "Integrated Camera");
+    assert_eq!(info.video_node.as_deref(), Some("/dev/video1"));
+
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some("v4l2-ctl --list-devices")
+    );
+}
+
+#[tokio::test]
+async fn camera_probe_uses_video_node_name_when_sysfs_name_is_missing() {
+    let runner = FakeSourceRunner::new().with_glob(
+        "/sys/class/video4linux/video*",
+        vec![PathBuf::from("/sys/class/video4linux/video2")],
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CameraProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].name, "/dev/video2");
+    let DeviceProperties::Camera(info) = &result.devices[0].properties else {
+        panic!("expected camera properties");
+    };
+    assert_eq!(info.video_node.as_deref(), Some("/dev/video2"));
+}
+
+#[tokio::test]
 async fn bluetooth_probe_warns_when_paired_devices_source_fails() {
     let runner = FakeSourceRunner::new().with_command(
         "hciconfig",
