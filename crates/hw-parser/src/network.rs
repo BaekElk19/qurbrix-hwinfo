@@ -9,5 +9,9 @@ pub struct IpLinkRecord {
 }
 
 pub fn parse_ip_j_link(input: &str) -> Vec<IpLinkRecord> {
-    serde_json::from_str(input).unwrap_or_default()
+    parse_ip_j_link_result(input).unwrap_or_default()
+}
+
+pub fn parse_ip_j_link_result(input: &str) -> Result<Vec<IpLinkRecord>, serde_json::Error> {
+    serde_json::from_str(input)
 }

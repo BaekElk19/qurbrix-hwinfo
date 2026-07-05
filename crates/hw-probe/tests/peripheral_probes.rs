@@ -1,7 +1,7 @@
 use hw_model::DeviceKind;
 use hw_probe::{
-    AudioProbe, BatteryProbe, CameraProbe, CdromProbe, InputProbe, PrinterProbe, Probe,
-    ProbeContext,
+    AudioProbe, BatteryProbe, BluetoothProbe, CameraProbe, CdromProbe, InputProbe, PrinterProbe,
+    Probe, ProbeContext,
 };
 use hw_source::FakeSourceRunner;
 use std::time::Duration;
@@ -57,6 +57,41 @@ async fn camera_probe_emits_one_device_per_physical_camera() {
 
     assert_eq!(result.devices.len(), 1);
     assert_eq!(result.devices[0].name, "Integrated Camera");
+}
+
+#[tokio::test]
+async fn bluetooth_probe_warns_when_paired_devices_source_fails() {
+    let runner = FakeSourceRunner::new().with_command(
+        "hciconfig",
+        ["-a"],
+        "hci0:   Type: Primary  Bus: USB\n        BD Address: AA:BB:CC:DD:EE:FF\n        UP RUNNING PSCAN\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BluetoothProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some("bluetoothctl paired-devices")
+    );
+}
+
+#[tokio::test]
+async fn printer_probe_warns_when_uri_source_fails() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lpstat",
+        ["-a"],
+        "Office accepting requests since now\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = PrinterProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("lpstat -v"));
 }
 
 #[tokio::test]

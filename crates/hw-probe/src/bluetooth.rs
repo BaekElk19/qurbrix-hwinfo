@@ -34,12 +34,14 @@ impl Probe for BluetoothProbe {
                 ctx.timeout,
             )
             .await;
+        let mut warnings = Vec::new();
         let paired_names: Vec<String> = if paired.is_success() {
             parse_bluetoothctl_paired_devices(&paired.stdout)
                 .into_iter()
                 .map(|p| p.name)
                 .collect()
         } else {
+            warnings.extend(ProbeResult::source_failure(self.name(), &paired).warnings);
             Vec::new()
         };
         let devices = parse_hciconfig(&hci.stdout)
@@ -70,6 +72,10 @@ impl Probe for BluetoothProbe {
                 })
             })
             .collect();
-        ProbeResult::with_devices(devices)
+        ProbeResult {
+            devices,
+            warnings,
+            consumed: Vec::new(),
+        }
     }
 }

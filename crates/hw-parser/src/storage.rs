@@ -18,7 +18,9 @@ pub struct LsblkDevice {
 }
 
 pub fn parse_lsblk_json(input: &str) -> Vec<LsblkDevice> {
-    serde_json::from_str::<LsblkReport>(input)
-        .map(|report| report.blockdevices)
-        .unwrap_or_default()
+    parse_lsblk_json_result(input).unwrap_or_default()
+}
+
+pub fn parse_lsblk_json_result(input: &str) -> Result<Vec<LsblkDevice>, serde_json::Error> {
+    serde_json::from_str::<LsblkReport>(input).map(|report| report.blockdevices)
 }

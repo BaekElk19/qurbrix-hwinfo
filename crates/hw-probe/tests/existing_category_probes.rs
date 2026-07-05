@@ -298,6 +298,18 @@ async fn network_probe_filters_loopback_and_common_virtual_interfaces() {
 }
 
 #[tokio::test]
+async fn network_probe_warns_when_json_output_is_malformed() {
+    let runner = FakeSourceRunner::new().with_command("ip", ["-j", "link"], "not json");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = NetworkProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "parse_failed");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("ip -j link"));
+}
+
+#[tokio::test]
 async fn storage_probe_outputs_storage_device() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",
@@ -307,4 +319,23 @@ async fn storage_probe_outputs_storage_device() {
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Storage);
+}
+
+#[tokio::test]
+async fn storage_probe_warns_when_json_output_is_malformed() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lsblk",
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN"],
+        "not json",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "parse_failed");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN")
+    );
 }

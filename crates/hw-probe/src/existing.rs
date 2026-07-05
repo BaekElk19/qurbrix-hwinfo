@@ -9,8 +9,9 @@ use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
-    parse_gpu_lspci, parse_ip_j_link, parse_lsblk_json, parse_lscpu, parse_lshw_processor,
-    parse_size_to_bytes, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
+    parse_gpu_lspci, parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu,
+    parse_lshw_processor, parse_size_to_bytes, parse_speed_mtps, parse_xrandr_query,
+    parse_xrandr_verbose,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -178,7 +179,24 @@ impl Probe for NetworkProbe {
         if !result.is_success() {
             return ProbeResult::source_failure(self.name(), &result);
         }
-        let devices = parse_ip_j_link(&result.stdout)
+        let records = match parse_ip_j_link_result(&result.stdout) {
+            Ok(records) => records,
+            Err(err) => {
+                return ProbeResult {
+                    devices: Vec::new(),
+                    warnings: vec![ScanWarning::new(
+                        "parse_failed",
+                        format!(
+                            "network source '{}' could not be parsed: {err}",
+                            result.source
+                        ),
+                    )
+                    .with_source(result.source)],
+                    consumed: Vec::new(),
+                };
+            }
+        };
+        let devices = records
             .into_iter()
             .filter(|net| !is_ignored_network_interface(&net.ifname))
             .map(|net| {
@@ -229,7 +247,24 @@ impl Probe for StorageProbe {
         if !result.is_success() {
             return ProbeResult::source_failure(self.name(), &result);
         }
-        let devices = parse_lsblk_json(&result.stdout)
+        let records = match parse_lsblk_json_result(&result.stdout) {
+            Ok(records) => records,
+            Err(err) => {
+                return ProbeResult {
+                    devices: Vec::new(),
+                    warnings: vec![ScanWarning::new(
+                        "parse_failed",
+                        format!(
+                            "storage source '{}' could not be parsed: {err}",
+                            result.source
+                        ),
+                    )
+                    .with_source(result.source)],
+                    consumed: Vec::new(),
+                };
+            }
+        };
+        let devices = records
             .into_iter()
             .filter(|dev| dev.device_type.as_deref() == Some("disk"))
             .map(|dev| {

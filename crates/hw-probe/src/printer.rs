@@ -31,9 +31,11 @@ impl Probe for PrinterProbe {
             .runner
             .run_command(&CommandSpec::new("lpstat", ["-v"]), ctx.timeout)
             .await;
+        let mut warnings = Vec::new();
         let uris = if uri_result.is_success() {
             parse_lpstat_v(&uri_result.stdout)
         } else {
+            warnings.extend(ProbeResult::source_failure(self.name(), &uri_result).warnings);
             Vec::new()
         };
         let devices = parse_lpstat_a(&status.stdout)
@@ -63,6 +65,10 @@ impl Probe for PrinterProbe {
                 })
             })
             .collect();
-        ProbeResult::with_devices(devices)
+        ProbeResult {
+            devices,
+            warnings,
+            consumed: Vec::new(),
+        }
     }
 }

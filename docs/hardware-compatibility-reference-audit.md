@@ -25,6 +25,7 @@ Confirmed defects fixed during this audit:
 - sysfs EDID read failures now produce source warnings instead of being silently ignored.
 - GPU vendor normalization now uses numeric PCI vendor IDs when text is only generic `Device`.
 - Loopback/common virtual network interfaces, UPower line-power devices, USB root hubs/hubs, empty BIOS DMI output, and duplicate UVC camera video nodes are now filtered.
+- Malformed `ip -j link` / `lsblk -J` output and failed optional Bluetooth/printer enrichment sources now produce warnings instead of silently returning incomplete data.
 
 ## Component Matrix
 
@@ -36,14 +37,14 @@ Confirmed defects fixed during this audit:
 | GPU | `lspci -nn -k` display/VGA/3D records, driver/modules, text and numeric vendor normalization. | PCI GPU parsing and domestic GPU aliases from Kylin; driver extraction from lspci. | No `lshw -C display`, `glxinfo -B`, `/sys/class/drm/card*/device`, dmesg/nvidia memory enrichment. | P2/P3 |
 | Memory | `dmidecode -t memory`, DIMM size/vendor/type/speed/slot/serial/part, filters `No Module Installed`. | Main DMI memory path from both references. | No `lshw_memory`, `/proc/meminfo`, or sysfs fallback when DMI is unavailable/permission denied. | P2 |
 | BIOS / motherboard / DMI | `dmidecode -t 0,1,2,3`, BIOS vendor/version/date and baseboard manufacturer/product/serial; empty DMI output produces `source_empty` rather than generic devices. | Core DMI BIOS/baseboard parsing and Deepin-style skip-empty behavior. | No `/sys/class/dmi/id` fallback; chassis/system/language/memory-array data not modeled. | P2 |
-| Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN`, disk-only filtering. | Basic lsblk disk enumeration. | No lshw/hwinfo/sysfs/hdparm/smartctl fusion; no WWN/firmware/SMART/temp/controller/driver enrichment; malformed JSON currently becomes empty output without warning. | P2 |
-| Network | `ip -j link`, interface/MAC/operstate; filters loopback and common virtual interfaces. | Basic network interface enumeration plus Kylin-style avoidance of non-physical interfaces. | No lshw/lspci/sysfs/NM DBus fallback; no driver/wireless/type/speed/duplex/IP enrichment; malformed JSON becomes empty output without warning. | P1 |
+| Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN`, disk-only filtering, parse failure warning. | Basic lsblk disk enumeration. | No lshw/hwinfo/sysfs/hdparm/smartctl fusion; no WWN/firmware/SMART/temp/controller/driver enrichment. | P2 |
+| Network | `ip -j link`, interface/MAC/operstate; filters loopback/common virtual interfaces; malformed JSON produces warning. | Basic network interface enumeration plus Kylin-style avoidance of non-physical interfaces. | No lshw/lspci/sysfs/NM DBus fallback; no driver/wireless/type/speed/duplex/IP enrichment. | P1 |
 | Audio | `/proc/asound/cards`, card index/name. | Deepin/Kylin use `/proc/asound` and multimedia sources; base source absorbed. | No PCI/lshw/sysfs/codec fallback; no driver/vendor/codec/subsystem. | P1/P2 |
-| Bluetooth | `hciconfig -a`, optional `bluetoothctl paired-devices`. | Deepin `hciconfig` path and lightweight paired-device enrichment. | `hciconfig` is a hard dependency; no lshw/sysfs/DBus fallback; paired-devices failure is silent. | P1/P2 |
+| Bluetooth | `hciconfig -a`, optional `bluetoothctl paired-devices`; paired source failures warn. | Deepin `hciconfig` path and lightweight paired-device enrichment. | `hciconfig` is a hard dependency; no lshw/sysfs/DBus fallback. | P1/P2 |
 | Input | `/proc/bus/input/devices`, handlers/IDs, keyboard/mouse/touchpad/touchscreen classification. | Proc input parsing and basic classification. | No lshw/hwinfo enrichment; no EV bitmask classification; `Tablet` remains unused; limited bus-specific classification. | P2 |
 | Camera | `v4l2-ctl --list-devices`, emits one device per physical camera record using the first `/dev/video*` node. | Basic video device discovery and Deepin-style physical-device deduplication. | No sysfs/lshw/hwinfo fallback; no vendor/driver/speed/serial. | P2 |
 | Battery | `upower --dump`, battery capacity/energy/voltage/vendor/model/serial; filters line-power devices. | UPower-based collection and Deepin-style line-power filtering. | No sysfs cycle/temp fallback. | P2 |
-| Printer | `lpstat -a`, optional `lpstat -v`. | CUPS queue enumeration. | No make/model/default/state/interface; `lpstat -v` failure is silent. | P2 |
+| Printer | `lpstat -a`, optional `lpstat -v`; URI source failures warn. | CUPS queue enumeration. | No make/model/default/state/interface. | P2 |
 | CD-ROM | `/proc/sys/dev/cdrom/info`, drive names and basic capabilities. | Proc cdrom discovery. | No lshw/hwinfo/lsscsi fallback; no vendor/model/firmware/serial. | P2 |
 | USB | `lsusb`, bus/device/VID/PID/product; filters root hubs and USB hubs. | Basic USB enumeration plus Deepin/Kylin hub filtering. | No `lsusb -v`; no interface/class/speed/maxpower/serial enrichment; USB devices consumed by Bluetooth/camera/input/printer are not deduplicated. | P2 |
 | PCI / Other PCI | `lspci -nn -k`, class/vendor/device IDs, driver/modules; unconsumed PCI devices become `OtherPci`. | PCI class and driver extraction. | Only GPU consumes backing PCI; network/audio/storage/camera/bluetooth may duplicate as `OtherPci`; no sysfs fallback. | P1/P2 |
@@ -59,15 +60,13 @@ Absorbed and preserved:
 
 Still weak:
 
-- Several parsers convert malformed command output to an empty device list without a warning (`ip -j link`, `lsblk -J`).
-- Optional secondary commands can fail silently (`bluetoothctl paired-devices`, `lpstat -v`).
 - Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`NetworkProbe`, `StorageProbe`, `MemoryProbe`, `BiosProbe`, `UsbProbe`, `BatteryProbe`).
 
 ## Deferred Items
 
 These are not fully implemented yet and should remain tracked:
 
-- P1: add warning-on-empty-parse for JSON/parsers where command success does not mean usable data; make optional enrichment command failures visible as warnings.
+- P1: add warning-on-empty-parse for additional parsers where command success does not mean usable data.
 - P1/P2: add `/proc/cpuinfo` fallback for CPU and `/sys/class/dmi/id` fallback for DMI.
 - P2: add network/sysfs, storage/sysfs/SMART, USB verbose/sysfs, camera/sysfs, audio codec/sysfs, Bluetooth DBus/sysfs enrichments.
 - P3: optional heavy display/GPU sources such as `glxinfo`, `hwinfo`, and vendor-specific tools.
