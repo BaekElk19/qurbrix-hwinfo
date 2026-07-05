@@ -360,6 +360,62 @@ async fn read_optional_trimmed(ctx: &ProbeContext<'_>, path: &Path) -> Option<St
         .filter(|value| !value.is_empty())
 }
 
+async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
+    let mut devices = Vec::new();
+
+    for path in ctx.runner.glob("/sys/block/*").await.paths {
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if is_ignored_block_device(name) {
+            continue;
+        }
+
+        let node = format!("/dev/{name}");
+        let model = read_optional_trimmed(ctx, &path.join("device/model")).await;
+        let serial = read_optional_trimmed(ctx, &path.join("device/serial")).await;
+        let size_bytes = read_optional_trimmed(ctx, &path.join("size"))
+            .await
+            .and_then(|sectors| sectors.parse::<u64>().ok())
+            .and_then(|sectors| sectors.checked_mul(512));
+        let media_type = read_optional_trimmed(ctx, &path.join("queue/rotational"))
+            .await
+            .and_then(|rotational| match rotational.as_str() {
+                "0" => Some("ssd".to_string()),
+                "1" => Some("hdd".to_string()),
+                _ => None,
+            });
+
+        devices.push(
+            Device::new(
+                device_id::storage(None, serial.as_deref(), &node),
+                DeviceKind::Storage,
+                model.clone().unwrap_or_else(|| node.clone()),
+                DeviceProperties::Storage(StorageInfo {
+                    device_node: Some(node),
+                    size_bytes,
+                    media_type,
+                    ..Default::default()
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: path.display().to_string(),
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            }),
+        );
+    }
+
+    devices
+}
+
+fn is_ignored_block_device(name: &str) -> bool {
+    ["loop", "ram", "zram", "dm-", "md", "sr"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
 #[async_trait]
 impl Probe for StorageProbe {
     fn name(&self) -> &'static str {
@@ -382,7 +438,9 @@ impl Probe for StorageProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::source_failure(self.name(), &result);
+            let mut fallback = ProbeResult::source_failure(self.name(), &result);
+            fallback.devices = storage_devices_from_sysfs(ctx).await;
+            return fallback;
         }
         let records = match parse_lsblk_json_result(&result.stdout) {
             Ok(records) => records,

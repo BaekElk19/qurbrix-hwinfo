@@ -468,12 +468,67 @@ async fn storage_probe_outputs_storage_device() {
 }
 
 #[tokio::test]
-async fn storage_probe_warns_when_json_output_is_malformed() {
-    let runner = FakeSourceRunner::new().with_command(
-        "lsblk",
-        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN"],
-        "not json",
+async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/block/*",
+            vec![
+                PathBuf::from("/sys/block/sda"),
+                PathBuf::from("/sys/block/loop0"),
+                PathBuf::from("/sys/block/ram0"),
+                PathBuf::from("/sys/block/sr0"),
+                PathBuf::from("/sys/block/zram0"),
+                PathBuf::from("/sys/block/dm-0"),
+                PathBuf::from("/sys/block/md0"),
+            ],
+        )
+        .with_file("/sys/block/sda/size", "2097152\n")
+        .with_file("/sys/block/sda/device/model", "Samsung SSD 980\n")
+        .with_file("/sys/block/sda/device/serial", "S12345\n")
+        .with_file("/sys/block/sda/queue/rotational", "0\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "storage:serial:S12345");
+    assert_eq!(result.devices[0].kind, DeviceKind::Storage);
+    assert_eq!(result.devices[0].name, "Samsung SSD 980");
+    assert_eq!(
+        warning_pairs(&result),
+        vec![(
+            Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN"),
+            "source_missing"
+        )]
     );
+
+    match &result.devices[0].properties {
+        DeviceProperties::Storage(storage) => {
+            assert_eq!(storage.device_node.as_deref(), Some("/dev/sda"));
+            assert_eq!(storage.size_bytes, Some(1_073_741_824));
+            assert_eq!(storage.media_type.as_deref(), Some("ssd"));
+        }
+        other => panic!("expected storage properties, got {other:?}"),
+    }
+
+    let source = result.devices[0]
+        .sources
+        .iter()
+        .find(|source| source.source == "/sys/block/sda")
+        .expect("expected /sys/block/sda source evidence");
+    assert_eq!(source.kind, SourceKind::Sysfs);
+    assert_eq!(source.status, SourceStatus::Success);
+}
+
+#[tokio::test]
+async fn storage_probe_warns_when_json_output_is_malformed() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN"],
+            "not json",
+        )
+        .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/sda")])
+        .with_file("/sys/block/sda/size", "2097152\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
 
