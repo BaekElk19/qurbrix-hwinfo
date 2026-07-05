@@ -199,7 +199,8 @@ pub fn merge_cpu_records(
             .and_then(|record| record.cpu_max_mhz)
             .or(dmi_max_speed_mhz),
         min_freq_mhz: lscpu.as_ref().and_then(|record| record.cpu_min_mhz),
-        current_freq_mhz: dmi_current_speed_mhz,
+        current_freq_mhz: dmi_current_speed_mhz
+            .or_else(|| lscpu.as_ref().and_then(|record| record.cpu_mhz)),
         flags: lscpu
             .as_ref()
             .map(|record| record.flags.clone())
@@ -431,6 +432,20 @@ mod tests {
 
         assert_eq!(merged.cores, Some(32));
         assert_eq!(merged.threads, Some(96));
+    }
+
+    #[test]
+    fn merge_uses_lscpu_current_frequency_when_dmi_current_speed_is_missing() {
+        let merged = merge_cpu_records(
+            Some(CpuRecord {
+                cpu_mhz: Some(1800),
+                ..Default::default()
+            }),
+            None,
+            &[],
+        );
+
+        assert_eq!(merged.current_freq_mhz, Some(1800));
     }
 
     #[test]

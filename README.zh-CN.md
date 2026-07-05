@@ -33,9 +33,9 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 
 - 基础信息：`lscpu`、`/proc/bus/input/devices`、`/proc/asound/cards`
 - BIOS、主板、内存插槽：`dmidecode`，通常需要 root 权限
-- 存储：`lsblk`、`udevadm`
-- 显示器/GPU：`xrandr`、`glxinfo`、`/sys/class/drm`
-- 网络：`ip`、`lspci`、`ethtool`
+- 存储：`lsblk`
+- 显示器/GPU：`xrandr`、`lspci`、`/sys/class/drm`
+- 网络：`ip`
 
 缺少部分命令时，采集器会尽量回退到可用的数据源，返回的字段可能减少。
 

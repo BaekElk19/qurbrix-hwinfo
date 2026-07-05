@@ -7,12 +7,12 @@ use hw_model::{
 };
 use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
-    normalize_cpu_vendor_id, normalize_gpu_vendor, parse_dmidecode_bios_board,
-    parse_dmidecode_memory, parse_dmidecode_processor, parse_edid, parse_gpu_lspci,
-    parse_ip_j_link, parse_lsblk_json, parse_lscpu, parse_lshw_processor, parse_size_to_bytes,
-    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
+    normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
+    parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
+    parse_gpu_lspci, parse_ip_j_link, parse_lsblk_json, parse_lscpu, parse_lshw_processor,
+    parse_size_to_bytes, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
 };
-use hw_source::CommandSpec;
+use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
 
 pub struct CpuProbe;
@@ -419,6 +419,12 @@ impl Probe for GpuProbe {
                         .and_then(normalize_gpu_vendor)
                         .map(str::to_string)
                 })
+                .or_else(|| {
+                    gpu.vendor_id
+                        .as_deref()
+                        .and_then(normalize_gpu_vendor_id)
+                        .map(str::to_string)
+                })
                 .or_else(|| gpu.vendor.clone())
                 .or_else(|| gpu.device.clone());
             probe_result.consumed.push(DeviceRef { id: pci_id });
@@ -477,9 +483,6 @@ impl Probe for MonitorProbe {
             .runner
             .run_command(&CommandSpec::new("xrandr", ["--query"]), ctx.timeout)
             .await;
-        if !result.is_success() {
-            return ProbeResult::source_failure(self.name(), &result);
-        }
         let verbose_result = ctx
             .runner
             .run_command(&CommandSpec::new("xrandr", ["--verbose"]), ctx.timeout)
@@ -505,6 +508,8 @@ impl Probe for MonitorProbe {
                     .entry(connector)
                     .or_default()
                     .push((bytes_result.bytes, bytes_result.source));
+            } else {
+                warnings.push(source_bytes_failure(self.name(), &bytes_result));
             }
         }
         if verbose_result.is_success() {
@@ -516,54 +521,128 @@ impl Probe for MonitorProbe {
             }
         }
 
-        let devices = parse_xrandr_query(&result.stdout)
-            .into_iter()
-            .filter(|mon| mon.connected)
-            .map(|mon| {
-                let id = device_id::other("monitor", &mon.connector);
-                let mut info = MonitorInfo {
-                    connector: Some(mon.connector.clone()),
-                    resolution: mon.resolution,
-                    ..Default::default()
-                };
-                if let Some(candidates) = edids.get(&mon.connector) {
-                    for (bytes, source) in candidates {
-                        match parse_edid(bytes) {
-                            Ok(edid) => {
-                                apply_edid(&mut info, edid);
-                                break;
-                            }
-                            Err(err) => warnings.push(
-                                ScanWarning::new(
-                                    "edid_parse_failed",
-                                    format!("monitor EDID source '{source}' failed: {err:?}"),
-                                )
-                                .with_source(source.clone())
-                                .with_device_id(id.clone()),
-                            ),
-                        }
-                    }
-                }
-
-                Device::new(
-                    id,
-                    DeviceKind::Monitor,
-                    mon.connector,
-                    DeviceProperties::Monitor(info),
-                )
-                .with_source(SourceEvidence {
-                    source: result.source.clone(),
-                    kind: SourceKind::Command,
-                    status: SourceStatus::Success,
-                    summary: None,
+        let mut monitors: Vec<_> = if result.is_success() {
+            parse_xrandr_query(&result.stdout)
+                .into_iter()
+                .filter(|mon| mon.connected)
+                .map(|mon| {
+                    (
+                        mon.connector,
+                        mon.resolution,
+                        result.source.clone(),
+                        SourceKind::Command,
+                        false,
+                    )
                 })
-            })
+                .collect()
+        } else {
+            warnings.extend(ProbeResult::source_failure(self.name(), &result).warnings);
+            edids
+                .keys()
+                .map(|connector| {
+                    (
+                        connector.clone(),
+                        None,
+                        result.source.clone(),
+                        SourceKind::Command,
+                        true,
+                    )
+                })
+                .collect()
+        };
+        monitors.sort_by(|left, right| left.0.cmp(&right.0));
+
+        let devices = monitors
+            .into_iter()
+            .filter_map(
+                |(connector, resolution, mut source, mut source_kind, require_edid)| {
+                    let id = device_id::other("monitor", &connector);
+                    let mut info = MonitorInfo {
+                        connector: Some(connector.clone()),
+                        resolution,
+                        ..Default::default()
+                    };
+                    let valid_edid_source = edids.get(&connector).and_then(|candidates| {
+                        apply_first_edid(&mut info, &id, candidates, &mut warnings)
+                    });
+                    if require_edid {
+                        let valid_edid_source = valid_edid_source?;
+                        source_kind = source_kind_for_monitor_edid_source(&valid_edid_source);
+                        source = valid_edid_source;
+                    }
+
+                    Some(
+                        Device::new(
+                            id,
+                            DeviceKind::Monitor,
+                            connector,
+                            DeviceProperties::Monitor(info),
+                        )
+                        .with_source(SourceEvidence {
+                            source,
+                            kind: source_kind,
+                            status: SourceStatus::Success,
+                            summary: None,
+                        }),
+                    )
+                },
+            )
             .collect();
         ProbeResult {
             devices,
             warnings,
             consumed: Vec::new(),
         }
+    }
+}
+
+fn apply_first_edid(
+    info: &mut MonitorInfo,
+    id: &str,
+    candidates: &[(Vec<u8>, String)],
+    warnings: &mut Vec<ScanWarning>,
+) -> Option<String> {
+    for (bytes, source) in candidates {
+        match parse_edid(bytes) {
+            Ok(edid) => {
+                apply_edid(info, edid);
+                return Some(source.clone());
+            }
+            Err(err) => warnings.push(
+                ScanWarning::new(
+                    "edid_parse_failed",
+                    format!("monitor EDID source '{source}' failed: {err:?}"),
+                )
+                .with_source(source.clone())
+                .with_device_id(id.to_string()),
+            ),
+        }
+    }
+    None
+}
+
+fn source_bytes_failure(probe: &str, result: &SourceBytesResult) -> ScanWarning {
+    let kind = result.error_kind.unwrap_or(SourceErrorKind::Failed);
+    let code = match kind {
+        SourceErrorKind::Missing => "source_missing",
+        SourceErrorKind::PermissionDenied => "source_permission_denied",
+        SourceErrorKind::Timeout => "source_timeout",
+        SourceErrorKind::Failed => "source_failed",
+    };
+    let detail = result.stderr.trim();
+    let message = if detail.is_empty() {
+        format!("{probe} source '{}' failed: {kind:?}", result.source)
+    } else {
+        format!("{probe} source '{}' failed: {detail}", result.source)
+    };
+    ScanWarning::new(code, message).with_source(result.source.clone())
+}
+
+fn source_kind_for_monitor_edid_source(source: &str) -> SourceKind {
+    if source.starts_with("/sys/") {
+        SourceKind::Sysfs
+    } else {
+        SourceKind::Command
     }
 }
 

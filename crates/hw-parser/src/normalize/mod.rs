@@ -5,5 +5,5 @@ pub mod pnp;
 
 pub use arch::normalize_arch;
 pub use cpu_vendor::{infer_cpu_vendor_from_name, normalize_cpu_vendor_id};
-pub use gpu_vendor::normalize_gpu_vendor;
+pub use gpu_vendor::{normalize_gpu_vendor, normalize_gpu_vendor_id};
 pub use pnp::lookup_pnp_manufacturer;

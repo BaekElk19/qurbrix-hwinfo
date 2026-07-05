@@ -1,0 +1,10 @@
+10de	NVIDIA
+1002	AMD
+8086	Intel
+102b	Matrox
+1a03	ASPEED
+15ad	VMware
+1af4	VirtIO
+0731	Jingjia Micro
+0x1002	AMD
+ffff	<none>

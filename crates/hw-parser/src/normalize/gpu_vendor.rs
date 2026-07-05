@@ -1,3 +1,22 @@
+pub fn normalize_gpu_vendor_id(vendor_id: &str) -> Option<&'static str> {
+    match vendor_id
+        .trim()
+        .trim_start_matches("0x")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "10de" => Some("NVIDIA"),
+        "1002" => Some("AMD"),
+        "8086" => Some("Intel"),
+        "102b" => Some("Matrox"),
+        "1a03" => Some("ASPEED"),
+        "15ad" => Some("VMware"),
+        "1af4" => Some("VirtIO"),
+        "0731" => Some("Jingjia Micro"),
+        _ => None,
+    }
+}
+
 pub fn normalize_gpu_vendor(vendor: &str) -> Option<&'static str> {
     let vendor = vendor.trim().to_ascii_lowercase();
 

@@ -35,9 +35,9 @@ The target platform is Linux. Collection quality depends on available commands a
 
 - Basic system data: `lscpu`, `/proc/bus/input/devices`, `/proc/asound/cards`
 - BIOS, baseboard, memory slots: `dmidecode`, usually requiring root
-- Storage: `lsblk`, `udevadm`
-- Monitor/GPU: `xrandr`, `glxinfo`, `/sys/class/drm`
-- Network: `ip`, `lspci`, `ethtool`
+- Storage: `lsblk`
+- Monitor/GPU: `xrandr`, `lspci`, `/sys/class/drm`
+- Network: `ip`
 
 When some commands are unavailable, the collector tries to fall back to other sources where possible. Returned fields may be less complete.
 

@@ -71,6 +71,25 @@ async fn gpu_probe_preserves_unknown_raw_device_description_as_vendor() {
 }
 
 #[tokio::test]
+async fn gpu_probe_normalizes_vendor_from_numeric_vendor_id_when_text_is_generic() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lspci",
+        ["-nn", "-k"],
+        "00:03.0 Display controller [0380]: Device [1002:1638]\n\tKernel driver in use: amdgpu\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let gpu_result = GpuProbe.probe(&ctx).await;
+
+    assert_eq!(gpu_result.devices[0].kind, DeviceKind::Gpu);
+    match &gpu_result.devices[0].properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.vendor.as_deref(), Some("AMD"));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn monitor_probe_uses_sysfs_edid_when_xrandr_verbose_is_missing() {
     let mut edid = vec![0u8; 128];
     edid[0..8].copy_from_slice(&[0, 255, 255, 255, 255, 255, 255, 0]);
@@ -112,6 +131,70 @@ async fn monitor_probe_uses_sysfs_edid_when_xrandr_verbose_is_missing() {
         }
         other => panic!("expected monitor properties, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn monitor_probe_uses_sysfs_edid_when_xrandr_query_is_missing() {
+    let path = PathBuf::from("/sys/class/drm/card0-HDMI-A-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_glob("/sys/class/drm/*/edid", vec![path.clone()])
+        .with_file_bytes(path.clone(), monitor_test_edid("AOC SYSFS"));
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "monitor:HDMI-1");
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("xrandr --query"));
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.connector.as_deref(), Some("HDMI-1"));
+            assert_eq!(monitor.manufacturer.as_deref(), Some("AOC"));
+            assert_eq!(monitor.product.as_deref(), Some("AOC SYSFS"));
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn monitor_probe_does_not_create_sysfs_only_device_for_empty_edid() {
+    let path = PathBuf::from("/sys/class/drm/card0-DP-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_glob("/sys/class/drm/*/edid", vec![path.clone()])
+        .with_file_bytes(path.clone(), Vec::new());
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    let mut codes = result
+        .warnings
+        .iter()
+        .map(|warning| warning.code.as_str())
+        .collect::<Vec<_>>();
+    codes.sort_unstable();
+    assert_eq!(codes, vec!["edid_parse_failed", "source_missing"]);
+}
+
+#[tokio::test]
+async fn monitor_probe_warns_when_sysfs_edid_read_fails() {
+    let path = PathBuf::from("/sys/class/drm/card0-HDMI-A-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_command("xrandr", ["--query"], "HDMI-1 connected 1920x1080+0+0\n")
+        .with_glob("/sys/class/drm/*/edid", vec![path.clone()]);
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some(path.to_str().unwrap())
+    );
 }
 
 #[tokio::test]
