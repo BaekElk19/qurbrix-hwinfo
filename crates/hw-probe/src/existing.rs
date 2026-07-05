@@ -280,31 +280,45 @@ impl Probe for NetworkProbe {
                 };
             }
         };
-        let devices = records
-            .into_iter()
-            .filter(|net| !is_ignored_network_interface(&net.ifname))
-            .map(|net| {
-                Device::new(
-                    device_id::network(net.address.as_deref(), &net.ifname),
-                    DeviceKind::Network,
-                    net.ifname.clone(),
-                    DeviceProperties::Network(NetworkInfo {
-                        interface: Some(net.ifname),
-                        mac: net.address,
-                        operstate: net.operstate,
-                        ..Default::default()
-                    }),
-                )
-                .with_source(SourceEvidence {
-                    source: result.source.clone(),
-                    kind: SourceKind::Command,
-                    status: SourceStatus::Success,
-                    summary: None,
-                })
-            })
-            .collect();
+        let mut devices = Vec::new();
+        for net in records {
+            if is_ignored_network_interface(&net.ifname) {
+                continue;
+            }
+            let enrichment = network_sysfs_enrichment(ctx, &net.ifname).await;
+            let mut device = Device::new(
+                device_id::network(net.address.as_deref(), &net.ifname),
+                DeviceKind::Network,
+                net.ifname.clone(),
+                DeviceProperties::Network(NetworkInfo {
+                    interface: Some(net.ifname),
+                    mac: net.address,
+                    operstate: net.operstate,
+                    speed_mbps: enrichment.speed_mbps,
+                    duplex: enrichment.duplex.clone(),
+                    ..Default::default()
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: result.source.clone(),
+                kind: SourceKind::Command,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+            device = apply_network_enrichment(device, enrichment);
+            devices.push(device);
+        }
         ProbeResult::with_devices(devices)
     }
+}
+
+struct NetworkSysfsEnrichment {
+    source: String,
+    speed_mbps: Option<u32>,
+    duplex: Option<String>,
+    wireless: bool,
+    driver: Option<String>,
+    contributed: bool,
 }
 
 async fn network_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
@@ -321,35 +335,97 @@ async fn network_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
 
         let mac = read_optional_trimmed(ctx, &path.join("address")).await;
         let operstate = read_optional_trimmed(ctx, &path.join("operstate")).await;
-        let speed_mbps = read_optional_trimmed(ctx, &path.join("speed"))
-            .await
-            .and_then(|speed| speed.parse().ok());
-        let duplex = read_optional_trimmed(ctx, &path.join("duplex")).await;
-
-        devices.push(
-            Device::new(
-                device_id::network(mac.as_deref(), ifname),
-                DeviceKind::Network,
-                ifname.to_string(),
-                DeviceProperties::Network(NetworkInfo {
-                    interface: Some(ifname.to_string()),
-                    mac,
-                    operstate,
-                    speed_mbps,
-                    duplex,
-                    ..Default::default()
-                }),
-            )
-            .with_source(SourceEvidence {
-                source: path.display().to_string(),
-                kind: SourceKind::Sysfs,
-                status: SourceStatus::Success,
-                summary: None,
+        let enrichment = network_sysfs_enrichment(ctx, ifname).await;
+        let device = Device::new(
+            device_id::network(mac.as_deref(), ifname),
+            DeviceKind::Network,
+            ifname.to_string(),
+            DeviceProperties::Network(NetworkInfo {
+                interface: Some(ifname.to_string()),
+                mac,
+                operstate,
+                speed_mbps: enrichment.speed_mbps,
+                duplex: enrichment.duplex.clone(),
+                ..Default::default()
             }),
-        );
+        )
+        .with_source(SourceEvidence {
+            source: path.display().to_string(),
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+        devices.push(apply_network_enrichment(device, enrichment));
     }
 
     devices
+}
+
+async fn network_sysfs_enrichment(ctx: &ProbeContext<'_>, ifname: &str) -> NetworkSysfsEnrichment {
+    let path = Path::new("/sys/class/net").join(ifname);
+    let speed_mbps = read_optional_trimmed(ctx, &path.join("speed"))
+        .await
+        .and_then(|speed| speed.parse().ok());
+    let duplex = read_optional_trimmed(ctx, &path.join("duplex")).await;
+    let wireless = !ctx
+        .runner
+        .glob(&format!("/sys/class/net/{ifname}/wireless"))
+        .await
+        .paths
+        .is_empty();
+    let driver = read_optional_trimmed(ctx, &path.join("device/uevent"))
+        .await
+        .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"));
+
+    NetworkSysfsEnrichment {
+        source: path.display().to_string(),
+        speed_mbps,
+        duplex,
+        wireless,
+        driver,
+        contributed: false,
+    }
+}
+
+fn apply_network_enrichment(mut device: Device, mut enrichment: NetworkSysfsEnrichment) -> Device {
+    if enrichment.wireless {
+        device.capabilities.push("wireless".to_string());
+        enrichment.contributed = true;
+    }
+    if enrichment.driver.is_some() {
+        device = device.with_driver(DriverInfo {
+            name: enrichment.driver,
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        enrichment.contributed = true;
+    }
+    if enrichment.speed_mbps.is_some() || enrichment.duplex.is_some() {
+        enrichment.contributed = true;
+    }
+    if enrichment.contributed
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == enrichment.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: enrichment.source,
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn parse_uevent_value(input: &str, key: &str) -> Option<String> {
+    input.lines().find_map(|line| {
+        let (candidate, value) = line.split_once('=')?;
+        (candidate == key && !value.is_empty()).then(|| value.to_string())
+    })
 }
 
 async fn read_optional_trimmed(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {

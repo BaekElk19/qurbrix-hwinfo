@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use hw_model::{Device, DeviceKind, DeviceProperties, SourceKind, SourceStatus};
+use hw_model::{Device, DeviceKind, DeviceProperties, DriverStatus, SourceKind, SourceStatus};
 use hw_probe::{CpuProbe, NetworkProbe, Probe, ProbeContext, StorageProbe};
 use hw_source::{
     CommandSpec, FakeSourceRunner, GlobResult, SourceBytesResult, SourceErrorKind, SourceResult,
@@ -364,14 +364,57 @@ async fn cpu_probe_uses_proc_hardware_kirin_when_other_sources_are_missing() {
 
 #[tokio::test]
 async fn network_probe_outputs_network_device() {
-    let runner = FakeSourceRunner::new().with_command(
-        "ip",
-        ["-j", "link"],
-        r#"[{"ifname":"eth0","address":"aa:bb:cc:dd:ee:ff","operstate":"UP","mtu":1500}]"#,
-    );
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "ip",
+            ["-j", "link"],
+            r#"[{"ifname":"wlan0","address":"aa:bb:cc:dd:ee:ff","operstate":"UP","mtu":1500}]"#,
+        )
+        .with_file("/sys/class/net/wlan0/speed", "867\n")
+        .with_file("/sys/class/net/wlan0/duplex", "full\n")
+        .with_file("/sys/class/net/wlan0/device/uevent", "DRIVER=iwlwifi\n")
+        .with_glob(
+            "/sys/class/net/wlan0/wireless",
+            vec![PathBuf::from("/sys/class/net/wlan0/wireless")],
+        );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = NetworkProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Network);
+    assert_eq!(result.devices[0].capabilities, vec!["wireless"]);
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("iwlwifi")
+    );
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Sysfs && source.source == "/sys/class/net/wlan0"));
+    assert_eq!(
+        result.devices[0]
+            .sources
+            .iter()
+            .filter(|source| source.source == "/sys/class/net/wlan0")
+            .count(),
+        1
+    );
+    match &result.devices[0].properties {
+        DeviceProperties::Network(network) => {
+            assert_eq!(network.interface.as_deref(), Some("wlan0"));
+            assert_eq!(network.speed_mbps, Some(867));
+            assert_eq!(network.duplex.as_deref(), Some("full"));
+        }
+        other => panic!("expected network properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -407,7 +450,12 @@ async fn network_probe_uses_sysfs_when_ip_is_missing() {
         .with_file("/sys/class/net/enp1s0/address", "aa:bb:cc:dd:ee:ff\n")
         .with_file("/sys/class/net/enp1s0/operstate", "up\n")
         .with_file("/sys/class/net/enp1s0/speed", "1000\n")
-        .with_file("/sys/class/net/enp1s0/duplex", "full\n");
+        .with_file("/sys/class/net/enp1s0/duplex", "full\n")
+        .with_file("/sys/class/net/enp1s0/device/uevent", "DRIVER=e1000e\n")
+        .with_glob(
+            "/sys/class/net/enp1s0/wireless",
+            vec![PathBuf::from("/sys/class/net/enp1s0/wireless")],
+        );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = NetworkProbe.probe(&ctx).await;
 
@@ -428,6 +476,26 @@ async fn network_probe_uses_sysfs_when_ip_is_missing() {
         .expect("expected sysfs source evidence");
     assert_eq!(source.kind, SourceKind::Sysfs);
     assert_eq!(source.status, SourceStatus::Success);
+    assert_eq!(
+        device
+            .sources
+            .iter()
+            .filter(|source| source.source == "/sys/class/net/enp1s0")
+            .count(),
+        1
+    );
+    assert_eq!(device.capabilities, vec!["wireless"]);
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("e1000e")
+    );
+    assert_eq!(
+        device.driver.as_ref().map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
 
     match &device.properties {
         DeviceProperties::Network(network) => {
