@@ -1,6 +1,7 @@
 use hw_collect::collect_scan_report_with_runner;
 use hw_model::{DeviceKind, ScanConfig, ScanStatus};
 use hw_source::FakeSourceRunner;
+use std::path::PathBuf;
 
 #[tokio::test]
 async fn collector_runs_base_and_peripheral_probes() {
@@ -101,4 +102,33 @@ async fn default_scan_reports_unconsumed_pci_as_other_pci() {
         .devices
         .iter()
         .any(|d| d.kind == DeviceKind::Pci && d.id == "pci:0000:00:1f.3"));
+}
+
+#[tokio::test]
+async fn default_scan_reports_sysfs_display_pci_as_other_pci_when_lspci_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/bus/pci/devices/*",
+            vec![PathBuf::from("/sys/bus/pci/devices/0000:00:02.0")],
+        )
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/vendor", "0x8086\n")
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/device", "0x9a49\n")
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/class", "0x030000\n");
+
+    let report = collect_scan_report_with_runner(&runner, ScanConfig::default())
+        .await
+        .unwrap();
+
+    assert!(report
+        .devices
+        .iter()
+        .any(|device| device.kind == DeviceKind::OtherPci));
+    assert!(!report
+        .devices
+        .iter()
+        .any(|device| device.kind == DeviceKind::Gpu));
+    assert!(report
+        .warnings
+        .iter()
+        .any(|warning| warning.source.as_deref() == Some("lspci -nn -k")));
 }

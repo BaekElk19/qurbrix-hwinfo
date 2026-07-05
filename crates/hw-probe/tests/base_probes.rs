@@ -26,6 +26,71 @@ async fn pci_probe_builds_devices_with_driver_info() {
 }
 
 #[tokio::test]
+async fn pci_probe_uses_sysfs_when_lspci_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/bus/pci/devices/*",
+            vec![
+                PathBuf::from("/sys/bus/pci/devices/pci0000:00"),
+                PathBuf::from("/sys/bus/pci/devices/0000:00:1f.3"),
+            ],
+        )
+        .with_file("/sys/bus/pci/devices/0000:00:1f.3/vendor", "0x8086\n")
+        .with_file("/sys/bus/pci/devices/0000:00:1f.3/device", "0xa348\n")
+        .with_file("/sys/bus/pci/devices/0000:00:1f.3/class", "0x040300\n")
+        .with_file(
+            "/sys/bus/pci/devices/0000:00:1f.3/subsystem_vendor",
+            "0x1028\n",
+        )
+        .with_file(
+            "/sys/bus/pci/devices/0000:00:1f.3/subsystem_device",
+            "0x087c\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = PciProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let device = &result.devices[0];
+    assert_eq!(device.id, "pci:0000:00:1f.3");
+    assert_eq!(device.kind, DeviceKind::Pci);
+    assert_eq!(device.name, "0000:00:1f.3");
+    assert_eq!(
+        device.bus,
+        Some(BusInfo::Pci {
+            address: "0000:00:1f.3".to_string(),
+            vendor_id: Some("8086".to_string()),
+            device_id: Some("a348".to_string()),
+            subsystem_vendor_id: Some("1028".to_string()),
+            subsystem_device_id: Some("087c".to_string()),
+            class: Some("040300".to_string()),
+        })
+    );
+    let DeviceProperties::Pci(info) = &device.properties else {
+        panic!("expected pci properties");
+    };
+    assert_eq!(info.address, "0000:00:1f.3");
+    assert_eq!(info.vendor_id.as_deref(), Some("8086"));
+    assert_eq!(info.device_id.as_deref(), Some("a348"));
+    assert_eq!(info.class_id.as_deref(), Some("040300"));
+    assert_eq!(info.subsystem_vendor_id.as_deref(), Some("1028"));
+    assert_eq!(info.subsystem_device_id.as_deref(), Some("087c"));
+    assert_eq!(info.vendor, None);
+    assert_eq!(info.device, None);
+    assert_eq!(info.class_name, None);
+    assert_eq!(device.driver, None);
+    assert_eq!(device.sources.len(), 1);
+    assert_eq!(
+        device.sources[0].source,
+        "/sys/bus/pci/devices/0000:00:1f.3"
+    );
+    assert_eq!(device.sources[0].kind, SourceKind::Sysfs);
+    assert_eq!(device.sources[0].status, SourceStatus::Success);
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("lspci -nn -k"));
+}
+
+#[tokio::test]
 async fn usb_probe_builds_devices() {
     let runner = FakeSourceRunner::new().with_command(
         "lsusb",

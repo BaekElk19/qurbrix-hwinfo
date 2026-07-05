@@ -29,6 +29,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - Bluetooth probing falls back to `/sys/class/bluetooth/hci*` when `hciconfig -a` cannot run.
 - Camera probing falls back to `/sys/class/video4linux/video*` when `v4l2-ctl --list-devices` cannot run.
 - Input probing falls back to `/sys/class/input/event*` when `/proc/bus/input/devices` cannot be read.
+- PCI probing falls back to `/sys/bus/pci/devices/*` when `lspci -nn -k` cannot run.
 
 Confirmed defects fixed during this audit:
 
@@ -70,7 +71,7 @@ Confirmed defects fixed during this audit:
 | Printer | `lpstat -a`, optional `lpstat -v`; URI source failures warn. | CUPS queue enumeration. | No make/model/default/state/interface. | P2 |
 | CD-ROM | `/proc/sys/dev/cdrom/info`, drive names and basic capabilities; falls back to `/sys/class/block/sr*` for basic drive nodes when proc cdrom info is unavailable. | Proc cdrom discovery plus Linux sysfs block fallback. | No lshw/hwinfo/lsscsi fallback; no vendor/model/firmware/serial; sysfs fallback cannot recover capabilities. | P2 |
 | USB | `lsusb` for bus/device/VID/PID/product; falls back to `/sys/bus/usb/devices/*` for bus/device IDs, VID/PID, device class/subclass/protocol, manufacturer, product, serial, and speed when `lsusb` cannot run; filters root hubs, USB hubs, sysfs host controllers, and sysfs interface entries. | Basic USB enumeration, Linux sysfs fallback, and Deepin/Kylin hub filtering. | No `lsusb -v`; no maxpower or detailed interface descriptor enrichment; USB devices consumed by Bluetooth/camera/input/printer are not deduplicated. | P2 |
-| PCI / Other PCI | `lspci -nn -k`, class/vendor/device IDs, driver/modules; unconsumed PCI devices become `OtherPci`. | PCI class and driver extraction. | Only GPU consumes backing PCI; network/audio/storage/camera/bluetooth may duplicate as `OtherPci`; no sysfs fallback. | P1/P2 |
+| PCI / Other PCI | `lspci -nn -k`, class/vendor/device IDs, driver/modules; falls back to `/sys/bus/pci/devices/*` for address, vendor/device/class/subsystem IDs when lspci cannot run; sysfs class IDs retain the full 24-bit code such as `040300`; unconsumed PCI devices become `OtherPci`. | PCI class and driver extraction plus Linux sysfs PCI ID fallback. | Only the lspci path lets GPU consume backing PCI; when lspci is unavailable, even display-class sysfs PCI nodes remain `OtherPci`; network/audio/storage/camera/bluetooth may duplicate as `OtherPci`; sysfs fallback lacks driver/modules and human-readable vendor/device/class names. | P1/P2 |
 
 ## Exception Handling Audit
 
@@ -85,6 +86,7 @@ Absorbed and preserved:
 - Input preserves the missing/failed `/proc/bus/input/devices` warning while still emitting basic event devices from `/sys/class/input/event*` when present.
 - Camera preserves the missing/failed `v4l2-ctl --list-devices` warning while still emitting devices from `/sys/class/video4linux/video*` when usable sysfs video nodes exist.
 - CD-ROM preserves the missing/failed `/proc/sys/dev/cdrom/info` warning while still emitting basic optical drive nodes from `/sys/class/block/sr*` when present.
+- PCI preserves the missing/failed `lspci -nn -k` warning while still emitting basic PCI ID devices from `/sys/bus/pci/devices/*` when present.
 - Fake runners and fixture tests cover missing commands, permission-denied DMI, bad EDID, ambiguous sysfs connectors, and numeric GPU vendor IDs.
 
 Still weak:

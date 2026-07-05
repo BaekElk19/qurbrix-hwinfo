@@ -5,7 +5,7 @@
 更新说明（2026-07-06）：本报告保留为初始差距基线。当前实现已经吸收部分当时缺口，最新状态以
 `docs/hardware-compatibility-reference-audit.md` 为准。已完成的 CPU 关键改进包括：
 `lscpu` + `lshw -class processor` + `dmidecode -t 4` 多源合并、`/proc/cpuinfo`
-`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Audio 已在 `/proc/asound/cards` 不可用时读取 `/sys/class/sound/card*` 基础声卡节点；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段；Input 已在 `/proc/bus/input/devices` 不可用时读取 `/sys/class/input/event*` 基础事件节点；Camera 已在 `v4l2-ctl --list-devices` 不可用时读取 `/sys/class/video4linux/video*` 基础节点；CD-ROM 已在 `/proc/sys/dev/cdrom/info` 不可用时读取 `/sys/class/block/sr*` 基础光驱节点。
+`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；PCI 已在 `lspci -nn -k` 不可用时读取 `/sys/bus/pci/devices/*` 基础 ID 字段；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Audio 已在 `/proc/asound/cards` 不可用时读取 `/sys/class/sound/card*` 基础声卡节点；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段；Input 已在 `/proc/bus/input/devices` 不可用时读取 `/sys/class/input/event*` 基础事件节点；Camera 已在 `v4l2-ctl --list-devices` 不可用时读取 `/sys/class/video4linux/video*` 基础节点；CD-ROM 已在 `/proc/sys/dev/cdrom/info` 不可用时读取 `/sys/class/block/sr*` 基础光驱节点。
 
 ## 1. Executive Summary
 
