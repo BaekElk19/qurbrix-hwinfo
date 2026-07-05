@@ -142,6 +142,93 @@ async fn bluetooth_probe_warns_when_paired_devices_source_fails() {
 }
 
 #[tokio::test]
+async fn bluetooth_probe_uses_sysfs_when_hciconfig_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/bluetooth/hci*",
+            vec![PathBuf::from("/sys/class/bluetooth/hci0")],
+        )
+        .with_glob(
+            "/sys/class/bluetooth/hci0/rfkill*",
+            vec![PathBuf::from("/sys/class/bluetooth/hci0/rfkill0")],
+        )
+        .with_file("/sys/class/bluetooth/hci0/rfkill0/name", "hci0\n")
+        .with_file("/sys/class/bluetooth/hci0/rfkill0/state", "1\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BluetoothProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Bluetooth);
+    assert_eq!(result.devices[0].name, "hci0");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    assert_eq!(
+        result.devices[0].sources[0].source,
+        "/sys/class/bluetooth/hci0"
+    );
+    assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
+    assert_eq!(result.devices[0].sources[0].status, SourceStatus::Success);
+
+    let DeviceProperties::Bluetooth(info) = &result.devices[0].properties else {
+        panic!("expected bluetooth properties");
+    };
+    assert_eq!(info.controller_name.as_deref(), Some("hci0"));
+    assert_eq!(info.powered, Some(true));
+    assert_eq!(info.discoverable, None);
+    assert_eq!(info.paired_device_count, None);
+    assert!(info.paired_devices.is_empty());
+
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("hciconfig -a"));
+}
+
+#[tokio::test]
+async fn bluetooth_probe_maps_blocked_rfkill_state_from_sysfs() {
+    for state in ["0\n", "2\n"] {
+        let runner = FakeSourceRunner::new()
+            .with_glob(
+                "/sys/class/bluetooth/hci*",
+                vec![PathBuf::from("/sys/class/bluetooth/hci0")],
+            )
+            .with_glob(
+                "/sys/class/bluetooth/hci0/rfkill*",
+                vec![PathBuf::from("/sys/class/bluetooth/hci0/rfkill0")],
+            )
+            .with_file("/sys/class/bluetooth/hci0/rfkill0/state", state);
+        let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+        let result = BluetoothProbe.probe(&ctx).await;
+
+        let DeviceProperties::Bluetooth(info) = &result.devices[0].properties else {
+            panic!("expected bluetooth properties");
+        };
+        assert_eq!(result.devices[0].name, "hci0");
+        assert_eq!(info.powered, Some(false));
+    }
+}
+
+#[tokio::test]
+async fn bluetooth_probe_ignores_unknown_rfkill_state_from_sysfs() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/bluetooth/hci*",
+            vec![PathBuf::from("/sys/class/bluetooth/hci0")],
+        )
+        .with_glob(
+            "/sys/class/bluetooth/hci0/rfkill*",
+            vec![PathBuf::from("/sys/class/bluetooth/hci0/rfkill0")],
+        )
+        .with_file("/sys/class/bluetooth/hci0/rfkill0/state", "unknown\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BluetoothProbe.probe(&ctx).await;
+
+    let DeviceProperties::Bluetooth(info) = &result.devices[0].properties else {
+        panic!("expected bluetooth properties");
+    };
+    assert_eq!(result.devices[0].name, "hci0");
+    assert_eq!(info.powered, None);
+}
+
+#[tokio::test]
 async fn printer_probe_warns_when_uri_source_fails() {
     let runner = FakeSourceRunner::new().with_command(
         "lpstat",

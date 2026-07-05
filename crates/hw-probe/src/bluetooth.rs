@@ -6,6 +6,7 @@ use hw_model::{
 };
 use hw_parser::{parse_bluetoothctl_paired_devices, parse_hciconfig};
 use hw_source::CommandSpec;
+use std::path::Path;
 
 pub struct BluetoothProbe;
 
@@ -25,7 +26,9 @@ impl Probe for BluetoothProbe {
             .run_command(&CommandSpec::new("hciconfig", ["-a"]), ctx.timeout)
             .await;
         if !hci.is_success() {
-            return ProbeResult::source_failure(self.name(), &hci);
+            let mut fallback = ProbeResult::source_failure(self.name(), &hci);
+            fallback.devices = probe_sysfs_bluetooth(ctx).await;
+            return fallback;
         }
         let paired = ctx
             .runner
@@ -77,5 +80,78 @@ impl Probe for BluetoothProbe {
             warnings,
             consumed: Vec::new(),
         }
+    }
+}
+
+async fn probe_sysfs_bluetooth(ctx: &ProbeContext<'_>) -> Vec<Device> {
+    let mut devices = Vec::new();
+    for path in ctx.runner.glob("/sys/class/bluetooth/hci*").await.paths {
+        let hci_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Bluetooth controller")
+            .to_string();
+        let rfkill = ctx
+            .runner
+            .glob(&format!("{}/rfkill*", path.display()))
+            .await
+            .paths
+            .into_iter()
+            .next();
+        let rfkill_name = match rfkill.as_deref() {
+            Some(path) => read_sysfs_value(ctx, path, "name").await,
+            None => None,
+        };
+        let powered = match rfkill.as_deref() {
+            Some(path) => read_sysfs_value(ctx, path, "state")
+                .await
+                .and_then(|value| parse_rfkill_unblocked(&value)),
+            None => None,
+        };
+        let controller_name = rfkill_name.unwrap_or(hci_name.clone());
+
+        devices.push(
+            Device::new(
+                device_id::other("bluetooth", &hci_name),
+                DeviceKind::Bluetooth,
+                controller_name.clone(),
+                DeviceProperties::Bluetooth(BluetoothInfo {
+                    address: None,
+                    controller_name: Some(controller_name),
+                    powered,
+                    discoverable: None,
+                    paired_device_count: None,
+                    paired_devices: Vec::new(),
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: path.display().to_string(),
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            }),
+        );
+    }
+    devices
+}
+
+async fn read_sysfs_value(ctx: &ProbeContext<'_>, path: &Path, name: &str) -> Option<String> {
+    let result = ctx.runner.read_file(&path.join(name)).await;
+    if !result.is_success() {
+        return None;
+    }
+    let value = result.stdout.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn parse_rfkill_unblocked(value: &str) -> Option<bool> {
+    match value.trim() {
+        "0" | "2" => Some(false),
+        "1" => Some(true),
+        _ => None,
     }
 }

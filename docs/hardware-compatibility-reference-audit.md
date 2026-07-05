@@ -26,6 +26,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - Network probing falls back to `/sys/class/net/*` when `ip -j link` cannot run.
 - Storage probing falls back to `/sys/block/*` when `lsblk` cannot run.
 - USB probing falls back to `/sys/bus/usb/devices/*` when `lsusb` cannot run.
+- Bluetooth probing falls back to `/sys/class/bluetooth/hci*` when `hciconfig -a` cannot run.
 
 Confirmed defects fixed during this audit:
 
@@ -44,6 +45,7 @@ Confirmed defects fixed during this audit:
 - `/sys/class/net` fallback now preserves interface name, MAC, operstate, speed, and duplex when `ip -j link` cannot run.
 - `/sys/block` fallback now preserves storage node, model, serial identity, size, and rotational media type when `lsblk` cannot run.
 - `/sys/bus/usb/devices` fallback now preserves USB bus/device numbers, VID/PID, device class/subclass/protocol, manufacturer, product, serial, and speed when `lsusb` cannot run.
+- `/sys/class/bluetooth` fallback now preserves basic Bluetooth controller presence and rfkill unblock/block state when `hciconfig -a` cannot run.
 
 ## Component Matrix
 
@@ -58,7 +60,7 @@ Confirmed defects fixed during this audit:
 | Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN`, disk-only filtering, parse failure warning; falls back to `/sys/block/*` for node/model/serial/size/rotational media type when `lsblk` cannot run. | Basic lsblk disk enumeration plus Linux sysfs disk fallback. | No lshw/hwinfo/hdparm/smartctl fusion; no WWN/firmware/SMART/temp/controller/driver enrichment. | P2 |
 | Network | `ip -j link`, interface/MAC/operstate; filters loopback/common virtual interfaces; malformed JSON produces warning; falls back to `/sys/class/net/*` for MAC, operstate, speed, and duplex when `ip` cannot run. | Basic network interface enumeration, Kylin-style avoidance of non-physical interfaces, and Linux sysfs fallback. | No lshw/lspci/NM DBus fallback; no driver/wireless/type/IP enrichment. | P1 |
 | Audio | `/proc/asound/cards`, card index/name. | Deepin/Kylin use `/proc/asound` and multimedia sources; base source absorbed. | No PCI/lshw/sysfs/codec fallback; no driver/vendor/codec/subsystem. | P1/P2 |
-| Bluetooth | `hciconfig -a`, optional `bluetoothctl paired-devices`; paired source failures warn. | Deepin `hciconfig` path and lightweight paired-device enrichment. | `hciconfig` is a hard dependency; no lshw/sysfs/DBus fallback. | P1/P2 |
+| Bluetooth | `hciconfig -a`, optional `bluetoothctl paired-devices`; paired source failures warn; falls back to `/sys/class/bluetooth/hci*` plus rfkill name/state when `hciconfig` cannot run. | Deepin `hciconfig` path and lightweight paired-device enrichment, plus Linux sysfs controller fallback. | No lshw/hwinfo/BlueZ DBus fallback; sysfs fallback cannot recover controller address or paired devices. | P1/P2 |
 | Input | `/proc/bus/input/devices`, handlers/IDs, keyboard/mouse/touchpad/touchscreen classification. | Proc input parsing and basic classification. | No lshw/hwinfo enrichment; no EV bitmask classification; `Tablet` remains unused; limited bus-specific classification. | P2 |
 | Camera | `v4l2-ctl --list-devices`, emits one device per physical camera record using the first `/dev/video*` node. | Basic video device discovery and Deepin-style physical-device deduplication. | No sysfs/lshw/hwinfo fallback; no vendor/driver/speed/serial. | P2 |
 | Battery | `upower --dump`, battery capacity/energy/voltage/vendor/model/serial; filters line-power devices; falls back to `/sys/class/power_supply/BAT*` for battery fields including cycle count. | UPower-based collection, Deepin-style line-power filtering, and Linux sysfs battery fallback. | No temperature fallback or vendor normalization. | P2 |
@@ -75,11 +77,12 @@ Absorbed and preserved:
 - CPU treats `lscpu`, `lshw`, and `dmidecode` as optional and emits warnings for failed sources while still producing a CPU when any useful source exists.
 - Monitor treats `xrandr --verbose` and sysfs EDID as optional and continues after bad EDID with `edid_parse_failed` warnings.
 - USB preserves the missing/failed `lsusb` warning while still emitting devices from `/sys/bus/usb/devices/*` when usable sysfs device directories exist.
+- Bluetooth preserves the missing/failed `hciconfig -a` warning while still emitting controllers from `/sys/class/bluetooth/hci*` when usable sysfs controller directories exist.
 - Fake runners and fixture tests cover missing commands, permission-denied DMI, bad EDID, ambiguous sysfs connectors, and numeric GPU vendor IDs.
 
 Still weak:
 
-- Bluetooth, audio, camera, input, printer, and CD-ROM still have limited fallback/enrichment coverage compared with the reference projects.
+- Audio, camera, input, printer, and CD-ROM still have limited fallback/enrichment coverage compared with the reference projects.
 
 ## Deferred Items
 
@@ -87,7 +90,7 @@ These are not fully implemented yet and should remain tracked:
 
 - P1: add warning-on-empty-parse for additional parsers where command success does not mean usable data.
 - P1b: decide whether parsed CPU family/model/stepping/bogomips/virtualization should be exposed in `CpuInfo` or kept parser-internal.
-- P2: add network driver/type/wireless, storage SMART/WWN/controller, USB verbose descriptors, camera/sysfs, audio codec/sysfs, and Bluetooth DBus/sysfs enrichments.
+- P2: add network driver/type/wireless, storage SMART/WWN/controller, USB verbose descriptors, camera/sysfs, audio codec/sysfs, and Bluetooth lshw/DBus enrichments.
 - P3: optional heavy display/GPU sources such as `glxinfo`, `hwinfo`, and vendor-specific tools.
 
 ## Evidence Pointers

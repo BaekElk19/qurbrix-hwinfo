@@ -5,7 +5,7 @@
 更新说明（2026-07-06）：本报告保留为初始差距基线。当前实现已经吸收部分当时缺口，最新状态以
 `docs/hardware-compatibility-reference-audit.md` 为准。已完成的 CPU 关键改进包括：
 `lscpu` + `lshw -class processor` + `dmidecode -t 4` 多源合并、`/proc/cpuinfo`
-`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段。
+`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段。
 
 ## 1. Executive Summary
 
@@ -155,7 +155,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | 硬盘/分区/控制器 | lsblk/sg/lshw/厂商修正 | lsblk disk，失败时 fallback 到 `/sys/block/*` | 缺 SMART/temperature/controller/driver/vendor/wwn | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 显卡/显示控制器 | lspci、nvidia、国产 GPU alias | lspci GPU/driver | 缺国产 GPU alias、glxinfo/drm | P1/P2 | 是 | Kylin `.../cpuinfo.py:415-425`；qurbrix `crates/hw-probe/src/existing.rs:309-354` |
 | 显示器 | xrandr verbose/EDID/product/year/size | xrandr query connector/resolution | EDID 缺失 | P1/P2 | 是 | Kylin `.../cpuinfo.py:1339-1411`；qurbrix `crates/hw-probe/src/existing.rs:368-399` |
-| 网卡/Wi-Fi/蓝牙 | sysfs/MAC/filter、lshw/lspci/driver | network 使用 `ip -j link`，失败时 fallback 到 `/sys/class/net/*`；bluetooth 有 fixtures | 网卡分类/driver/wireless 标注不足 | P1/P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
+| 网卡/Wi-Fi/蓝牙 | sysfs/MAC/filter、lshw/lspci/driver | network 使用 `ip -j link`，失败时 fallback 到 `/sys/class/net/*`；bluetooth 使用 `hciconfig -a`，失败时 fallback 到 `/sys/class/bluetooth/hci*` 基础 controller/rfkill 字段 | 网卡分类/driver/wireless 标注不足；Bluetooth 仍缺 lshw/hwinfo/BlueZ DBus enrichment 和 controller address fallback | P1/P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs`；`crates/hw-probe/src/bluetooth.rs` |
 | 声卡 | lshw、`/proc/asound`、SoC vendor | qurbrix 有音频类别和 fixtures | SoC/国产声卡规则不足 | P1/P2 | 是 | Deepin `.../GetInfoPool.cpp:88,119`；Kylin `.../cpuinfo.py:479-483` |
 | USB 设备 | 过滤 hub/重复/无效设备，详细描述符 | `lsusb` 基础字段；`lsusb` 缺失时读 sysfs 基础字段并过滤 hub/host controller/interface entries | 无 `lsusb -v`、maxpower、详细 interface descriptor、跨类别 consumed dedup | P2 | 是 | qurbrix `crates/hw-probe/src/usb.rs` |
 | PCI 设备 | PCI 分类、驱动识别 | lspci class/vendor/device/driver | 分类消费只对部分类别；alias 不足 | P2 | 是 | qurbrix `crates/hw-probe/src/pci.rs:22-83` |
