@@ -22,6 +22,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - Command execution forces `LC_ALL=C`, `LANG=C`, and `LANGUAGE=en`, absorbing Deepin/Kylin's locale-stabilization practice for English-key parsers.
 - BIOS/motherboard probing falls back to `/sys/class/dmi/id` when `dmidecode` is missing or denied.
 - Memory probing falls back to `/proc/meminfo` total memory when `dmidecode -t memory` cannot run.
+- Battery probing falls back to `/sys/class/power_supply/BAT*` when `upower --dump` cannot run.
 
 Confirmed defects fixed during this audit:
 
@@ -36,6 +37,7 @@ Confirmed defects fixed during this audit:
 - `/proc/hardware` fallback now recognizes `HUAWEI Kirin 990`, `kirin990`, and `HUAWEI Kirin 9006C`.
 - `/sys/class/dmi/id` fallback now preserves BIOS/baseboard identity when `dmidecode -t 0,1,2,3` cannot run.
 - `/proc/meminfo` fallback now preserves aggregate memory capacity when `dmidecode -t memory` cannot run.
+- `/sys/class/power_supply` fallback now preserves battery identity, capacity, energy, voltage, cycle count, and present state when UPower cannot run.
 
 ## Component Matrix
 
@@ -53,7 +55,7 @@ Confirmed defects fixed during this audit:
 | Bluetooth | `hciconfig -a`, optional `bluetoothctl paired-devices`; paired source failures warn. | Deepin `hciconfig` path and lightweight paired-device enrichment. | `hciconfig` is a hard dependency; no lshw/sysfs/DBus fallback. | P1/P2 |
 | Input | `/proc/bus/input/devices`, handlers/IDs, keyboard/mouse/touchpad/touchscreen classification. | Proc input parsing and basic classification. | No lshw/hwinfo enrichment; no EV bitmask classification; `Tablet` remains unused; limited bus-specific classification. | P2 |
 | Camera | `v4l2-ctl --list-devices`, emits one device per physical camera record using the first `/dev/video*` node. | Basic video device discovery and Deepin-style physical-device deduplication. | No sysfs/lshw/hwinfo fallback; no vendor/driver/speed/serial. | P2 |
-| Battery | `upower --dump`, battery capacity/energy/voltage/vendor/model/serial; filters line-power devices. | UPower-based collection and Deepin-style line-power filtering. | No sysfs cycle/temp fallback. | P2 |
+| Battery | `upower --dump`, battery capacity/energy/voltage/vendor/model/serial; filters line-power devices; falls back to `/sys/class/power_supply/BAT*` for battery fields including cycle count. | UPower-based collection, Deepin-style line-power filtering, and Linux sysfs battery fallback. | No temperature fallback or vendor normalization. | P2 |
 | Printer | `lpstat -a`, optional `lpstat -v`; URI source failures warn. | CUPS queue enumeration. | No make/model/default/state/interface. | P2 |
 | CD-ROM | `/proc/sys/dev/cdrom/info`, drive names and basic capabilities. | Proc cdrom discovery. | No lshw/hwinfo/lsscsi fallback; no vendor/model/firmware/serial. | P2 |
 | USB | `lsusb`, bus/device/VID/PID/product; filters root hubs and USB hubs. | Basic USB enumeration plus Deepin/Kylin hub filtering. | No `lsusb -v`; no interface/class/speed/maxpower/serial enrichment; USB devices consumed by Bluetooth/camera/input/printer are not deduplicated. | P2 |
@@ -70,7 +72,7 @@ Absorbed and preserved:
 
 Still weak:
 
-- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`NetworkProbe`, `StorageProbe`, `UsbProbe`, `BatteryProbe`).
+- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`NetworkProbe`, `StorageProbe`, `UsbProbe`).
 
 ## Deferred Items
 

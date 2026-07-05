@@ -1,9 +1,10 @@
-use hw_model::DeviceKind;
+use hw_model::{DeviceKind, DeviceProperties, SourceKind, SourceStatus};
 use hw_probe::{
     AudioProbe, BatteryProbe, BluetoothProbe, CameraProbe, CdromProbe, InputProbe, PrinterProbe,
     Probe, ProbeContext,
 };
 use hw_source::FakeSourceRunner;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[tokio::test]
@@ -43,6 +44,68 @@ async fn battery_probe_filters_line_power_devices() {
     assert_eq!(result.devices.len(), 1);
     assert_eq!(result.devices[0].kind, DeviceKind::Battery);
     assert_eq!(result.devices[0].name, "BAT0");
+}
+
+#[tokio::test]
+async fn battery_probe_uses_sysfs_when_upower_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/power_supply/BAT*",
+            vec![
+                PathBuf::from("/sys/class/power_supply/BAT0"),
+                PathBuf::from("/sys/class/power_supply/BAT1"),
+            ],
+        )
+        .with_file("/sys/class/power_supply/BAT0/type", "Battery\n")
+        .with_file("/sys/class/power_supply/BAT0/manufacturer", "LGC\n")
+        .with_file("/sys/class/power_supply/BAT0/model_name", "L20M4P73\n")
+        .with_file("/sys/class/power_supply/BAT0/serial_number", "ABC123\n")
+        .with_file("/sys/class/power_supply/BAT0/technology", "Li-ion\n")
+        .with_file("/sys/class/power_supply/BAT0/status", "Discharging\n")
+        .with_file("/sys/class/power_supply/BAT0/capacity", "88\n")
+        .with_file("/sys/class/power_supply/BAT0/energy_full", "52000000\n")
+        .with_file(
+            "/sys/class/power_supply/BAT0/energy_full_design",
+            "57000000\n",
+        )
+        .with_file("/sys/class/power_supply/BAT0/energy_now", "46000000\n")
+        .with_file("/sys/class/power_supply/BAT0/voltage_now", "11500000\n")
+        .with_file("/sys/class/power_supply/BAT0/cycle_count", "321\n")
+        .with_file("/sys/class/power_supply/BAT0/present", "1\n")
+        .with_file("/sys/class/power_supply/BAT1/type", "Mains\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BatteryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Battery);
+    assert_eq!(result.devices[0].name, "BAT0");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    assert_eq!(
+        result.devices[0].sources[0].source,
+        "/sys/class/power_supply/BAT0"
+    );
+    assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
+    assert_eq!(result.devices[0].sources[0].status, SourceStatus::Success);
+
+    let DeviceProperties::Battery(info) = &result.devices[0].properties else {
+        panic!("expected battery properties");
+    };
+    assert_eq!(info.vendor.as_deref(), Some("LGC"));
+    assert_eq!(info.model.as_deref(), Some("L20M4P73"));
+    assert_eq!(info.serial.as_deref(), Some("ABC123"));
+    assert_eq!(info.technology.as_deref(), Some("Li-ion"));
+    assert_eq!(info.state.as_deref(), Some("Discharging"));
+    assert_eq!(info.capacity_percent, Some(88.0));
+    assert_eq!(info.energy_full_wh, Some(52.0));
+    assert_eq!(info.energy_design_wh, Some(57.0));
+    assert_eq!(info.energy_now_wh, Some(46.0));
+    assert_eq!(info.voltage_v, Some(11.5));
+    assert_eq!(info.cycle_count, Some(321));
+    assert_eq!(info.present, Some(true));
+
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("upower --dump"));
 }
 
 #[tokio::test]

@@ -131,7 +131,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | `/sys/class/dmi/id` | 主要走 dmidecode | 可作为系统信息来源 | BIOS/board probe 已作为 dmidecode fallback 使用 | 已吸收 | 后续可扩 chassis/system/language/memory-array |
 | `/sys/class/drm` | 参考项目使用 xrandr/EDID 类能力 | 通过 xrandr verbose/EDID | 未使用 | P1/P2 | headless/Wayland 下补 sysfs drm/edid |
 | `/sys/class/net` | Deepin 有网络 sysfs/MAC 过滤逻辑 | 结合 lshw/lspci/driver | 未直接用，只用 `ip -j link` | P1/P2 | 补 driver、type、wireless、virtual filter |
-| `/sys/class/power_supply` | Deepin 使用 upower/dmesg 类电源源 | Kylin 有电源厂商 alias | 需看 battery probe；当前总体 runner 支持 read_file | P2 | 可加 sysfs battery fallback |
+| `/sys/class/power_supply` | Deepin 使用 upower/dmesg 类电源源 | Kylin 有电源厂商 alias | Battery probe 已在 UPower 失败时读取 BAT* sysfs 字段 | 已吸收部分 | 后续可补温度和厂商归一化 |
 | `/sys/block` | Deepin 用 lsblk/sg | Kylin 磁盘逻辑复杂 | 当前 `lsblk` | P2 | 加 rotational/model/vendor/wwn fallback |
 | `/sys/bus/pci` | 参考项目重视 PCI/driver | lspci/lshw/driver | 当前 `lspci -nn -k` | P2 | 无 lspci 时读 sysfs modalias/vendor/device/class/driver |
 | `/sys/bus/usb` | Deepin USB 过滤/去重 | Kylin `lsusb -v` | 当前 `lsusb` | P2 | 无 lsusb 时读 sysfs；加 interface/class |
@@ -161,7 +161,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | PCI 设备 | PCI 分类、驱动识别 | lspci class/vendor/device/driver | 分类消费只对部分类别；alias 不足 | P2 | 是 | qurbrix `crates/hw-probe/src/pci.rs:22-83` |
 | 摄像头 | USB/vendor 表、video source | qurbrix 有摄像头 fixtures | 厂商 alias 和 sysfs 属性可能不足 | P2 | 是 | Kylin `.../cpuinfo.py:484-491` |
 | 打印机/扫描仪 | printer source | qurbrix 有 printer fixtures | 扫描仪未明确 | P3 | 部分 | Deepin `.../GetInfoPool.cpp:89` |
-| 电池/电源 | upower/dmesg/vendor alias | qurbrix 有电源 fixtures | sysfs fallback/厂商归一化待增强 | P2 | 是 | Deepin `.../GetInfoPool.cpp:105,111`；Kylin `.../cpuinfo.py:524-525` |
+| 电池/电源 | upower/dmesg/vendor alias | qurbrix 有 UPower 和 `/sys/class/power_supply/BAT*` fallback fixtures | 温度 fallback/厂商归一化待增强 | P2 | 是 | Deepin `.../GetInfoPool.cpp:105,111`；Kylin `.../cpuinfo.py:524-525` |
 | 输入设备 | `/proc/bus/input/devices` | qurbrix 有 input fixtures | 分类和 vendor alias 可增强 | P2 | 是 | Deepin `.../GetInfoPool.cpp:118`；Kylin `.../cpuinfo.py:492-503` |
 | 虚拟机设备 | Kylin VirtualBox alias | qurbrix 无明确虚拟机分类/标注 | 虚拟设备未过滤/未标注 | P2 | 是 | Kylin `.../cpuinfo.py:452-455` |
 | 国产平台/非 x86 | Deepin arch map/generator，Kylin Hardware fallback/vendor alias | 无专门规则 | ARM64/LoongArch/SW64 风险 | P1 | 是 | Deepin `.../commonfunction.cpp:25-33`；Kylin `.../sysinfo/__init__.py:220-228` |
