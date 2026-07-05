@@ -1,4 +1,4 @@
-use hw_model::{DeviceKind, DeviceProperties, SourceKind, SourceStatus};
+use hw_model::{DeviceKind, DeviceProperties, InputKind, SourceKind, SourceStatus};
 use hw_probe::{
     AudioProbe, BatteryProbe, BluetoothProbe, CameraProbe, CdromProbe, InputProbe, PrinterProbe,
     Probe, ProbeContext,
@@ -397,6 +397,65 @@ async fn input_camera_printer_and_cdrom_probes_create_devices() {
     assert_eq!(
         CdromProbe.probe(&ctx).await.devices[0].kind,
         DeviceKind::Cdrom
+    );
+}
+
+#[tokio::test]
+async fn input_probe_uses_sysfs_when_proc_bus_input_devices_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/input/event*",
+            vec![
+                PathBuf::from("/sys/class/input/event10"),
+                PathBuf::from("/sys/class/input/event2"),
+                PathBuf::from("/sys/class/input/event-test"),
+                PathBuf::from("/sys/class/input/event0"),
+            ],
+        )
+        .with_file("/sys/class/input/event0/device/name", "AT Keyboard\n")
+        .with_file(
+            "/sys/class/input/event0/device/phys",
+            "isa0060/serio0/input0\n",
+        )
+        .with_file("/sys/class/input/event0/device/uniq", "\n")
+        .with_file("/sys/class/input/event0/device/id/bustype", "0011\n")
+        .with_file("/sys/class/input/event0/device/id/vendor", "0001\n")
+        .with_file("/sys/class/input/event0/device/id/product", "0001\n")
+        .with_file("/sys/class/input/event0/device/id/version", "ab41\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = InputProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 3);
+    assert_eq!(result.devices[0].kind, DeviceKind::Input);
+    assert_eq!(result.devices[0].name, "AT Keyboard");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    assert_eq!(
+        result.devices[0].sources[0].source,
+        "/sys/class/input/event0"
+    );
+    assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
+    assert_eq!(result.devices[0].sources[0].status, SourceStatus::Success);
+
+    let DeviceProperties::Input(info) = &result.devices[0].properties else {
+        panic!("expected input properties");
+    };
+    assert_eq!(info.input_kind, InputKind::Keyboard);
+    assert_eq!(info.event_node.as_deref(), Some("/dev/input/event0"));
+    assert_eq!(info.phys.as_deref(), Some("isa0060/serio0/input0"));
+    assert_eq!(info.uniq, None);
+    assert!(info.handlers.is_empty());
+    assert_eq!(info.bus_type.as_deref(), Some("0011"));
+    assert_eq!(info.vendor_id.as_deref(), Some("0001"));
+    assert_eq!(info.product_id.as_deref(), Some("0001"));
+    assert_eq!(info.version.as_deref(), Some("ab41"));
+
+    assert_eq!(result.devices[1].name, "/dev/input/event2");
+    assert_eq!(result.devices[2].name, "/dev/input/event10");
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some("/proc/bus/input/devices")
     );
 }
 

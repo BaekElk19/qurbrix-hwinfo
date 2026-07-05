@@ -28,6 +28,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - USB probing falls back to `/sys/bus/usb/devices/*` when `lsusb` cannot run.
 - Bluetooth probing falls back to `/sys/class/bluetooth/hci*` when `hciconfig -a` cannot run.
 - Camera probing falls back to `/sys/class/video4linux/video*` when `v4l2-ctl --list-devices` cannot run.
+- Input probing falls back to `/sys/class/input/event*` when `/proc/bus/input/devices` cannot be read.
 
 Confirmed defects fixed during this audit:
 
@@ -63,7 +64,7 @@ Confirmed defects fixed during this audit:
 | Network | `ip -j link`, interface/MAC/operstate; filters loopback/common virtual interfaces; malformed JSON produces warning; falls back to `/sys/class/net/*` for MAC, operstate, speed, and duplex when `ip` cannot run. | Basic network interface enumeration, Kylin-style avoidance of non-physical interfaces, and Linux sysfs fallback. | No lshw/lspci/NM DBus fallback; no driver/wireless/type/IP enrichment. | P1 |
 | Audio | `/proc/asound/cards`, card index/name; falls back to `/sys/class/sound/card*` for basic ALSA card index/name when proc asound cards is unavailable. | Deepin/Kylin use `/proc/asound` and multimedia sources; base source and Linux sysfs card fallback absorbed. | No PCI/lshw/codec fallback; no driver/vendor/codec/subsystem. | P1/P2 |
 | Bluetooth | `hciconfig -a`, optional `bluetoothctl paired-devices`; paired source failures warn; falls back to `/sys/class/bluetooth/hci*` plus rfkill name/state when `hciconfig` cannot run. | Deepin `hciconfig` path and lightweight paired-device enrichment, plus Linux sysfs controller fallback. | No lshw/hwinfo/BlueZ DBus fallback; sysfs fallback cannot recover controller address or paired devices. | P1/P2 |
-| Input | `/proc/bus/input/devices`, handlers/IDs, keyboard/mouse/touchpad/touchscreen classification. | Proc input parsing and basic classification. | No lshw/hwinfo enrichment; no EV bitmask classification; `Tablet` remains unused; limited bus-specific classification. | P2 |
+| Input | `/proc/bus/input/devices`, handlers/IDs, keyboard/mouse/touchpad/touchscreen classification; falls back to `/sys/class/input/event*` for basic event node/name/id fields when proc input devices is unavailable. | Proc input parsing, basic classification, and Linux sysfs event fallback. | No lshw/hwinfo enrichment; no EV bitmask classification; `Tablet` remains unused; limited bus-specific classification; sysfs fallback cannot recover handlers. | P2 |
 | Camera | `v4l2-ctl --list-devices`, emits one device per physical camera record using the first `/dev/video*` node; falls back to `/sys/class/video4linux/video*` for basic name and node when `v4l2-ctl` cannot run. | Basic video device discovery, Deepin-style physical-device deduplication, and Linux video4linux sysfs fallback. | No lshw/hwinfo fallback; no vendor/driver/speed/serial enrichment. | P2 |
 | Battery | `upower --dump`, battery capacity/energy/voltage/vendor/model/serial; filters line-power devices; falls back to `/sys/class/power_supply/BAT*` for battery fields including cycle count. | UPower-based collection, Deepin-style line-power filtering, and Linux sysfs battery fallback. | No temperature fallback or vendor normalization. | P2 |
 | Printer | `lpstat -a`, optional `lpstat -v`; URI source failures warn. | CUPS queue enumeration. | No make/model/default/state/interface. | P2 |
@@ -81,6 +82,7 @@ Absorbed and preserved:
 - USB preserves the missing/failed `lsusb` warning while still emitting devices from `/sys/bus/usb/devices/*` when usable sysfs device directories exist.
 - Audio preserves the missing/failed `/proc/asound/cards` warning while still emitting basic ALSA card devices from `/sys/class/sound/card*` when present.
 - Bluetooth preserves the missing/failed `hciconfig -a` warning while still emitting controllers from `/sys/class/bluetooth/hci*` when usable sysfs controller directories exist.
+- Input preserves the missing/failed `/proc/bus/input/devices` warning while still emitting basic event devices from `/sys/class/input/event*` when present.
 - Camera preserves the missing/failed `v4l2-ctl --list-devices` warning while still emitting devices from `/sys/class/video4linux/video*` when usable sysfs video nodes exist.
 - CD-ROM preserves the missing/failed `/proc/sys/dev/cdrom/info` warning while still emitting basic optical drive nodes from `/sys/class/block/sr*` when present.
 - Fake runners and fixture tests cover missing commands, permission-denied DMI, bad EDID, ambiguous sysfs connectors, and numeric GPU vendor IDs.
