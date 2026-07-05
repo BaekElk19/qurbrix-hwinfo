@@ -326,6 +326,40 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
 }
 
 #[tokio::test]
+async fn cpu_probe_uses_proc_hardware_kirin_when_other_sources_are_missing() {
+    let runner =
+        FakeSourceRunner::new().with_file("/proc/hardware", "Hardware\t: HUAWEI Kirin 9006C\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].name, "HUAWEI Kirin 9006C");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    let source = result.devices[0]
+        .sources
+        .iter()
+        .find(|source| source.source == "/proc/hardware")
+        .expect("expected /proc/hardware source evidence");
+    assert_eq!(source.kind, SourceKind::Procfs);
+    assert_eq!(source.status, SourceStatus::Success);
+    assert_eq!(
+        warning_pairs(&result),
+        vec![
+            (Some("dmidecode -t 4"), "source_missing"),
+            (Some("lscpu"), "source_missing"),
+            (Some("lshw -class processor"), "source_missing"),
+        ]
+    );
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.name.as_deref(), Some("HUAWEI Kirin 9006C"));
+            assert_eq!(cpu.vendor.as_deref(), Some("HiSilicon"));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn network_probe_outputs_network_device() {
     let runner = FakeSourceRunner::new().with_command(
         "ip",

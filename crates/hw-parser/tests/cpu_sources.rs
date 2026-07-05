@@ -1,6 +1,6 @@
 use hw_parser::{
     merge_cpu_records, parse_dmidecode_processor, parse_lscpu, parse_lshw_processor,
-    parse_proc_cpuinfo, DmidecodeCpuRecord,
+    parse_proc_cpuinfo, parse_proc_hardware, DmidecodeCpuRecord,
 };
 use hw_testdata::fixture;
 
@@ -60,6 +60,19 @@ fn parse_proc_cpuinfo_uses_hardware_and_processor_fallbacks() {
     assert_eq!(cpu.cpu_mhz, Some(2300));
     assert_eq!(cpu.bogomips.as_deref(), Some("100.00"));
     assert_eq!(cpu.flags, vec!["fp", "asimd", "evtstrm", "crc32"]);
+}
+
+#[test]
+fn parse_proc_hardware_recognizes_kirin_soc_names() {
+    for (input, expected) in [
+        ("Hardware\t: HUAWEI Kirin 990\n", "HUAWEI Kirin 990"),
+        ("Hardware\t: kirin990\n", "HUAWEI Kirin 990"),
+        ("Hardware\t: HUAWEI Kirin 9006C\n", "HUAWEI Kirin 9006C"),
+    ] {
+        let cpu = parse_proc_hardware(input);
+
+        assert_eq!(cpu.model_name.as_deref(), Some(expected));
+    }
 }
 
 #[test]

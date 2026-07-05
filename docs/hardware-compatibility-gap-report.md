@@ -5,7 +5,7 @@
 更新说明（2026-07-06）：本报告保留为初始差距基线。当前实现已经吸收部分当时缺口，最新状态以
 `docs/hardware-compatibility-reference-audit.md` 为准。已完成的 CPU 关键改进包括：
 `lscpu` + `lshw -class processor` + `dmidecode -t 4` 多源合并、`/proc/cpuinfo`
-`Hardware`/`Processor` fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化。
+`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化。
 
 ## 1. Executive Summary
 
@@ -14,7 +14,7 @@
 3. CPU 曾是最明显短板：初始审计时只执行 `lscpu`，只解析 `Architecture`、`CPU(s)`、`Model name`、`Vendor ID`、`Core(s) per socket`、`Socket(s)` 六类字段；当前已改为多源合并并增加 `/proc/cpuinfo` fallback，详见最新审计文档。
 4. Deepin 会融合 `lscpu`、`lshw_cpu`、`dmidecode -t 4`，并用 DMI 修正 core/thread、CPU name/vendor 空缺；证据：`ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/GenerateDevice/DeviceGenerator.cpp:173-259`。
 5. Kylin 明确做了国产 CPU vendor 归一化和 `/proc/cpuinfo` 的 `Hardware` fallback；证据：`ReferenceProject/kylin-os-manager-build-2.0.0-76update2/rubbish-clear-dbus/src/detailinfo/cpuinfo.py:704-745`，`ReferenceProject/kylin-os-manager-build-2.0.0-76update2/rubbish-clear-dbus/src/sysinfo/__init__.py:220-228`。
-6. 国产 CPU、ARM64、LoongArch 仍有 P1 风险：`qurbrix-hwinfo` 已有 `/proc/cpuinfo` parser 和 `Hardware`/`Processor` fallback，但 `/proc/hardware` Kirin fallback、locale 强制和更广泛真机 fixture 仍待补齐。
+6. 国产 CPU、ARM64、LoongArch 仍有 P1 风险：`qurbrix-hwinfo` 已有 `/proc/cpuinfo` parser、`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback 和 locale 强制，但更广泛真机 fixture 仍待补齐。
 7. Deepin 已有架构 alias 和架构分流，覆盖 `aarch64`、`sw_64`、`loongarch`、`loongarch64`；证据：`ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/commonfunction.cpp:25-33`，`ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/GenerateDevice/DeviceFactory.cpp:29-69`。
 8. `qurbrix-hwinfo` 的错误、超时、命令缺失、权限不足处理比参考项目更结构化，值得保留；证据：`qurbrix-hwinfo/crates/hw-source/src/runner.rs:22-59`。
 9. 优先补齐顺序建议：P0 CPU 多源 fallback；P1 国产 CPU/vendor/arch 规则和 fixtures；P1 显示 EDID/sysfs、音频 SoC/sysfs；P2 USB/network 过滤和分类增强。
@@ -40,7 +40,7 @@
 | 类别 | 当前来源/实现 | 当前状态 | 证据 |
 | --- | --- | --- | --- |
 | Orchestration | 顺序执行 probe，汇总 devices/warnings/consumed | 结构清晰，类别覆盖广 | `qurbrix-hwinfo/crates/hw-collect/src/collector.rs:21-63` |
-| CPU | `lscpu`、`lshw -class processor`、`dmidecode -t 4`、`/proc/cpuinfo` | 多源扫描；已补 `Hardware`/`Processor` fallback、DMI fallback 和主要 vendor alias；仍缺 `/proc/hardware` Kirin fallback/locale 强制 | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs`；`qurbrix-hwinfo/crates/hw-parser/src/cpu.rs` |
+| CPU | `lscpu`、`lshw -class processor`、`dmidecode -t 4`、`/proc/cpuinfo`、`/proc/hardware` | 多源扫描；已补 `Hardware`/`Processor` fallback、Kirin fallback、DMI fallback、locale 强制和主要 vendor alias；仍缺更广泛真机 fixture | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs`；`qurbrix-hwinfo/crates/hw-parser/src/cpu.rs` |
 | CPU model | `CpuInfo` 有 name/vendor/arch/core/thread/socket/frequency/flags | model 有字段，但 parser 没填频率和 flags | `qurbrix-hwinfo/crates/hw-model/src/properties.rs:54-65` |
 | PCI | `lspci -nn -k` | 能解析 class/vendor/device/driver/modules | `qurbrix-hwinfo/crates/hw-probe/src/pci.rs:22-83` |
 | USB | `lsusb` | 能解析基础 USB 字段；无 `lsusb -v`、interface、hub/filter 规则 | `qurbrix-hwinfo/crates/hw-probe/src/usb.rs:22-80` |
@@ -97,10 +97,10 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | Zhaoxin / 兆芯 | Kylin 从 model name 识别 `zhaoxin` | qurbrix 无特殊处理 | 国产 x86 vendor 可能不统一 | `CentaurHauls`/`Shanghai`/`Zhaoxin`/`兆芯` alias | Kylin: `.../cpuinfo.py:736-737` |
 | Loongson / 龙芯 | Kylin 识别 Loongson 并补 CPU 频率；Deepin 防止 Loongson name 被 lshw/dmidecode 覆盖 | 已有 Loongson name 保护、vendor alias、DMI/procfs 频率 fallback | LoongArch 真机样本仍不足 | 增加更多 `/proc/cpuinfo` fixture 和真机验证 | Kylin: `.../cpuinfo.py:738-741`；Deepin: `.../DeviceCpu.cpp:306-323` |
 | Phytium / 飞腾 | Kylin 识别 Phytium/D2000；Deepin 用 DMI Current Speed 补飞腾频率 | qurbrix 无特殊处理 | ARM64 频率和 vendor 风险 | `phytium`/`D2000`/`飞腾` alias，DMI Current Speed fallback | Kylin: `.../cpuinfo.py:730-731`，`.../cpuinfo.py:744-745`；Deepin: `.../DeviceCpu.cpp:384-390` |
-| Kunpeng / 鲲鹏 | Kylin 将 `huawei` model name 归一化为 Huawei；另有 Kirin `/proc/hardware` | qurbrix 无特殊处理 | ARM64 SoC vendor 可能只出现在 Hardware/implementer | 加 `/proc/cpuinfo Hardware` 和 Huawei/HiSilicon/Kunpeng alias | Kylin: `.../cpuinfo.py:732-733`；`.../cpuinfo.py:62-71` |
-| HiSilicon / 海思 | Kylin vendor 表包含 HISILICON，Kirin 走 `/proc/hardware` | qurbrix 无特殊处理 | SoC/声卡/GPU 相关 vendor 识别差 | alias 表覆盖 HiSilicon/Hisilicon/海思/Kirin | Kylin: `.../cpuinfo.py:479-483`；`.../cpuinfo.py:62-71` |
+| Kunpeng / 鲲鹏 | Kylin 将 `huawei` model name 归一化为 Huawei；另有 Kirin `/proc/hardware` | 已有 `/proc/cpuinfo` Hardware、Kirin `/proc/hardware` 和 HiSilicon/Kunpeng alias | ARM implementer/part 细分仍不足 | 增加更多真机 fixture | Kylin: `.../cpuinfo.py:732-733`；`.../cpuinfo.py:62-71` |
+| HiSilicon / 海思 | Kylin vendor 表包含 HISILICON，Kirin 走 `/proc/hardware` | 已有 HiSilicon/Kirin vendor 推断和 `/proc/hardware` Kirin fallback | SoC 声卡/GPU 等跨类别 vendor 识别仍可增强 | 后续在 audio/GPU 类别补 alias/enrichment | Kylin: `.../cpuinfo.py:479-483`；`.../cpuinfo.py:62-71` |
 | Sunway / 申威 | Deepin arch map 包含 `sw_64` | qurbrix 没有 arch alias | 申威架构显示和字段选择风险 | arch normalization 加 `sw_64`，CPU parser 接受非 x86 字段缺失 | Deepin: `.../commonfunction.cpp:25-33` |
-| ARM64 SoC | Deepin aarch64 走 board vendor generator；Kylin `/proc/cpuinfo Hardware` fallback | 已读取 `/proc/cpuinfo` 的 `Hardware`/`Processor` 并推断常见 vendor | `/proc/hardware` Kirin 专项仍缺 | 加 Kirin optional source 和 fixture | Deepin: `.../DeviceFactory.cpp:40-65`；Kylin: `.../sysinfo/__init__.py:220-228` |
+| ARM64 SoC | Deepin aarch64 走 board vendor generator；Kylin `/proc/cpuinfo Hardware` fallback | 已读取 `/proc/cpuinfo` 的 `Hardware`/`Processor`，并支持 `/proc/hardware` Kirin fallback | 真机样本仍不足 | 补更多 ARM64/SoC fixture | Deepin: `.../DeviceFactory.cpp:40-65`；Kylin: `.../sysinfo/__init__.py:220-228` |
 | LoongArch | Deepin arch alias 覆盖 `loongarch`/`loongarch64` | qurbrix 不归一化 arch | 架构展示和后续规则风险 | arch normalization + Loongson fixtures | Deepin: `.../commonfunction.cpp:30-32` |
 
 最小实现建议：
@@ -135,7 +135,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | `/sys/block` | Deepin 用 lsblk/sg | Kylin 磁盘逻辑复杂 | 当前 `lsblk` | P2 | 加 rotational/model/vendor/wwn fallback |
 | `/sys/bus/pci` | 参考项目重视 PCI/driver | lspci/lshw/driver | 当前 `lspci -nn -k` | P2 | 无 lspci 时读 sysfs modalias/vendor/device/class/driver |
 | `/sys/bus/usb` | Deepin USB 过滤/去重 | Kylin `lsusb -v` | 当前 `lsusb` | P2 | 无 lsusb 时读 sysfs；加 interface/class |
-| `lscpu` | CPU 主来源之一 | CPU 主来源之一 | CPU primary source，另有 lshw/DMI/procfs fallback | 已吸收主要 fallback | 后续强制英文 locale |
+| `lscpu` | CPU 主来源之一 | CPU 主来源之一 | CPU primary source，另有 lshw/DMI/procfs fallback | 已吸收主要 fallback，并强制英文 locale | 继续补真机样本 |
 | `lspci` | PCI/GPU/driver 来源 | 网络/GPU/声卡等来源 | PCI/GPU 来源 | P2 | 继续使用，补分类和 alias |
 | `lsusb` | USB 来源并带过滤/去重 | 使用更详细输出 | USB 基础来源 | P2 | 加 `lsusb -v` optional source |
 | `dmidecode` | BIOS/board/memory/CPU 修正 | 系统硬件常用来源 | BIOS/board/memory 来源；CPU 未用 | P0/P2 | CPU 可选补充；DMI 权限不足走 sysfs |
@@ -149,7 +149,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 
 | 类别 | Reference 行为 | qurbrix-hwinfo 当前状态 | 差距 | 严重程度 | 是否建议实现 | 证据 |
 | --- | --- | --- | --- | --- | --- | --- |
-| CPU | 多源合并、DMI fallback、国产 vendor/arch 处理 | 已实现多源合并和 `/proc/cpuinfo` fallback | `/proc/hardware` Kirin、locale、真机样本覆盖仍不足 | P1/P2 | 是 | Deepin `.../DeviceGenerator.cpp:173-259`；qurbrix `crates/hw-probe/src/existing.rs` |
+| CPU | 多源合并、DMI fallback、国产 vendor/arch 处理 | 已实现多源合并、`/proc/cpuinfo` fallback、`/proc/hardware` Kirin fallback 和 locale 强制 | 真机样本覆盖仍不足 | P1/P2 | 是 | Deepin `.../DeviceGenerator.cpp:173-259`；qurbrix `crates/hw-probe/src/existing.rs` |
 | 主板/BIOS/DMI | 多个 dmidecode type | dmidecode `0,1,2,3` | 权限不足无 sysfs fallback | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs:242-295` |
 | 内存 | dmidecode type 17 等 | dmidecode memory | dmidecode 失败无 `/proc/meminfo` 总量 fallback | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs:178-229` |
 | 硬盘/分区/控制器 | lsblk/sg/lshw/厂商修正 | lsblk disk only | 缺 SMART/temperature/controller/driver/sysfs | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs:126-164` |

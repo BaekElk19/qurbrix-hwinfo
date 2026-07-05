@@ -10,8 +10,8 @@ use hw_parser::{
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
     parse_gpu_lspci, parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu,
-    parse_lshw_processor, parse_proc_cpuinfo, parse_size_to_bytes, parse_speed_mtps,
-    parse_xrandr_query, parse_xrandr_verbose,
+    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_size_to_bytes,
+    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -54,6 +54,7 @@ impl Probe for CpuProbe {
             .run_command(&CommandSpec::new("dmidecode", ["-t", "4"]), ctx.timeout)
             .await;
         let proc_cpuinfo_result = ctx.runner.read_file(Path::new("/proc/cpuinfo")).await;
+        let proc_hardware_result = ctx.runner.read_file(Path::new("/proc/hardware")).await;
 
         let mut warnings = Vec::new();
         let lscpu = if lscpu_result.is_success() {
@@ -85,11 +86,23 @@ impl Probe for CpuProbe {
         } else {
             None
         };
+        let proc_hardware = if proc_hardware_result.is_success() {
+            let record = parse_proc_hardware(&proc_hardware_result.stdout);
+            (!record.is_empty()).then_some(record)
+        } else {
+            None
+        };
         let lscpu_contributed = lscpu.is_some();
         let lshw_contributed = lshw.is_some();
         let dmi_contributed = !dmi.is_empty();
         let proc_cpuinfo_contributed = proc_cpuinfo.is_some();
-        if lscpu.is_none() && lshw.is_none() && dmi.is_empty() && proc_cpuinfo.is_none() {
+        let proc_hardware_contributed = proc_hardware.is_some();
+        if lscpu.is_none()
+            && lshw.is_none()
+            && dmi.is_empty()
+            && proc_cpuinfo.is_none()
+            && proc_hardware.is_none()
+        {
             if !proc_cpuinfo_result.is_success() {
                 warnings.extend(
                     ProbeResult::source_failure(self.name(), &proc_cpuinfo_result).warnings,
@@ -103,7 +116,14 @@ impl Probe for CpuProbe {
         }
         let lscpu_vendor = lscpu.as_ref().and_then(|record| record.vendor.clone());
         let lshw_vendor = lshw.as_ref().and_then(|record| record.vendor.clone());
-        let merged = merge_cpu_records(merge_cpu_record_fallback(lscpu, proc_cpuinfo), lshw, &dmi);
+        let merged = merge_cpu_records(
+            merge_cpu_record_fallback(
+                merge_cpu_record_fallback(lscpu, proc_cpuinfo),
+                proc_hardware,
+            ),
+            lshw,
+            &dmi,
+        );
         let architecture = merged
             .architecture
             .as_deref()
@@ -169,6 +189,14 @@ impl Probe for CpuProbe {
         if proc_cpuinfo_contributed {
             device = device.with_source(SourceEvidence {
                 source: proc_cpuinfo_result.source,
+                kind: SourceKind::Procfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+        if proc_hardware_contributed {
+            device = device.with_source(SourceEvidence {
+                source: proc_hardware_result.source,
                 kind: SourceKind::Procfs,
                 status: SourceStatus::Success,
                 summary: None,

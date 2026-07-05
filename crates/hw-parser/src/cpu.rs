@@ -134,6 +134,19 @@ pub fn parse_proc_cpuinfo(input: &str) -> CpuRecord {
     record
 }
 
+pub fn parse_proc_hardware(input: &str) -> CpuRecord {
+    let mut record = CpuRecord::default();
+    let input_lc = input.to_ascii_lowercase();
+
+    if input.contains("HUAWEI Kirin 9006C") {
+        record.model_name = Some("HUAWEI Kirin 9006C".to_string());
+    } else if input.contains("HUAWEI Kirin 990") || input_lc.contains("kirin990") {
+        record.model_name = Some("HUAWEI Kirin 990".to_string());
+    }
+
+    record
+}
+
 pub fn parse_lshw_processor(input: &str) -> LshwCpuRecord {
     let mut record = LshwCpuRecord::default();
     for line in input.lines() {
