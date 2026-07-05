@@ -1,0 +1,2 @@
+Device AA:BB:CC:DD:EE:FF MX Master 3
+Device 11:22:33:44:55:66 Keyboard K380

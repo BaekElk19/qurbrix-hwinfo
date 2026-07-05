@@ -1,0 +1,12 @@
+I: Bus=0011 Vendor=0001 Product=0001 Version=ab41
+N: Name="AT Translated Set 2 keyboard"
+P: Phys=isa0060/serio0/input0
+S: Sysfs=/devices/platform/i8042/serio0/input/input0
+H: Handlers=sysrq kbd event0 leds
+B: PROP=0
+B: EV=120013
+
+I: Bus=0003 Vendor=046d Product=c077 Version=0111
+N: Name="Logitech USB Optical Mouse"
+P: Phys=usb-0000:00:14.0-1/input0
+H: Handlers=mouse0 event1

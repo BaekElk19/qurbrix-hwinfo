@@ -1,0 +1,3 @@
+Integrated Camera: Integrated C (usb-0000:00:14.0-8):
+	/dev/video0
+	/dev/video1

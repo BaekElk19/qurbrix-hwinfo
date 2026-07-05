@@ -1,0 +1,2 @@
+ 0 [PCH            ]: HDA-Intel - HDA Intel PCH
+                      HDA Intel PCH at 0xa1230000 irq 145

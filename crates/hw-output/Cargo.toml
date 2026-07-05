@@ -1,0 +1,12 @@
+[package]
+name = "hw-output"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+hw-model = { path = "../hw-model" }
+serde = { workspace = true }
+serde_json = { workspace = true }

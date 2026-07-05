@@ -1,0 +1,20 @@
+Device: /org/freedesktop/UPower/devices/battery_BAT0
+  native-path:          BAT0
+  vendor:               LGC
+  model:                LNV-5B10W139
+  serial:               1234
+  power supply:         yes
+  updated:              Sat 04 Jul 2026 07:00:00 PM CST (10 seconds ago)
+  has history:          yes
+  has statistics:       yes
+  battery
+    present:             yes
+    rechargeable:        yes
+    state:               discharging
+    energy:              42.1 Wh
+    energy-full:         50.2 Wh
+    energy-full-design:  57 Wh
+    voltage:             11.52 V
+    percentage:          83%
+    capacity:            88.0702%
+    technology:          lithium-polymer

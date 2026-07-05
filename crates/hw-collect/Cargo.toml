@@ -1,16 +1,16 @@
 [package]
 name = "hw-collect"
+edition.workspace = true
 version.workspace = true
-edition = "2021"
+license.workspace = true
+publish.workspace = true
 
 [dependencies]
-serde = { workspace = true }
 anyhow = { workspace = true }
-async-trait = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
 hw-model = { path = "../hw-model" }
+hw-probe = { path = "../hw-probe" }
 hw-source = { path = "../hw-source" }
-hw-parser = { path = "../hw-parser" }
-hw-merge = { path = "../hw-merge" }
-serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+hw-source = { path = "../hw-source" }

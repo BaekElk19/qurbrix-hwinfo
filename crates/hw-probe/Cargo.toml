@@ -1,0 +1,15 @@
+[package]
+name = "hw-probe"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+hw-model = { path = "../hw-model" }
+hw-parser = { path = "../hw-parser" }
+hw-source = { path = "../hw-source" }
+serde = { workspace = true }
+tokio = { workspace = true }
