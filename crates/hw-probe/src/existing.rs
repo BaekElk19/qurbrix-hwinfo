@@ -259,7 +259,9 @@ impl Probe for NetworkProbe {
             .run_command(&CommandSpec::new("ip", ["-j", "link"]), ctx.timeout)
             .await;
         if !result.is_success() {
-            return ProbeResult::source_failure(self.name(), &result);
+            let mut probe_result = ProbeResult::source_failure(self.name(), &result);
+            probe_result.devices = network_devices_from_sysfs(ctx).await;
+            return probe_result;
         }
         let records = match parse_ip_j_link_result(&result.stdout) {
             Ok(records) => records,
@@ -303,6 +305,59 @@ impl Probe for NetworkProbe {
             .collect();
         ProbeResult::with_devices(devices)
     }
+}
+
+async fn network_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
+    let paths = ctx.runner.glob("/sys/class/net/*").await.paths;
+    let mut devices = Vec::new();
+
+    for path in paths {
+        let Some(ifname) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if is_ignored_network_interface(ifname) {
+            continue;
+        }
+
+        let mac = read_optional_trimmed(ctx, &path.join("address")).await;
+        let operstate = read_optional_trimmed(ctx, &path.join("operstate")).await;
+        let speed_mbps = read_optional_trimmed(ctx, &path.join("speed"))
+            .await
+            .and_then(|speed| speed.parse().ok());
+        let duplex = read_optional_trimmed(ctx, &path.join("duplex")).await;
+
+        devices.push(
+            Device::new(
+                device_id::network(mac.as_deref(), ifname),
+                DeviceKind::Network,
+                ifname.to_string(),
+                DeviceProperties::Network(NetworkInfo {
+                    interface: Some(ifname.to_string()),
+                    mac,
+                    operstate,
+                    speed_mbps,
+                    duplex,
+                    ..Default::default()
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: path.display().to_string(),
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            }),
+        );
+    }
+
+    devices
+}
+
+async fn read_optional_trimmed(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {
+    let result = ctx.runner.read_file(path).await;
+    result
+        .is_success()
+        .then(|| result.stdout.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[async_trait]

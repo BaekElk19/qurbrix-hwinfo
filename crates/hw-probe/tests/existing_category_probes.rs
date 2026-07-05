@@ -5,7 +5,10 @@ use hw_source::{
     CommandSpec, FakeSourceRunner, GlobResult, SourceBytesResult, SourceErrorKind, SourceResult,
     SourceRunner,
 };
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 fn assert_source_status(device: &Device, source_name: &str, status: SourceStatus) {
     let source = device
@@ -388,6 +391,56 @@ async fn network_probe_filters_loopback_and_common_virtual_interfaces() {
 
     assert_eq!(result.devices.len(), 1);
     assert_eq!(result.devices[0].name, "eth0");
+}
+
+#[tokio::test]
+async fn network_probe_uses_sysfs_when_ip_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/net/*",
+            vec![
+                PathBuf::from("/sys/class/net/enp1s0"),
+                PathBuf::from("/sys/class/net/lo"),
+                PathBuf::from("/sys/class/net/veth1234"),
+            ],
+        )
+        .with_file("/sys/class/net/enp1s0/address", "aa:bb:cc:dd:ee:ff\n")
+        .with_file("/sys/class/net/enp1s0/operstate", "up\n")
+        .with_file("/sys/class/net/enp1s0/speed", "1000\n")
+        .with_file("/sys/class/net/enp1s0/duplex", "full\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = NetworkProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(
+        warning_pairs(&result),
+        vec![(Some("ip -j link"), "source_missing")]
+    );
+
+    let device = &result.devices[0];
+    assert_eq!(device.kind, DeviceKind::Network);
+    assert_eq!(device.name, "enp1s0");
+    assert_eq!(device.sources.len(), 1);
+    let source = device
+        .sources
+        .iter()
+        .find(|source| source.source == "/sys/class/net/enp1s0")
+        .expect("expected sysfs source evidence");
+    assert_eq!(source.kind, SourceKind::Sysfs);
+    assert_eq!(source.status, SourceStatus::Success);
+
+    match &device.properties {
+        DeviceProperties::Network(network) => {
+            assert_eq!(network.interface.as_deref(), Some("enp1s0"));
+            assert_eq!(network.mac.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
+            assert_eq!(network.operstate.as_deref(), Some("up"));
+            assert_eq!(network.speed_mbps, Some(1000));
+            assert_eq!(network.duplex.as_deref(), Some("full"));
+            assert!(network.ipv4.is_empty());
+            assert!(network.ipv6.is_empty());
+        }
+        other => panic!("expected network properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]

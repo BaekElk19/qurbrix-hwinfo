@@ -23,6 +23,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - BIOS/motherboard probing falls back to `/sys/class/dmi/id` when `dmidecode` is missing or denied.
 - Memory probing falls back to `/proc/meminfo` total memory when `dmidecode -t memory` cannot run.
 - Battery probing falls back to `/sys/class/power_supply/BAT*` when `upower --dump` cannot run.
+- Network probing falls back to `/sys/class/net/*` when `ip -j link` cannot run.
 
 Confirmed defects fixed during this audit:
 
@@ -38,6 +39,7 @@ Confirmed defects fixed during this audit:
 - `/sys/class/dmi/id` fallback now preserves BIOS/baseboard identity when `dmidecode -t 0,1,2,3` cannot run.
 - `/proc/meminfo` fallback now preserves aggregate memory capacity when `dmidecode -t memory` cannot run.
 - `/sys/class/power_supply` fallback now preserves battery identity, capacity, energy, voltage, cycle count, and present state when UPower cannot run.
+- `/sys/class/net` fallback now preserves interface name, MAC, operstate, speed, and duplex when `ip -j link` cannot run.
 
 ## Component Matrix
 
@@ -50,7 +52,7 @@ Confirmed defects fixed during this audit:
 | Memory | `dmidecode -t memory`, DIMM size/vendor/type/speed/slot/serial/part, filters `No Module Installed`; falls back to `/proc/meminfo` aggregate total when DMI is unavailable/permission denied. | Main DMI memory path from both references plus procfs total-memory fallback. | No `lshw_memory` or sysfs DIMM-level fallback when DMI is unavailable/permission denied. | P2 |
 | BIOS / motherboard / DMI | `dmidecode -t 0,1,2,3`, with `/sys/class/dmi/id` fallback for BIOS vendor/version/date and baseboard manufacturer/product/serial when dmidecode cannot run; empty dmidecode output still produces `source_empty` rather than generic devices. | Core DMI BIOS/baseboard parsing, sysfs DMI fallback, and Deepin-style skip-empty behavior. | Chassis/system/language/memory-array data not modeled. | P2 |
 | Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN`, disk-only filtering, parse failure warning. | Basic lsblk disk enumeration. | No lshw/hwinfo/sysfs/hdparm/smartctl fusion; no WWN/firmware/SMART/temp/controller/driver enrichment. | P2 |
-| Network | `ip -j link`, interface/MAC/operstate; filters loopback/common virtual interfaces; malformed JSON produces warning. | Basic network interface enumeration plus Kylin-style avoidance of non-physical interfaces. | No lshw/lspci/sysfs/NM DBus fallback; no driver/wireless/type/speed/duplex/IP enrichment. | P1 |
+| Network | `ip -j link`, interface/MAC/operstate; filters loopback/common virtual interfaces; malformed JSON produces warning; falls back to `/sys/class/net/*` for MAC, operstate, speed, and duplex when `ip` cannot run. | Basic network interface enumeration, Kylin-style avoidance of non-physical interfaces, and Linux sysfs fallback. | No lshw/lspci/NM DBus fallback; no driver/wireless/type/IP enrichment. | P1 |
 | Audio | `/proc/asound/cards`, card index/name. | Deepin/Kylin use `/proc/asound` and multimedia sources; base source absorbed. | No PCI/lshw/sysfs/codec fallback; no driver/vendor/codec/subsystem. | P1/P2 |
 | Bluetooth | `hciconfig -a`, optional `bluetoothctl paired-devices`; paired source failures warn. | Deepin `hciconfig` path and lightweight paired-device enrichment. | `hciconfig` is a hard dependency; no lshw/sysfs/DBus fallback. | P1/P2 |
 | Input | `/proc/bus/input/devices`, handlers/IDs, keyboard/mouse/touchpad/touchscreen classification. | Proc input parsing and basic classification. | No lshw/hwinfo enrichment; no EV bitmask classification; `Tablet` remains unused; limited bus-specific classification. | P2 |
@@ -72,7 +74,7 @@ Absorbed and preserved:
 
 Still weak:
 
-- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`NetworkProbe`, `StorageProbe`, `UsbProbe`).
+- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`StorageProbe`, `UsbProbe`).
 
 ## Deferred Items
 

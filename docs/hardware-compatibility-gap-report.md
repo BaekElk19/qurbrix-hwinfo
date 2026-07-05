@@ -49,7 +49,7 @@
 | Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN` | 只取 disk，缺少 SMART、temperature、controller/driver、sysfs fallback | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:126-164` |
 | GPU | `lspci -nn -k`，GPU parser | 能识别 PCI GPU 和 driver；缺少国产 GPU vendor alias/glxinfo/drm sysfs | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:309-354` |
 | Monitor | `xrandr --query` | 只取 connector/resolution；缺少 EDID/vendor/product/week/year/size | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:368-399` |
-| Network | `ip -j link` | 只取 interface/MAC/operstate；缺少 lshw/lspci driver、无线/以太分类、虚拟网卡过滤 | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:82-112` |
+| Network | `ip -j link` + `/sys/class/net/*` fallback | 正常路径取 interface/MAC/operstate，fallback 路径补 speed/duplex；过滤 loopback/常见虚拟网卡；缺少 lshw/lspci driver、无线/以太分类 | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Error handling | command/read/glob 抽象，区分 Missing/PermissionDenied/Timeout/Failed | 优于多数脚本式参考实现，建议保留 | `qurbrix-hwinfo/crates/hw-source/src/runner.rs:22-59` |
 | Dedup | 仅按 `Device.id` 合并 sources/warnings/capabilities | 有基础去重；缺少基于 bus/class/vendor/serial 的语义合并 | `qurbrix-hwinfo/crates/hw-collect/src/merge.rs:4-20` |
 | Tests/fixtures | 有 PCI/USB/蓝牙/打印机/电源/音频/输入/摄像头等 fixtures | 缺少 CPU 架构/国产平台 fixtures | `qurbrix-hwinfo/crates/hw-testdata/fixtures/pci/lspci-nn-k.txt`；`qurbrix-hwinfo/crates/hw-testdata/fixtures/usb/lsusb.txt` |
@@ -130,7 +130,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | `/proc/meminfo` | 非核心证据 | 有注释/部分系统信息逻辑 | memory probe 已在 dmidecode 失败时读取 MemTotal 总量 | 已吸收部分 | 后续如需 DIMM 级信息仍需 DMI/lshw/sysfs |
 | `/sys/class/dmi/id` | 主要走 dmidecode | 可作为系统信息来源 | BIOS/board probe 已作为 dmidecode fallback 使用 | 已吸收 | 后续可扩 chassis/system/language/memory-array |
 | `/sys/class/drm` | 参考项目使用 xrandr/EDID 类能力 | 通过 xrandr verbose/EDID | 未使用 | P1/P2 | headless/Wayland 下补 sysfs drm/edid |
-| `/sys/class/net` | Deepin 有网络 sysfs/MAC 过滤逻辑 | 结合 lshw/lspci/driver | 未直接用，只用 `ip -j link` | P1/P2 | 补 driver、type、wireless、virtual filter |
+| `/sys/class/net` | Deepin 有网络 sysfs/MAC 过滤逻辑 | 结合 lshw/lspci/driver | Network probe 已在 `ip` 失败时读取 MAC/operstate/speed/duplex | 已吸收部分 | 后续补 driver、type、wireless |
 | `/sys/class/power_supply` | Deepin 使用 upower/dmesg 类电源源 | Kylin 有电源厂商 alias | Battery probe 已在 UPower 失败时读取 BAT* sysfs 字段 | 已吸收部分 | 后续可补温度和厂商归一化 |
 | `/sys/block` | Deepin 用 lsblk/sg | Kylin 磁盘逻辑复杂 | 当前 `lsblk` | P2 | 加 rotational/model/vendor/wwn fallback |
 | `/sys/bus/pci` | 参考项目重视 PCI/driver | lspci/lshw/driver | 当前 `lspci -nn -k` | P2 | 无 lspci 时读 sysfs modalias/vendor/device/class/driver |
@@ -155,7 +155,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | 硬盘/分区/控制器 | lsblk/sg/lshw/厂商修正 | lsblk disk only | 缺 SMART/temperature/controller/driver/sysfs | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs:126-164` |
 | 显卡/显示控制器 | lspci、nvidia、国产 GPU alias | lspci GPU/driver | 缺国产 GPU alias、glxinfo/drm | P1/P2 | 是 | Kylin `.../cpuinfo.py:415-425`；qurbrix `crates/hw-probe/src/existing.rs:309-354` |
 | 显示器 | xrandr verbose/EDID/product/year/size | xrandr query connector/resolution | EDID 缺失 | P1/P2 | 是 | Kylin `.../cpuinfo.py:1339-1411`；qurbrix `crates/hw-probe/src/existing.rs:368-399` |
-| 网卡/Wi-Fi/蓝牙 | sysfs/MAC/filter、lshw/lspci/driver | network 只用 `ip -j link`；bluetooth 有 fixtures | 网卡分类/driver/virtual filter 不足 | P1/P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs:82-112` |
+| 网卡/Wi-Fi/蓝牙 | sysfs/MAC/filter、lshw/lspci/driver | network 使用 `ip -j link`，失败时 fallback 到 `/sys/class/net/*`；bluetooth 有 fixtures | 网卡分类/driver/wireless 标注不足 | P1/P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 声卡 | lshw、`/proc/asound`、SoC vendor | qurbrix 有音频类别和 fixtures | SoC/国产声卡规则不足 | P1/P2 | 是 | Deepin `.../GetInfoPool.cpp:88,119`；Kylin `.../cpuinfo.py:479-483` |
 | USB 设备 | 过滤 hub/重复/无效设备，详细描述符 | `lsusb` 基础字段 | 无 `lsusb -v`、interface、filter | P2 | 是 | qurbrix `crates/hw-probe/src/usb.rs:22-80` |
 | PCI 设备 | PCI 分类、驱动识别 | lspci class/vendor/device/driver | 分类消费只对部分类别；alias 不足 | P2 | 是 | qurbrix `crates/hw-probe/src/pci.rs:22-83` |
