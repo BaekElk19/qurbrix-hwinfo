@@ -18,6 +18,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - Monitor uses `xrandr --query`, `xrandr --verbose`, and `/sys/class/drm/*/edid`, parses EDID in-process, and preserves monitor devices when EDID parsing fails.
 - GPU uses `lspci -nn -k`, normalizes common and domestic GPU vendor names, and now falls back to PCI vendor IDs when lspci text is generic.
 - Source execution has structured `Missing`, `PermissionDenied`, `Timeout`, and `Failed` classifications, which is cleaner than most reference scripts and should remain the project-wide pattern.
+- Command execution forces `LC_ALL=C`, `LANG=C`, and `LANGUAGE=en`, absorbing Deepin/Kylin's locale-stabilization practice for English-key parsers.
 
 Confirmed defects fixed during this audit:
 
@@ -28,12 +29,13 @@ Confirmed defects fixed during this audit:
 - Loopback/common virtual network interfaces, UPower line-power devices, USB root hubs/hubs, empty BIOS DMI output, and duplicate UVC camera video nodes are now filtered.
 - Malformed `ip -j link` / `lsblk -J` output and failed optional Bluetooth/printer enrichment sources now produce warnings instead of silently returning incomplete data.
 - `/proc/cpuinfo` fallback now covers ARM-style `Hardware`/`Processor`, `cpu MHz`, `Features`, `BogoMIPS`, and logical processor counts.
+- English/C locale is now enforced for real command execution, preventing localized command keys from silently breaking parsers such as `lscpu`.
 
 ## Component Matrix
 
 | Component | Current qurbrix implementation | Absorbed from references | Remaining gaps | Priority |
 | --- | --- | --- | --- | --- |
-| CPU | `CpuProbe` runs `lscpu`, `lshw -class processor`, `dmidecode -t 4`, and optional `/proc/cpuinfo`; parser reads extended lscpu, DMI type 4, and procfs `Hardware`/`Processor` fallback fields; merge handles DMI counts/speeds and Loongson protection. | Deepin CPU three-source merge, DMI count correction, Loongson/lshw protection, Phytium DMI current-speed fallback. Kylin `/proc/cpuinfo` `Hardware` fallback and CPU vendor aliases are partially absorbed. | `lscpu` locale is not forced to English; no `/proc/hardware` Kirin fallback; parsed family/model/stepping/bogomips/virtualization are not exposed in `CpuInfo`. | P0/P1/P2 |
+| CPU | `CpuProbe` runs `lscpu`, `lshw -class processor`, `dmidecode -t 4`, and optional `/proc/cpuinfo`; parser reads extended lscpu, DMI type 4, and procfs `Hardware`/`Processor` fallback fields; merge handles DMI counts/speeds and Loongson protection. | Deepin CPU three-source merge, DMI count correction, Loongson/lshw protection, Phytium DMI current-speed fallback, locale-stable command execution. Kylin `/proc/cpuinfo` `Hardware` fallback, CPU vendor aliases, and `LANGUAGE=en` command practice are partially absorbed. | No `/proc/hardware` Kirin fallback; parsed family/model/stepping/bogomips/virtualization are not exposed in `CpuInfo`. | P1/P2 |
 | Architecture/vendor normalization | `normalize_arch`, `normalize_cpu_vendor_id`, `infer_cpu_vendor_from_name`, `normalize_gpu_vendor`, `normalize_gpu_vendor_id`. | Deepin arch aliases for amd64/arm64/sw_64/loongarch; Kylin domestic CPU/GPU vendor heuristics. | Huawei/Kunpeng/HiSilicon canonical choice intentionally differs from Kylin; alias tables remain intentionally small. | P1 |
 | Monitor | `xrandr --query` for connector/resolution, `xrandr --verbose` and sysfs EDID for identity; EDID parser fills manufacturer/product/date/size/preferred mode. | Kylin xrandr verbose EDID extraction; Deepin sysfs DRM EDID parsing pattern; no `/tmp` temp file or external `edid-decode`. | No gamma/inch/maxmode fields; no `hwinfo_monitor`; ambiguous duplicate sysfs connectors are skipped rather than matched by card. | P2 |
 | GPU | `lspci -nn -k` display/VGA/3D records, driver/modules, text and numeric vendor normalization. | PCI GPU parsing and domestic GPU aliases from Kylin; driver extraction from lspci. | No `lshw -C display`, `glxinfo -B`, `/sys/class/drm/card*/device`, dmesg/nvidia memory enrichment. | P2/P3 |
@@ -55,7 +57,7 @@ Confirmed defects fixed during this audit:
 
 Absorbed and preserved:
 
-- `hw-source` classifies command/file errors as `Missing`, `PermissionDenied`, `Timeout`, or `Failed`.
+- `hw-source` classifies command/file errors as `Missing`, `PermissionDenied`, `Timeout`, or `Failed`, and runs commands with stable English/C locale environment.
 - CPU treats `lscpu`, `lshw`, and `dmidecode` as optional and emits warnings for failed sources while still producing a CPU when any useful source exists.
 - Monitor treats `xrandr --verbose` and sysfs EDID as optional and continues after bad EDID with `edid_parse_failed` warnings.
 - Fake runners and fixture tests cover missing commands, permission-denied DMI, bad EDID, ambiguous sysfs connectors, and numeric GPU vendor IDs.
@@ -68,7 +70,6 @@ Still weak:
 
 These are not fully implemented yet and should remain tracked:
 
-- P0: force English/C locale for command sources whose parsers depend on English keys (`lscpu`, and later any similar command parsers).
 - P1: add warning-on-empty-parse for additional parsers where command success does not mean usable data.
 - P1a: add `/proc/hardware` Kirin fallback for CPU and fixtures for Kirin/HiSilicon procfs edge cases.
 - P1b: decide whether parsed CPU family/model/stepping/bogomips/virtualization should be exposed in `CpuInfo` or kept parser-internal.

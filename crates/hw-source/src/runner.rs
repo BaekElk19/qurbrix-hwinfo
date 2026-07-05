@@ -24,6 +24,9 @@ impl SourceRunner for RealSourceRunner {
         let display = command.display_name();
         let mut cmd = Command::new(&command.program);
         cmd.args(&command.args);
+        cmd.env("LC_ALL", "C")
+            .env("LANG", "C")
+            .env("LANGUAGE", "en");
         match time::timeout(timeout, cmd.output()).await {
             Ok(Ok(output)) => SourceResult {
                 source: display,

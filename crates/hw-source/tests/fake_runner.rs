@@ -59,6 +59,22 @@ async fn real_runner_reports_missing_command() {
 }
 
 #[tokio::test]
+async fn real_runner_forces_stable_english_command_locale() {
+    let runner = hw_source::RealSourceRunner;
+    let result = runner
+        .run_command(
+            &CommandSpec::new("env", std::iter::empty::<&str>()),
+            Duration::from_secs(1),
+        )
+        .await;
+
+    assert!(result.is_success());
+    assert!(result.stdout.lines().any(|line| line == "LC_ALL=C"));
+    assert!(result.stdout.lines().any(|line| line == "LANG=C"));
+    assert!(result.stdout.lines().any(|line| line == "LANGUAGE=en"));
+}
+
+#[tokio::test]
 async fn real_runner_reads_non_utf8_file_lossily() {
     let path = std::env::temp_dir().join(format!("qurbrix-hw-non-utf8-{}", std::process::id()));
     std::fs::write(&path, [b'o', b'k', 0xff]).unwrap();
