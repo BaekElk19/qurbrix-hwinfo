@@ -42,7 +42,7 @@ pub fn parse_lspci_nn_k(input: &str) -> Vec<PciRecord> {
                 address,
                 class_name: Some(caps["class"].trim().to_string()),
                 class_id: Some(caps["class_id"].to_ascii_lowercase()),
-                vendor: Some(caps["description"].trim().to_string()),
+                device: Some(caps["description"].trim().to_string()),
                 vendor_id: Some(caps["vendor_id"].to_ascii_lowercase()),
                 device_id: Some(caps["device_id"].to_ascii_lowercase()),
                 ..Default::default()
