@@ -1,4 +1,4 @@
-use hw_model::{DeviceKind, DeviceProperties};
+use hw_model::{DeviceKind, DeviceProperties, SourceKind};
 use hw_probe::{BiosProbe, GpuProbe, MemoryProbe, MonitorProbe, Probe, ProbeContext};
 use hw_source::FakeSourceRunner;
 use std::{path::PathBuf, time::Duration};
@@ -40,6 +40,63 @@ async fn bios_probe_does_not_emit_generic_devices_for_empty_dmi_output() {
     assert!(result.devices.is_empty());
     assert_eq!(result.warnings.len(), 1);
     assert_eq!(result.warnings[0].code, "source_empty");
+}
+
+#[tokio::test]
+async fn bios_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_file("/sys/class/dmi/id/bios_vendor", "LENOVO\n")
+        .with_file("/sys/class/dmi/id/bios_version", "N2IET98W\n")
+        .with_file("/sys/class/dmi/id/bios_date", "01/01/2026\n")
+        .with_file("/sys/class/dmi/id/board_vendor", "LENOVO\n")
+        .with_file("/sys/class/dmi/id/board_name", "20XX\n")
+        .with_file("/sys/class/dmi/id/board_serial", "BOARD123\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some("dmidecode -t 0,1,2,3")
+    );
+
+    let bios = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Bios)
+        .expect("expected bios device");
+    assert_eq!(bios.name, "N2IET98W");
+    assert!(bios.sources.iter().any(|source| {
+        source.kind == SourceKind::Sysfs && source.source == "/sys/class/dmi/id"
+    }));
+    match &bios.properties {
+        DeviceProperties::Bios(info) => {
+            assert_eq!(info.vendor.as_deref(), Some("LENOVO"));
+            assert_eq!(info.version.as_deref(), Some("N2IET98W"));
+            assert_eq!(info.release_date.as_deref(), Some("01/01/2026"));
+        }
+        other => panic!("expected bios properties, got {other:?}"),
+    }
+
+    let board = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Motherboard)
+        .expect("expected motherboard device");
+    assert_eq!(board.name, "20XX");
+    assert!(board.sources.iter().any(|source| {
+        source.kind == SourceKind::Sysfs && source.source == "/sys/class/dmi/id"
+    }));
+    match &board.properties {
+        DeviceProperties::Motherboard(info) => {
+            assert_eq!(info.manufacturer.as_deref(), Some("LENOVO"));
+            assert_eq!(info.product_name.as_deref(), Some("20XX"));
+            assert_eq!(info.serial.as_deref(), Some("BOARD123"));
+        }
+        other => panic!("expected motherboard properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]

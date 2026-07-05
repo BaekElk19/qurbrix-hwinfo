@@ -11,7 +11,7 @@ use hw_parser::{
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
     parse_gpu_lspci, parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu,
     parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_size_to_bytes,
-    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
+    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -456,7 +456,11 @@ impl Probe for BiosProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::source_failure(self.name(), &result);
+            let mut fallback = ProbeResult::source_failure(self.name(), &result);
+            if let Some(dmi) = read_sysfs_dmi(ctx).await {
+                fallback.devices = bios_board_devices(dmi, "/sys/class/dmi/id", SourceKind::Sysfs);
+            }
+            return fallback;
         }
         let dmi = parse_dmidecode_bios_board(&result.stdout);
         if dmi == Default::default() {
@@ -470,49 +474,89 @@ impl Probe for BiosProbe {
                 consumed: Vec::new(),
             };
         }
-        let bios = Device::new(
-            "bios:0",
-            DeviceKind::Bios,
-            dmi.bios_version
-                .clone()
-                .unwrap_or_else(|| "BIOS".to_string()),
-            DeviceProperties::Bios(BiosInfo {
-                vendor: dmi.bios_vendor,
-                version: dmi.bios_version,
-                release_date: dmi.bios_release_date,
-                ..Default::default()
-            }),
-        )
-        .with_source(SourceEvidence {
-            source: result.source.clone(),
-            kind: SourceKind::Command,
-            status: SourceStatus::Success,
-            summary: None,
-        });
-        let board = Device::new(
-            dmi.board_serial
-                .as_ref()
-                .map(|serial| format!("motherboard:serial:{serial}"))
-                .unwrap_or_else(|| "motherboard:0".to_string()),
-            DeviceKind::Motherboard,
-            dmi.board_product_name
-                .clone()
-                .unwrap_or_else(|| "Motherboard".to_string()),
-            DeviceProperties::Motherboard(MotherboardInfo {
-                manufacturer: dmi.board_manufacturer,
-                product_name: dmi.board_product_name,
-                serial: dmi.board_serial,
-                ..Default::default()
-            }),
-        )
-        .with_source(SourceEvidence {
-            source: result.source,
-            kind: SourceKind::Command,
-            status: SourceStatus::Success,
-            summary: None,
-        });
-        ProbeResult::with_devices(vec![bios, board])
+        ProbeResult::with_devices(bios_board_devices(dmi, &result.source, SourceKind::Command))
     }
+}
+
+async fn read_sysfs_dmi(ctx: &ProbeContext<'_>) -> Option<DmiBiosBoardRecord> {
+    let dmi = DmiBiosBoardRecord {
+        bios_vendor: read_sysfs_dmi_value(ctx, "bios_vendor").await,
+        bios_version: read_sysfs_dmi_value(ctx, "bios_version").await,
+        bios_release_date: read_sysfs_dmi_value(ctx, "bios_date").await,
+        board_manufacturer: read_sysfs_dmi_value(ctx, "board_vendor").await,
+        board_product_name: read_sysfs_dmi_value(ctx, "board_name").await,
+        board_serial: read_sysfs_dmi_value(ctx, "board_serial").await,
+    };
+
+    if dmi == Default::default() {
+        None
+    } else {
+        Some(dmi)
+    }
+}
+
+async fn read_sysfs_dmi_value(ctx: &ProbeContext<'_>, name: &str) -> Option<String> {
+    let path = Path::new("/sys/class/dmi/id").join(name);
+    let result = ctx.runner.read_file(&path).await;
+    if result.is_success() {
+        clean_sysfs_dmi_value(&result.stdout)
+    } else {
+        None
+    }
+}
+
+fn clean_sysfs_dmi_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && !value.eq_ignore_ascii_case("Not Specified")).then(|| value.to_string())
+}
+
+fn bios_board_devices(
+    dmi: DmiBiosBoardRecord,
+    source: &str,
+    source_kind: SourceKind,
+) -> Vec<Device> {
+    let bios = Device::new(
+        "bios:0",
+        DeviceKind::Bios,
+        dmi.bios_version
+            .clone()
+            .unwrap_or_else(|| "BIOS".to_string()),
+        DeviceProperties::Bios(BiosInfo {
+            vendor: dmi.bios_vendor,
+            version: dmi.bios_version,
+            release_date: dmi.bios_release_date,
+            ..Default::default()
+        }),
+    )
+    .with_source(SourceEvidence {
+        source: source.to_string(),
+        kind: source_kind,
+        status: SourceStatus::Success,
+        summary: None,
+    });
+    let board = Device::new(
+        dmi.board_serial
+            .as_ref()
+            .map(|serial| format!("motherboard:serial:{serial}"))
+            .unwrap_or_else(|| "motherboard:0".to_string()),
+        DeviceKind::Motherboard,
+        dmi.board_product_name
+            .clone()
+            .unwrap_or_else(|| "Motherboard".to_string()),
+        DeviceProperties::Motherboard(MotherboardInfo {
+            manufacturer: dmi.board_manufacturer,
+            product_name: dmi.board_product_name,
+            serial: dmi.board_serial,
+            ..Default::default()
+        }),
+    )
+    .with_source(SourceEvidence {
+        source: source.to_string(),
+        kind: source_kind,
+        status: SourceStatus::Success,
+        summary: None,
+    });
+    vec![bios, board]
 }
 
 #[async_trait]

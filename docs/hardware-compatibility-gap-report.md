@@ -128,7 +128,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | --- | --- | --- | --- | --- | --- |
 | `/proc/cpuinfo` | 间接经 lscpu/lshw，另有 `/proc/boardinfo` | 直接读取，支持 `Hardware` fallback | CPU probe 已作为 optional procfs fallback 使用 | 已吸收 | 继续补更多国产 CPU fixtures |
 | `/proc/meminfo` | 非核心证据 | 有注释/部分系统信息逻辑 | 未用于 memory probe | P2 | dmidecode 失败时可取总内存 |
-| `/sys/class/dmi/id` | 主要走 dmidecode | 可作为系统信息来源 | 未作为 DMI fallback | P2 | dmidecode 权限不足时读取 sysfs DMI |
+| `/sys/class/dmi/id` | 主要走 dmidecode | 可作为系统信息来源 | BIOS/board probe 已作为 dmidecode fallback 使用 | 已吸收 | 后续可扩 chassis/system/language/memory-array |
 | `/sys/class/drm` | 参考项目使用 xrandr/EDID 类能力 | 通过 xrandr verbose/EDID | 未使用 | P1/P2 | headless/Wayland 下补 sysfs drm/edid |
 | `/sys/class/net` | Deepin 有网络 sysfs/MAC 过滤逻辑 | 结合 lshw/lspci/driver | 未直接用，只用 `ip -j link` | P1/P2 | 补 driver、type、wireless、virtual filter |
 | `/sys/class/power_supply` | Deepin 使用 upower/dmesg 类电源源 | Kylin 有电源厂商 alias | 需看 battery probe；当前总体 runner 支持 read_file | P2 | 可加 sysfs battery fallback |
@@ -138,7 +138,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | `lscpu` | CPU 主来源之一 | CPU 主来源之一 | CPU primary source，另有 lshw/DMI/procfs fallback | 已吸收主要 fallback，并强制英文 locale | 继续补真机样本 |
 | `lspci` | PCI/GPU/driver 来源 | 网络/GPU/声卡等来源 | PCI/GPU 来源 | P2 | 继续使用，补分类和 alias |
 | `lsusb` | USB 来源并带过滤/去重 | 使用更详细输出 | USB 基础来源 | P2 | 加 `lsusb -v` optional source |
-| `dmidecode` | BIOS/board/memory/CPU 修正 | 系统硬件常用来源 | BIOS/board/memory 来源；CPU 未用 | P0/P2 | CPU 可选补充；DMI 权限不足走 sysfs |
+| `dmidecode` | BIOS/board/memory/CPU 修正 | 系统硬件常用来源 | CPU、BIOS/board/memory 来源；BIOS/board 权限不足走 sysfs | 已吸收部分 | memory 仍可补 `/proc/meminfo`/sysfs fallback |
 | `lshw` | CPU/audio/network 等多类 fallback | 网络/硬件详情 | 未使用 | P2 | 可选，不作为硬依赖 |
 | `hwinfo` | monitor/general 来源 | 依赖或脚本中存在 | 未使用 | P3 | Not Applicable by default，避免重依赖 |
 | `udevadm` | 搜索范围内需关注 | 参考项目可通过 udev 类源 | 未见核心使用 | P2 | 可用于 USB/PCI/input 属性补充 |
@@ -150,7 +150,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | 类别 | Reference 行为 | qurbrix-hwinfo 当前状态 | 差距 | 严重程度 | 是否建议实现 | 证据 |
 | --- | --- | --- | --- | --- | --- | --- |
 | CPU | 多源合并、DMI fallback、国产 vendor/arch 处理 | 已实现多源合并、`/proc/cpuinfo` fallback、`/proc/hardware` Kirin fallback 和 locale 强制 | 真机样本覆盖仍不足 | P1/P2 | 是 | Deepin `.../DeviceGenerator.cpp:173-259`；qurbrix `crates/hw-probe/src/existing.rs` |
-| 主板/BIOS/DMI | 多个 dmidecode type | dmidecode `0,1,2,3` | 权限不足无 sysfs fallback | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs:242-295` |
+| 主板/BIOS/DMI | 多个 dmidecode type | dmidecode `0,1,2,3` + `/sys/class/dmi/id` fallback | chassis/system/language/memory-array 未建模 | P2 | 部分 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 内存 | dmidecode type 17 等 | dmidecode memory | dmidecode 失败无 `/proc/meminfo` 总量 fallback | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs:178-229` |
 | 硬盘/分区/控制器 | lsblk/sg/lshw/厂商修正 | lsblk disk only | 缺 SMART/temperature/controller/driver/sysfs | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs:126-164` |
 | 显卡/显示控制器 | lspci、nvidia、国产 GPU alias | lspci GPU/driver | 缺国产 GPU alias、glxinfo/drm | P1/P2 | 是 | Kylin `.../cpuinfo.py:415-425`；qurbrix `crates/hw-probe/src/existing.rs:309-354` |

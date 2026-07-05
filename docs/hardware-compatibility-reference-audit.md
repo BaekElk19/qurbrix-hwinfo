@@ -20,6 +20,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - GPU uses `lspci -nn -k`, normalizes common and domestic GPU vendor names, and now falls back to PCI vendor IDs when lspci text is generic.
 - Source execution has structured `Missing`, `PermissionDenied`, `Timeout`, and `Failed` classifications, which is cleaner than most reference scripts and should remain the project-wide pattern.
 - Command execution forces `LC_ALL=C`, `LANG=C`, and `LANGUAGE=en`, absorbing Deepin/Kylin's locale-stabilization practice for English-key parsers.
+- BIOS/motherboard probing falls back to `/sys/class/dmi/id` when `dmidecode` is missing or denied.
 
 Confirmed defects fixed during this audit:
 
@@ -32,6 +33,7 @@ Confirmed defects fixed during this audit:
 - `/proc/cpuinfo` fallback now covers ARM-style `Hardware`/`Processor`, `cpu MHz`, `Features`, `BogoMIPS`, and logical processor counts.
 - English/C locale is now enforced for real command execution, preventing localized command keys from silently breaking parsers such as `lscpu`.
 - `/proc/hardware` fallback now recognizes `HUAWEI Kirin 990`, `kirin990`, and `HUAWEI Kirin 9006C`.
+- `/sys/class/dmi/id` fallback now preserves BIOS/baseboard identity when `dmidecode -t 0,1,2,3` cannot run.
 
 ## Component Matrix
 
@@ -42,7 +44,7 @@ Confirmed defects fixed during this audit:
 | Monitor | `xrandr --query` for connector/resolution, `xrandr --verbose` and sysfs EDID for identity; EDID parser fills manufacturer/product/date/size/preferred mode. | Kylin xrandr verbose EDID extraction; Deepin sysfs DRM EDID parsing pattern; no `/tmp` temp file or external `edid-decode`. | No gamma/inch/maxmode fields; no `hwinfo_monitor`; ambiguous duplicate sysfs connectors are skipped rather than matched by card. | P2 |
 | GPU | `lspci -nn -k` display/VGA/3D records, driver/modules, text and numeric vendor normalization. | PCI GPU parsing and domestic GPU aliases from Kylin; driver extraction from lspci. | No `lshw -C display`, `glxinfo -B`, `/sys/class/drm/card*/device`, dmesg/nvidia memory enrichment. | P2/P3 |
 | Memory | `dmidecode -t memory`, DIMM size/vendor/type/speed/slot/serial/part, filters `No Module Installed`. | Main DMI memory path from both references. | No `lshw_memory`, `/proc/meminfo`, or sysfs fallback when DMI is unavailable/permission denied. | P2 |
-| BIOS / motherboard / DMI | `dmidecode -t 0,1,2,3`, BIOS vendor/version/date and baseboard manufacturer/product/serial; empty DMI output produces `source_empty` rather than generic devices. | Core DMI BIOS/baseboard parsing and Deepin-style skip-empty behavior. | No `/sys/class/dmi/id` fallback; chassis/system/language/memory-array data not modeled. | P2 |
+| BIOS / motherboard / DMI | `dmidecode -t 0,1,2,3`, with `/sys/class/dmi/id` fallback for BIOS vendor/version/date and baseboard manufacturer/product/serial when dmidecode cannot run; empty dmidecode output still produces `source_empty` rather than generic devices. | Core DMI BIOS/baseboard parsing, sysfs DMI fallback, and Deepin-style skip-empty behavior. | Chassis/system/language/memory-array data not modeled. | P2 |
 | Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN`, disk-only filtering, parse failure warning. | Basic lsblk disk enumeration. | No lshw/hwinfo/sysfs/hdparm/smartctl fusion; no WWN/firmware/SMART/temp/controller/driver enrichment. | P2 |
 | Network | `ip -j link`, interface/MAC/operstate; filters loopback/common virtual interfaces; malformed JSON produces warning. | Basic network interface enumeration plus Kylin-style avoidance of non-physical interfaces. | No lshw/lspci/sysfs/NM DBus fallback; no driver/wireless/type/speed/duplex/IP enrichment. | P1 |
 | Audio | `/proc/asound/cards`, card index/name. | Deepin/Kylin use `/proc/asound` and multimedia sources; base source absorbed. | No PCI/lshw/sysfs/codec fallback; no driver/vendor/codec/subsystem. | P1/P2 |
@@ -66,7 +68,7 @@ Absorbed and preserved:
 
 Still weak:
 
-- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`NetworkProbe`, `StorageProbe`, `MemoryProbe`, `BiosProbe`, `UsbProbe`, `BatteryProbe`).
+- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`NetworkProbe`, `StorageProbe`, `MemoryProbe`, `UsbProbe`, `BatteryProbe`).
 
 ## Deferred Items
 
@@ -74,7 +76,6 @@ These are not fully implemented yet and should remain tracked:
 
 - P1: add warning-on-empty-parse for additional parsers where command success does not mean usable data.
 - P1b: decide whether parsed CPU family/model/stepping/bogomips/virtualization should be exposed in `CpuInfo` or kept parser-internal.
-- P1/P2: add `/sys/class/dmi/id` fallback for DMI.
 - P2: add network/sysfs, storage/sysfs/SMART, USB verbose/sysfs, camera/sysfs, audio codec/sysfs, Bluetooth DBus/sysfs enrichments.
 - P3: optional heavy display/GPU sources such as `glxinfo`, `hwinfo`, and vendor-specific tools.
 
