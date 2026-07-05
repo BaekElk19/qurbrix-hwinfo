@@ -19,6 +19,59 @@ async fn audio_probe_reads_proc_asound() {
 }
 
 #[tokio::test]
+async fn audio_probe_uses_sysfs_when_proc_asound_cards_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/sound/card*",
+            vec![
+                PathBuf::from("/sys/class/sound/card1"),
+                PathBuf::from("/sys/class/sound/card10"),
+                PathBuf::from("/sys/class/sound/card2"),
+                PathBuf::from("/sys/class/sound/controlC0"),
+                PathBuf::from("/sys/class/sound/pcmC0D0p"),
+                PathBuf::from("/sys/class/sound/card-test"),
+                PathBuf::from("/sys/class/sound/card0"),
+            ],
+        )
+        .with_file("/sys/class/sound/card0/id", "PCH\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = AudioProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 4);
+    assert_eq!(result.devices[0].kind, DeviceKind::Audio);
+    assert_eq!(result.devices[0].name, "PCH");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    assert_eq!(
+        result.devices[0].sources[0].source,
+        "/sys/class/sound/card0"
+    );
+    assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
+    assert_eq!(result.devices[0].sources[0].status, SourceStatus::Success);
+
+    let DeviceProperties::Audio(info) = &result.devices[0].properties else {
+        panic!("expected audio properties");
+    };
+    assert_eq!(info.card_index, Some(0));
+    assert_eq!(info.card_name.as_deref(), Some("PCH"));
+
+    assert_eq!(result.devices[1].name, "Audio card 1");
+    let DeviceProperties::Audio(info) = &result.devices[1].properties else {
+        panic!("expected audio properties");
+    };
+    assert_eq!(info.card_index, Some(1));
+    assert_eq!(info.card_name.as_deref(), Some("Audio card 1"));
+    assert_eq!(result.devices[2].name, "Audio card 2");
+    assert_eq!(result.devices[3].name, "Audio card 10");
+
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some("/proc/asound/cards")
+    );
+}
+
+#[tokio::test]
 async fn battery_probe_reads_upower() {
     let runner = FakeSourceRunner::new().with_command(
         "upower",
