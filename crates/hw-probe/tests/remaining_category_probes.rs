@@ -32,6 +32,17 @@ async fn bios_probe_outputs_bios_and_motherboard_devices() {
 }
 
 #[tokio::test]
+async fn bios_probe_does_not_emit_generic_devices_for_empty_dmi_output() {
+    let runner = FakeSourceRunner::new().with_command("dmidecode", ["-t", "0,1,2,3"], "");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_empty");
+}
+
+#[tokio::test]
 async fn gpu_and_monitor_probes_output_devices() {
     let runner = FakeSourceRunner::new()
         .with_command("lspci", ["-nn", "-k"], "00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics [8086:9a49]\n\tKernel driver in use: i915\n")

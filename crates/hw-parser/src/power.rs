@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PowerRecord {
+    pub device_path: Option<String>,
     pub native_path: Option<String>,
     pub vendor: Option<String>,
     pub model: Option<String>,
@@ -24,7 +25,10 @@ pub fn parse_upower_dump(input: &str) -> Vec<PowerRecord> {
             if let Some(record) = current.take() {
                 records.push(record);
             }
-            current = Some(PowerRecord::default());
+            current = Some(PowerRecord {
+                device_path: line.strip_prefix("Device: ").map(|value| value.to_string()),
+                ..Default::default()
+            });
             continue;
         }
         let Some(record) = current.as_mut() else {

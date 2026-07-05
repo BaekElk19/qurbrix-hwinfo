@@ -32,6 +32,7 @@ impl Probe for UsbProbe {
         }
         let devices = parse_lsusb(&result.stdout)
             .into_iter()
+            .filter(|record| !is_usb_hub(record.product.as_deref()))
             .map(|record| {
                 let id = device_id::usb(
                     record.bus.as_deref(),
@@ -79,4 +80,12 @@ impl Probe for UsbProbe {
             .collect();
         ProbeResult::with_devices(devices)
     }
+}
+
+fn is_usb_hub(product: Option<&str>) -> bool {
+    let product = product.unwrap_or_default().to_ascii_lowercase();
+    product.contains("root hub")
+        || product.ends_with(" hub")
+        || product.contains(" hub ")
+        || product.contains(" hub,")
 }

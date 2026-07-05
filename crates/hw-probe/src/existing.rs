@@ -180,6 +180,7 @@ impl Probe for NetworkProbe {
         }
         let devices = parse_ip_j_link(&result.stdout)
             .into_iter()
+            .filter(|net| !is_ignored_network_interface(&net.ifname))
             .map(|net| {
                 Device::new(
                     device_id::network(net.address.as_deref(), &net.ifname),
@@ -342,6 +343,17 @@ impl Probe for BiosProbe {
             return ProbeResult::source_failure(self.name(), &result);
         }
         let dmi = parse_dmidecode_bios_board(&result.stdout);
+        if dmi == Default::default() {
+            return ProbeResult {
+                devices: Vec::new(),
+                warnings: vec![ScanWarning::new(
+                    "source_empty",
+                    "bios source produced no DMI records",
+                )
+                .with_source(result.source)],
+                consumed: Vec::new(),
+            };
+        }
         let bios = Device::new(
             "bios:0",
             DeviceKind::Bios,
@@ -594,6 +606,16 @@ impl Probe for MonitorProbe {
             consumed: Vec::new(),
         }
     }
+}
+
+fn is_ignored_network_interface(ifname: &str) -> bool {
+    if ifname == "lo" {
+        return true;
+    }
+    let prefixes = [
+        "docker", "veth", "br-", "virbr", "lxcbr", "cni", "flannel", "tun", "tap",
+    ];
+    prefixes.iter().any(|prefix| ifname.starts_with(prefix))
 }
 
 fn apply_first_edid(

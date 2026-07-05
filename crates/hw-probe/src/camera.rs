@@ -32,28 +32,25 @@ impl Probe for CameraProbe {
         }
         let devices = parse_v4l2_list_devices(&result.stdout)
             .into_iter()
-            .flat_map(|cam| {
-                let source = result.source.clone();
-                cam.nodes
-                    .into_iter()
-                    .map(move |node| {
-                        Device::new(
-                            device_id::camera(&node),
-                            DeviceKind::Camera,
-                            cam.name.clone(),
-                            DeviceProperties::Camera(CameraInfo {
-                                video_node: Some(node),
-                                capabilities: Vec::new(),
-                            }),
-                        )
-                        .with_source(SourceEvidence {
-                            source: source.clone(),
-                            kind: SourceKind::Command,
-                            status: SourceStatus::Success,
-                            summary: None,
-                        })
-                    })
-                    .collect::<Vec<_>>()
+            .filter_map(|cam| {
+                let node = cam.nodes.into_iter().next()?;
+                Some(
+                    Device::new(
+                        device_id::camera(&node),
+                        DeviceKind::Camera,
+                        cam.name,
+                        DeviceProperties::Camera(CameraInfo {
+                            video_node: Some(node),
+                            capabilities: Vec::new(),
+                        }),
+                    )
+                    .with_source(SourceEvidence {
+                        source: result.source.clone(),
+                        kind: SourceKind::Command,
+                        status: SourceStatus::Success,
+                        summary: None,
+                    }),
+                )
             })
             .collect();
         ProbeResult::with_devices(devices)

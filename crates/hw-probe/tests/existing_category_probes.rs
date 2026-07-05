@@ -279,6 +279,25 @@ async fn network_probe_outputs_network_device() {
 }
 
 #[tokio::test]
+async fn network_probe_filters_loopback_and_common_virtual_interfaces() {
+    let runner = FakeSourceRunner::new().with_command(
+        "ip",
+        ["-j", "link"],
+        r#"[
+            {"ifname":"lo","address":"00:00:00:00:00:00","operstate":"UNKNOWN","mtu":65536},
+            {"ifname":"docker0","address":"02:42:aa:bb:cc:dd","operstate":"DOWN","mtu":1500},
+            {"ifname":"veth1234","address":"aa:bb:cc:dd:ee:01","operstate":"UP","mtu":1500},
+            {"ifname":"eth0","address":"aa:bb:cc:dd:ee:ff","operstate":"UP","mtu":1500}
+        ]"#,
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = NetworkProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].name, "eth0");
+}
+
+#[tokio::test]
 async fn storage_probe_outputs_storage_device() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",

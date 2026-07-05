@@ -36,3 +36,20 @@ async fn usb_probe_builds_devices() {
     assert_eq!(result.devices[0].id, "usb:001:004");
     assert_eq!(result.devices[0].kind, DeviceKind::Usb);
 }
+
+#[tokio::test]
+async fn usb_probe_filters_root_hubs_and_usb_hubs() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lsusb",
+        std::iter::empty::<&str>(),
+        "Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub\n\
+         Bus 001 Device 002: ID 05e3:0610 Genesys Logic, Inc. Hub\n\
+         Bus 001 Device 003: ID 046d:c534 Logitech, Inc. USB Receiver\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = UsbProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].name, "Logitech, Inc. USB Receiver");
+}

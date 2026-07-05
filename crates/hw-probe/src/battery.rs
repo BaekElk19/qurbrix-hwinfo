@@ -29,6 +29,9 @@ impl Probe for BatteryProbe {
         }
         let devices = parse_upower_dump(&result.stdout)
             .into_iter()
+            .filter(|power| {
+                !is_line_power_device(power.device_path.as_deref(), power.native_path.as_deref())
+            })
             .map(|power| {
                 let name = power
                     .native_path
@@ -64,4 +67,12 @@ impl Probe for BatteryProbe {
             .collect();
         ProbeResult::with_devices(devices)
     }
+}
+
+fn is_line_power_device(device_path: Option<&str>, native_path: Option<&str>) -> bool {
+    [device_path, native_path]
+        .into_iter()
+        .flatten()
+        .map(str::to_ascii_lowercase)
+        .any(|value| value.contains("line_power"))
 }
