@@ -346,3 +346,53 @@ async fn input_camera_printer_and_cdrom_probes_create_devices() {
         DeviceKind::Cdrom
     );
 }
+
+#[tokio::test]
+async fn cdrom_probe_uses_sysfs_when_proc_cdrom_info_is_missing() {
+    let runner = FakeSourceRunner::new().with_glob(
+        "/sys/class/block/sr*",
+        vec![PathBuf::from("/sys/class/block/sr0")],
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CdromProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Cdrom);
+    assert_eq!(result.devices[0].name, "sr0");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    assert_eq!(result.devices[0].sources[0].source, "/sys/class/block/sr0");
+    assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
+    assert_eq!(result.devices[0].sources[0].status, SourceStatus::Success);
+
+    let DeviceProperties::Cdrom(info) = &result.devices[0].properties else {
+        panic!("expected cdrom properties");
+    };
+    assert_eq!(info.device_node.as_deref(), Some("/dev/sr0"));
+    assert_eq!(info.media_present, None);
+    assert!(info.capabilities.is_empty());
+
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some("/proc/sys/dev/cdrom/info")
+    );
+}
+
+#[tokio::test]
+async fn cdrom_probe_sysfs_fallback_sorts_and_filters_sr_numbered_nodes() {
+    let runner = FakeSourceRunner::new().with_glob(
+        "/sys/class/block/sr*",
+        vec![
+            PathBuf::from("/sys/class/block/sr1"),
+            PathBuf::from("/sys/class/block/sr-test"),
+            PathBuf::from("/sys/class/block/sr0"),
+        ],
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CdromProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    assert_eq!(result.devices[0].name, "sr0");
+    assert_eq!(result.devices[1].name, "sr1");
+}

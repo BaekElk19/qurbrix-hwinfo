@@ -67,7 +67,7 @@ Confirmed defects fixed during this audit:
 | Camera | `v4l2-ctl --list-devices`, emits one device per physical camera record using the first `/dev/video*` node; falls back to `/sys/class/video4linux/video*` for basic name and node when `v4l2-ctl` cannot run. | Basic video device discovery, Deepin-style physical-device deduplication, and Linux video4linux sysfs fallback. | No lshw/hwinfo fallback; no vendor/driver/speed/serial enrichment. | P2 |
 | Battery | `upower --dump`, battery capacity/energy/voltage/vendor/model/serial; filters line-power devices; falls back to `/sys/class/power_supply/BAT*` for battery fields including cycle count. | UPower-based collection, Deepin-style line-power filtering, and Linux sysfs battery fallback. | No temperature fallback or vendor normalization. | P2 |
 | Printer | `lpstat -a`, optional `lpstat -v`; URI source failures warn. | CUPS queue enumeration. | No make/model/default/state/interface. | P2 |
-| CD-ROM | `/proc/sys/dev/cdrom/info`, drive names and basic capabilities. | Proc cdrom discovery. | No lshw/hwinfo/lsscsi fallback; no vendor/model/firmware/serial. | P2 |
+| CD-ROM | `/proc/sys/dev/cdrom/info`, drive names and basic capabilities; falls back to `/sys/class/block/sr*` for basic drive nodes when proc cdrom info is unavailable. | Proc cdrom discovery plus Linux sysfs block fallback. | No lshw/hwinfo/lsscsi fallback; no vendor/model/firmware/serial; sysfs fallback cannot recover capabilities. | P2 |
 | USB | `lsusb` for bus/device/VID/PID/product; falls back to `/sys/bus/usb/devices/*` for bus/device IDs, VID/PID, device class/subclass/protocol, manufacturer, product, serial, and speed when `lsusb` cannot run; filters root hubs, USB hubs, sysfs host controllers, and sysfs interface entries. | Basic USB enumeration, Linux sysfs fallback, and Deepin/Kylin hub filtering. | No `lsusb -v`; no maxpower or detailed interface descriptor enrichment; USB devices consumed by Bluetooth/camera/input/printer are not deduplicated. | P2 |
 | PCI / Other PCI | `lspci -nn -k`, class/vendor/device IDs, driver/modules; unconsumed PCI devices become `OtherPci`. | PCI class and driver extraction. | Only GPU consumes backing PCI; network/audio/storage/camera/bluetooth may duplicate as `OtherPci`; no sysfs fallback. | P1/P2 |
 
@@ -81,6 +81,7 @@ Absorbed and preserved:
 - USB preserves the missing/failed `lsusb` warning while still emitting devices from `/sys/bus/usb/devices/*` when usable sysfs device directories exist.
 - Bluetooth preserves the missing/failed `hciconfig -a` warning while still emitting controllers from `/sys/class/bluetooth/hci*` when usable sysfs controller directories exist.
 - Camera preserves the missing/failed `v4l2-ctl --list-devices` warning while still emitting devices from `/sys/class/video4linux/video*` when usable sysfs video nodes exist.
+- CD-ROM preserves the missing/failed `/proc/sys/dev/cdrom/info` warning while still emitting basic optical drive nodes from `/sys/class/block/sr*` when present.
 - Fake runners and fixture tests cover missing commands, permission-denied DMI, bad EDID, ambiguous sysfs connectors, and numeric GPU vendor IDs.
 
 Still weak:
