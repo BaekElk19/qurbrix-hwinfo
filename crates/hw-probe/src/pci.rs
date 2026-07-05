@@ -25,7 +25,7 @@ impl Probe for PciProbe {
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_lspci_nn_k(&result.stdout)
             .into_iter()

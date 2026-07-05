@@ -25,7 +25,7 @@ impl Probe for InputProbe {
             .read_file(Path::new("/proc/bus/input/devices"))
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_proc_bus_input_devices(&result.stdout)
             .into_iter()

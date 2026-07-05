@@ -38,7 +38,7 @@ impl Probe for CpuProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let cpu = parse_lscpu(&result.stdout);
         let cores = match (cpu.cores_per_socket, cpu.sockets) {
@@ -85,7 +85,7 @@ impl Probe for NetworkProbe {
             .run_command(&CommandSpec::new("ip", ["-j", "link"]), ctx.timeout)
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_ip_j_link(&result.stdout)
             .into_iter()
@@ -135,7 +135,7 @@ impl Probe for StorageProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_lsblk_json(&result.stdout)
             .into_iter()
@@ -184,7 +184,7 @@ impl Probe for MemoryProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_dmidecode_memory(&result.stdout)
             .into_iter()
@@ -248,7 +248,7 @@ impl Probe for BiosProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let dmi = parse_dmidecode_bios_board(&result.stdout);
         let bios = Device::new(
@@ -312,7 +312,7 @@ impl Probe for GpuProbe {
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_gpu_lspci(&result.stdout)
             .into_iter()
@@ -369,7 +369,7 @@ impl Probe for MonitorProbe {
             .run_command(&CommandSpec::new("xrandr", ["--query"]), ctx.timeout)
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_xrandr_query(&result.stdout)
             .into_iter()

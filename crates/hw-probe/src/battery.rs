@@ -25,7 +25,7 @@ impl Probe for BatteryProbe {
             .run_command(&CommandSpec::new("upower", ["--dump"]), ctx.timeout)
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_upower_dump(&result.stdout)
             .into_iter()

@@ -22,7 +22,7 @@ impl Probe for AudioProbe {
     async fn probe(&self, ctx: &ProbeContext<'_>) -> ProbeResult {
         let result = ctx.runner.read_file(Path::new("/proc/asound/cards")).await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_proc_asound_cards(&result.stdout)
             .into_iter()

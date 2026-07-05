@@ -57,10 +57,19 @@ pub async fn collect_scan_report_with_runner(
         warnings.append(&mut result.warnings);
     }
 
-    let devices = dedup_devices(devices);
+    let mut devices = dedup_devices(devices);
     let mut report = ScanReport::empty();
+    report.status = status_from_warnings(&warnings, devices.len());
+    if !config.include_sources {
+        for device in &mut devices {
+            device.sources.clear();
+        }
+    }
     report.devices = devices;
-    report.warnings = warnings;
-    report.status = status_from_warnings(&report.warnings, report.devices.len());
+    report.warnings = if config.include_warnings {
+        warnings
+    } else {
+        Vec::new()
+    };
     Ok(report)
 }

@@ -25,7 +25,7 @@ impl Probe for PrinterProbe {
             .run_command(&CommandSpec::new("lpstat", ["-a"]), ctx.timeout)
             .await;
         if !status.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &status);
         }
         let uri_result = ctx
             .runner

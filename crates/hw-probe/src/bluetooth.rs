@@ -25,7 +25,7 @@ impl Probe for BluetoothProbe {
             .run_command(&CommandSpec::new("hciconfig", ["-a"]), ctx.timeout)
             .await;
         if !hci.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &hci);
         }
         let paired = ctx
             .runner

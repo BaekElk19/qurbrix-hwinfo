@@ -48,8 +48,8 @@ impl SourceRunner for RealSourceRunner {
 
     async fn read_file(&self, path: &Path) -> SourceResult {
         let source = path.display().to_string();
-        match fs::read_to_string(path).await {
-            Ok(text) => SourceResult::success(source, text),
+        match fs::read(path).await {
+            Ok(bytes) => SourceResult::success(source, String::from_utf8_lossy(&bytes)),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 SourceResult::error(source, SourceErrorKind::Missing, err.to_string())
             }

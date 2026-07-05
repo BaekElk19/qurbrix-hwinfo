@@ -28,7 +28,7 @@ impl Probe for UsbProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_lsusb(&result.stdout)
             .into_iter()

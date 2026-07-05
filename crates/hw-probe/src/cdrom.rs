@@ -25,7 +25,7 @@ impl Probe for CdromProbe {
             .read_file(Path::new("/proc/sys/dev/cdrom/info"))
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let info = parse_proc_cdrom_info(&result.stdout);
         let devices = info

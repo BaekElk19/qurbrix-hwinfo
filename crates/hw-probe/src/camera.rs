@@ -28,7 +28,7 @@ impl Probe for CameraProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::default();
+            return ProbeResult::source_failure(self.name(), &result);
         }
         let devices = parse_v4l2_list_devices(&result.stdout)
             .into_iter()
