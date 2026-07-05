@@ -372,8 +372,17 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         }
 
         let node = format!("/dev/{name}");
+        let vendor = read_optional_trimmed(ctx, &path.join("device/vendor")).await;
         let model = read_optional_trimmed(ctx, &path.join("device/model")).await;
         let serial = read_optional_trimmed(ctx, &path.join("device/serial")).await;
+        let wwn = read_first_optional_trimmed(ctx, &[path.join("device/wwid"), path.join("wwid")])
+            .await
+            .map(normalize_storage_wwn);
+        let firmware = read_first_optional_trimmed(
+            ctx,
+            &[path.join("device/rev"), path.join("device/firmware_rev")],
+        )
+        .await;
         let size_bytes = read_optional_trimmed(ctx, &path.join("size"))
             .await
             .and_then(|sectors| sectors.parse::<u64>().ok())
@@ -386,25 +395,29 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
                 _ => None,
             });
 
-        devices.push(
-            Device::new(
-                device_id::storage(None, serial.as_deref(), &node),
-                DeviceKind::Storage,
-                model.clone().unwrap_or_else(|| node.clone()),
-                DeviceProperties::Storage(StorageInfo {
-                    device_node: Some(node),
-                    size_bytes,
-                    media_type,
-                    ..Default::default()
-                }),
-            )
-            .with_source(SourceEvidence {
-                source: path.display().to_string(),
-                kind: SourceKind::Sysfs,
-                status: SourceStatus::Success,
-                summary: None,
+        let mut device = Device::new(
+            device_id::storage(None, serial.as_deref(), &node),
+            DeviceKind::Storage,
+            model.clone().unwrap_or_else(|| node.clone()),
+            DeviceProperties::Storage(StorageInfo {
+                device_node: Some(node),
+                size_bytes,
+                media_type,
+                firmware,
+                wwn,
+                ..Default::default()
             }),
-        );
+        )
+        .with_source(SourceEvidence {
+            source: path.display().to_string(),
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+        device.vendor = vendor;
+        device.model = model;
+        device.serial = serial;
+        devices.push(device);
     }
 
     devices
@@ -414,6 +427,26 @@ fn is_ignored_block_device(name: &str) -> bool {
     ["loop", "ram", "zram", "dm-", "md", "sr"]
         .iter()
         .any(|prefix| name.starts_with(prefix))
+}
+
+async fn read_first_optional_trimmed(
+    ctx: &ProbeContext<'_>,
+    paths: &[std::path::PathBuf],
+) -> Option<String> {
+    for path in paths {
+        if let Some(value) = read_optional_trimmed(ctx, path).await {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn normalize_storage_wwn(value: String) -> String {
+    value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(&value)
+        .to_string()
 }
 
 #[async_trait]

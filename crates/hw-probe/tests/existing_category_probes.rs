@@ -483,8 +483,11 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
             ],
         )
         .with_file("/sys/block/sda/size", "2097152\n")
+        .with_file("/sys/block/sda/device/vendor", "Samsung\n")
         .with_file("/sys/block/sda/device/model", "Samsung SSD 980\n")
         .with_file("/sys/block/sda/device/serial", "S12345\n")
+        .with_file("/sys/block/sda/device/wwid", "naa.5002538f00000000\n")
+        .with_file("/sys/block/sda/device/rev", "3B2QGXA7\n")
         .with_file("/sys/block/sda/queue/rotational", "0\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
@@ -493,6 +496,9 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
     assert_eq!(result.devices[0].id, "storage:serial:S12345");
     assert_eq!(result.devices[0].kind, DeviceKind::Storage);
     assert_eq!(result.devices[0].name, "Samsung SSD 980");
+    assert_eq!(result.devices[0].vendor.as_deref(), Some("Samsung"));
+    assert_eq!(result.devices[0].model.as_deref(), Some("Samsung SSD 980"));
+    assert_eq!(result.devices[0].serial.as_deref(), Some("S12345"));
     assert_eq!(
         warning_pairs(&result),
         vec![(
@@ -506,6 +512,8 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
             assert_eq!(storage.device_node.as_deref(), Some("/dev/sda"));
             assert_eq!(storage.size_bytes, Some(1_073_741_824));
             assert_eq!(storage.media_type.as_deref(), Some("ssd"));
+            assert_eq!(storage.wwn.as_deref(), Some("naa.5002538f00000000"));
+            assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
         }
         other => panic!("expected storage properties, got {other:?}"),
     }
@@ -517,6 +525,25 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
         .expect("expected /sys/block/sda source evidence");
     assert_eq!(source.kind, SourceKind::Sysfs);
     assert_eq!(source.status, SourceStatus::Success);
+}
+
+#[tokio::test]
+async fn storage_probe_uses_block_wwid_and_firmware_rev_sysfs_fallbacks() {
+    let runner = FakeSourceRunner::new()
+        .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/nvme0n1")])
+        .with_file("/sys/block/nvme0n1/device/model", "NVMe Disk\n")
+        .with_file("/sys/block/nvme0n1/wwid", "0X5002538F00000000\n")
+        .with_file("/sys/block/nvme0n1/device/firmware_rev", "1.0A\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "storage:dev:/dev/nvme0n1");
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.wwn.as_deref(), Some("5002538F00000000"));
+    assert_eq!(storage.firmware.as_deref(), Some("1.0A"));
 }
 
 #[tokio::test]
