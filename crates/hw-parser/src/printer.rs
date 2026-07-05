@@ -35,7 +35,7 @@ pub fn parse_lpstat_v(input: &str) -> Vec<PrinterUriRecord> {
             let (queue, uri) = rest.split_once(':')?;
             Some(PrinterUriRecord {
                 queue: queue.trim().to_string(),
-                device_uri: Some(uri.trim().to_string()),
+                device_uri: Some(uri.trim().to_string()).filter(|value| !value.is_empty()),
             })
         })
         .collect()

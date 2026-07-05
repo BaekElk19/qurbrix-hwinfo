@@ -25,7 +25,20 @@ impl Probe for PrinterProbe {
             .run_command(&CommandSpec::new("lpstat", ["-a"]), ctx.timeout)
             .await;
         if !status.is_success() {
-            return ProbeResult::source_failure(self.name(), &status);
+            let mut fallback = ProbeResult::source_failure(self.name(), &status);
+            let uri_result = ctx
+                .runner
+                .run_command(&CommandSpec::new("lpstat", ["-v"]), ctx.timeout)
+                .await;
+            if uri_result.is_success() {
+                fallback.devices =
+                    devices_from_uris(parse_lpstat_v(&uri_result.stdout), &uri_result.source);
+            } else {
+                fallback
+                    .warnings
+                    .extend(ProbeResult::source_failure(self.name(), &uri_result).warnings);
+            }
+            return fallback;
         }
         let uri_result = ctx
             .runner
@@ -71,4 +84,29 @@ impl Probe for PrinterProbe {
             consumed: Vec::new(),
         }
     }
+}
+
+fn devices_from_uris(uris: Vec<hw_parser::PrinterUriRecord>, source: &str) -> Vec<Device> {
+    uris.into_iter()
+        .map(|printer| {
+            Device::new(
+                device_id::printer(&printer.queue),
+                DeviceKind::Printer,
+                printer.queue.clone(),
+                DeviceProperties::Printer(PrinterInfo {
+                    queue_name: Some(printer.queue),
+                    accepting: None,
+                    device_uri: printer.device_uri,
+                    make_model: None,
+                    is_default: None,
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: source.to_string(),
+                kind: SourceKind::Command,
+                status: SourceStatus::Success,
+                summary: None,
+            })
+        })
+        .collect()
 }

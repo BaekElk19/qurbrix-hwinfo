@@ -360,6 +360,67 @@ async fn printer_probe_warns_when_uri_source_fails() {
 }
 
 #[tokio::test]
+async fn printer_probe_uses_uri_source_when_status_source_is_missing() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lpstat",
+        ["-v"],
+        "device for Office: ipp://printer.local/ipp/print\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = PrinterProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Printer);
+    assert_eq!(result.devices[0].name, "Office");
+    assert_eq!(result.devices[0].sources.len(), 1);
+    assert_eq!(result.devices[0].sources[0].source, "lpstat -v");
+    assert_eq!(result.devices[0].sources[0].kind, SourceKind::Command);
+    assert_eq!(result.devices[0].sources[0].status, SourceStatus::Success);
+
+    let DeviceProperties::Printer(info) = &result.devices[0].properties else {
+        panic!("expected printer properties");
+    };
+    assert_eq!(info.queue_name.as_deref(), Some("Office"));
+    assert_eq!(
+        info.device_uri.as_deref(),
+        Some("ipp://printer.local/ipp/print")
+    );
+    assert_eq!(info.accepting, None);
+    assert_eq!(info.make_model, None);
+    assert_eq!(info.is_default, None);
+
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("lpstat -a"));
+}
+
+#[tokio::test]
+async fn printer_probe_does_not_preserve_empty_uri_from_fallback_source() {
+    let runner = FakeSourceRunner::new().with_command("lpstat", ["-v"], "device for Office:\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = PrinterProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Printer(info) = &result.devices[0].properties else {
+        panic!("expected printer properties");
+    };
+    assert_eq!(info.queue_name.as_deref(), Some("Office"));
+    assert_eq!(info.device_uri, None);
+}
+
+#[tokio::test]
+async fn printer_probe_reports_both_warnings_when_status_and_uri_sources_fail() {
+    let runner = FakeSourceRunner::new();
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = PrinterProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    assert_eq!(result.warnings.len(), 2);
+    assert_eq!(result.warnings[0].source.as_deref(), Some("lpstat -a"));
+    assert_eq!(result.warnings[1].source.as_deref(), Some("lpstat -v"));
+}
+
+#[tokio::test]
 async fn input_camera_printer_and_cdrom_probes_create_devices() {
     let runner = FakeSourceRunner::new()
         .with_file(
