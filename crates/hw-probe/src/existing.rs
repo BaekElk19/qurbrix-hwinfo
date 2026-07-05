@@ -1,4 +1,4 @@
-use crate::{Probe, ProbeContext, ProbeResult};
+use crate::{sysfs_pci::read_sysfs_pci_records, Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
     device_id, BiosInfo, BusInfo, CpuInfo, Device, DeviceKind, DeviceProperties, DeviceRef,
@@ -713,7 +713,9 @@ impl Probe for GpuProbe {
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
             .await;
         if !result.is_success() {
-            return ProbeResult::source_failure(self.name(), &result);
+            let mut fallback = ProbeResult::source_failure(self.name(), &result);
+            fallback.devices = gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed).await;
+            return fallback;
         }
         let mut probe_result = ProbeResult::default();
         for gpu in parse_gpu_lspci(&result.stdout) {
@@ -776,6 +778,61 @@ impl Probe for GpuProbe {
         }
         probe_result
     }
+}
+
+async fn gpu_devices_from_sysfs_pci(
+    ctx: &ProbeContext<'_>,
+    consumed: &mut Vec<DeviceRef>,
+) -> Vec<Device> {
+    let mut devices = Vec::new();
+    for record in read_sysfs_pci_records(ctx).await {
+        if !record
+            .class_id
+            .as_deref()
+            .is_some_and(|class| class.starts_with("03"))
+        {
+            continue;
+        }
+
+        let vendor = record
+            .vendor_id
+            .as_deref()
+            .and_then(normalize_gpu_vendor_id)
+            .map(str::to_string);
+
+        consumed.push(DeviceRef {
+            id: device_id::pci(&record.address),
+        });
+        devices.push(
+            Device::new(
+                device_id::other("gpu:pci", &record.address),
+                DeviceKind::Gpu,
+                vendor
+                    .clone()
+                    .unwrap_or_else(|| format!("GPU {}", record.address)),
+                DeviceProperties::Gpu(GpuInfo {
+                    vendor,
+                    ..Default::default()
+                }),
+            )
+            .with_bus(BusInfo::Pci {
+                address: record.address,
+                vendor_id: record.vendor_id,
+                device_id: record.device_id,
+                subsystem_vendor_id: record.subsystem_vendor_id,
+                subsystem_device_id: record.subsystem_device_id,
+                class: record.class_id,
+            })
+            .with_source(SourceEvidence {
+                source: record.path.display().to_string(),
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            }),
+        );
+    }
+
+    devices
 }
 
 #[async_trait]

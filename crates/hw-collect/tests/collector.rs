@@ -105,7 +105,7 @@ async fn default_scan_reports_unconsumed_pci_as_other_pci() {
 }
 
 #[tokio::test]
-async fn default_scan_reports_sysfs_display_pci_as_other_pci_when_lspci_is_missing() {
+async fn default_scan_consumes_sysfs_display_pci_as_gpu_when_lspci_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(
             "/sys/bus/pci/devices/*",
@@ -122,11 +122,11 @@ async fn default_scan_reports_sysfs_display_pci_as_other_pci_when_lspci_is_missi
     assert!(report
         .devices
         .iter()
-        .any(|device| device.kind == DeviceKind::OtherPci));
+        .any(|device| { device.kind == DeviceKind::Gpu && device.id == "gpu:pci:0000:00:02.0" }));
     assert!(!report
         .devices
         .iter()
-        .any(|device| device.kind == DeviceKind::Gpu));
+        .any(|device| device.kind == DeviceKind::OtherPci));
     assert!(report
         .warnings
         .iter()

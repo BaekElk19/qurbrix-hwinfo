@@ -5,7 +5,7 @@
 更新说明（2026-07-06）：本报告保留为初始差距基线。当前实现已经吸收部分当时缺口，最新状态以
 `docs/hardware-compatibility-reference-audit.md` 为准。已完成的 CPU 关键改进包括：
 `lscpu` + `lshw -class processor` + `dmidecode -t 4` 多源合并、`/proc/cpuinfo`
-`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；PCI 已在 `lspci -nn -k` 不可用时读取 `/sys/bus/pci/devices/*` 基础 ID 字段；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Audio 已在 `/proc/asound/cards` 不可用时读取 `/sys/class/sound/card*` 基础声卡节点；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段；Input 已在 `/proc/bus/input/devices` 不可用时读取 `/sys/class/input/event*` 基础事件节点；Camera 已在 `v4l2-ctl --list-devices` 不可用时读取 `/sys/class/video4linux/video*` 基础节点；Printer 已在 `lpstat -a` 不可用时使用 `lpstat -v` 恢复基础队列/URI；CD-ROM 已在 `/proc/sys/dev/cdrom/info` 不可用时读取 `/sys/class/block/sr*` 基础光驱节点。
+`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；PCI 已在 `lspci -nn -k` 不可用时读取 `/sys/bus/pci/devices/*` 基础 ID 字段，GPU 已可消费其中 display-class 节点；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Audio 已在 `/proc/asound/cards` 不可用时读取 `/sys/class/sound/card*` 基础声卡节点；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段；Input 已在 `/proc/bus/input/devices` 不可用时读取 `/sys/class/input/event*` 基础事件节点；Camera 已在 `v4l2-ctl --list-devices` 不可用时读取 `/sys/class/video4linux/video*` 基础节点；Printer 已在 `lpstat -a` 不可用时使用 `lpstat -v` 恢复基础队列/URI；CD-ROM 已在 `/proc/sys/dev/cdrom/info` 不可用时读取 `/sys/class/block/sr*` 基础光驱节点。
 
 ## 1. Executive Summary
 
@@ -47,7 +47,7 @@
 | Memory | `dmidecode -t memory` | 可识别 DIMM size/vendor/type/speed/slot/serial/part | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:168-229` |
 | BIOS / Motherboard | `dmidecode -t 0,1,2,3` | 可识别 BIOS vendor/version/date 和 board manufacturer/product/serial | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:232-295` |
 | Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN` + `/sys/block/*` fallback | 正常路径取 disk；fallback 路径补 node/model/serial/size/rotational；缺少 SMART、temperature、controller/driver | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
-| GPU | `lspci -nn -k`，GPU parser | 能识别 PCI GPU 和 driver；缺少国产 GPU vendor alias/glxinfo/drm sysfs | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:309-354` |
+| GPU | `lspci -nn -k`，GPU parser；`lspci` 不可用时可消费 `/sys/bus/pci/devices/*` display-class 节点 | 能识别 PCI GPU 和 driver；sysfs fallback 可保留基础 PCI ID/VID/PID/class，但仍缺 glxinfo/drm enrichment 和 sysfs driver/modules | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Monitor | `xrandr --query` | 只取 connector/resolution；缺少 EDID/vendor/product/week/year/size | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:368-399` |
 | Network | `ip -j link` + `/sys/class/net/*` fallback | 正常路径取 interface/MAC/operstate，fallback 路径补 speed/duplex；过滤 loopback/常见虚拟网卡；缺少 lshw/lspci driver、无线/以太分类 | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Error handling | command/read/glob 抽象，区分 Missing/PermissionDenied/Timeout/Failed | 优于多数脚本式参考实现，建议保留 | `qurbrix-hwinfo/crates/hw-source/src/runner.rs:22-59` |
@@ -133,7 +133,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | `/sys/class/net` | Deepin 有网络 sysfs/MAC 过滤逻辑 | 结合 lshw/lspci/driver | Network probe 已在 `ip` 失败时读取 MAC/operstate/speed/duplex | 已吸收部分 | 后续补 driver、type、wireless |
 | `/sys/class/power_supply` | Deepin 使用 upower/dmesg 类电源源 | Kylin 有电源厂商 alias | Battery probe 已在 UPower 失败时读取 BAT* sysfs 字段 | 已吸收部分 | 后续可补温度和厂商归一化 |
 | `/sys/block` | Deepin 用 lsblk/sg | Kylin 磁盘逻辑复杂 | Storage probe 已在 `lsblk` 失败时读取 size/model/serial/rotational | 已吸收部分 | 后续补 vendor/wwn/controller/SMART |
-| `/sys/bus/pci` | 参考项目重视 PCI/driver | lspci/lshw/driver | 当前 `lspci -nn -k` | P2 | 无 lspci 时读 sysfs modalias/vendor/device/class/driver |
+| `/sys/bus/pci` | 参考项目重视 PCI/driver | lspci/lshw/driver | `lspci -nn -k`；无 lspci 时读 sysfs vendor/device/class/subsystem，GPU 消费 display-class 节点 | P2 | 后续补 sysfs driver/modules 和跨类别消费 |
 | `/sys/bus/usb` | Deepin USB 过滤/去重 | Kylin `lsusb -v` | USB probe 已在 `lsusb` 失败时读取基础 sysfs device 字段 | 已吸收部分 | 后续补 `lsusb -v`、maxpower、interface descriptor、跨类别 dedup |
 | `lscpu` | CPU 主来源之一 | CPU 主来源之一 | CPU primary source，另有 lshw/DMI/procfs fallback | 已吸收主要 fallback，并强制英文 locale | 继续补真机样本 |
 | `lspci` | PCI/GPU/driver 来源 | 网络/GPU/声卡等来源 | PCI/GPU 来源 | P2 | 继续使用，补分类和 alias |
@@ -153,7 +153,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | 主板/BIOS/DMI | 多个 dmidecode type | dmidecode `0,1,2,3` + `/sys/class/dmi/id` fallback | chassis/system/language/memory-array 未建模 | P2 | 部分 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 内存 | dmidecode type 17 等 | dmidecode memory，dmidecode 失败时用 `/proc/meminfo` 产出总量 fallback | 缺 sysfs/lshw DIMM 级 fallback | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 硬盘/分区/控制器 | lsblk/sg/lshw/厂商修正 | lsblk disk，失败时 fallback 到 `/sys/block/*` | 缺 SMART/temperature/controller/driver/vendor/wwn | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
-| 显卡/显示控制器 | lspci、nvidia、国产 GPU alias | lspci GPU/driver | 缺国产 GPU alias、glxinfo/drm | P1/P2 | 是 | Kylin `.../cpuinfo.py:415-425`；qurbrix `crates/hw-probe/src/existing.rs:309-354` |
+| 显卡/显示控制器 | lspci、nvidia、国产 GPU alias | lspci GPU/driver；lspci 不可用时从 sysfs PCI display-class 生成基础 GPU 并消费对应 PCI | 缺 glxinfo/drm、sysfs driver/modules、人类可读设备名 | P2 | 是 | Kylin `.../cpuinfo.py:415-425`；qurbrix `crates/hw-probe/src/existing.rs` |
 | 显示器 | xrandr verbose/EDID/product/year/size | xrandr query connector/resolution | EDID 缺失 | P1/P2 | 是 | Kylin `.../cpuinfo.py:1339-1411`；qurbrix `crates/hw-probe/src/existing.rs:368-399` |
 | 网卡/Wi-Fi/蓝牙 | sysfs/MAC/filter、lshw/lspci/driver | network 使用 `ip -j link`，失败时 fallback 到 `/sys/class/net/*`；bluetooth 使用 `hciconfig -a`，失败时 fallback 到 `/sys/class/bluetooth/hci*` 基础 controller/rfkill 字段 | 网卡分类/driver/wireless 标注不足；Bluetooth 仍缺 lshw/hwinfo/BlueZ DBus enrichment 和 controller address fallback | P1/P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs`；`crates/hw-probe/src/bluetooth.rs` |
 | 声卡 | lshw、`/proc/asound`、SoC vendor | qurbrix 有音频类别和 fixtures | SoC/国产声卡规则不足 | P1/P2 | 是 | Deepin `.../GetInfoPool.cpp:88,119`；Kylin `.../cpuinfo.py:479-483` |

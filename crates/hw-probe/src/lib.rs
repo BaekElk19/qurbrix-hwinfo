@@ -10,6 +10,7 @@ pub mod other;
 pub mod pci;
 pub mod printer;
 pub mod result;
+pub(crate) mod sysfs_pci;
 pub mod traits;
 pub mod usb;
 

@@ -1,4 +1,4 @@
-use hw_model::{DeviceKind, DeviceProperties, SourceKind, SourceStatus};
+use hw_model::{BusInfo, DeviceKind, DeviceProperties, SourceKind, SourceStatus};
 use hw_probe::{BiosProbe, GpuProbe, MemoryProbe, MonitorProbe, Probe, ProbeContext};
 use hw_source::FakeSourceRunner;
 use std::{path::PathBuf, time::Duration};
@@ -183,6 +183,76 @@ async fn gpu_probe_normalizes_vendor_from_numeric_vendor_id_when_text_is_generic
         }
         other => panic!("expected gpu properties, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/bus/pci/devices/*",
+            vec![PathBuf::from("/sys/bus/pci/devices/0000:00:02.0")],
+        )
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/vendor", "0x8086\n")
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/device", "0x9a49\n")
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/class", "0x030000\n")
+        .with_file(
+            "/sys/bus/pci/devices/0000:00:02.0/subsystem_vendor",
+            "0x1028\n",
+        )
+        .with_file(
+            "/sys/bus/pci/devices/0000:00:02.0/subsystem_device",
+            "0x087c\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "gpu:pci:0000:00:02.0");
+    assert_eq!(result.devices[0].kind, DeviceKind::Gpu);
+    assert_eq!(
+        result.devices[0].bus,
+        Some(BusInfo::Pci {
+            address: "0000:00:02.0".to_string(),
+            vendor_id: Some("8086".to_string()),
+            device_id: Some("9a49".to_string()),
+            subsystem_vendor_id: Some("1028".to_string()),
+            subsystem_device_id: Some("087c".to_string()),
+            class: Some("030000".to_string()),
+        })
+    );
+    match &result.devices[0].properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.vendor.as_deref(), Some("Intel"));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert_eq!(result.devices[0].driver, None);
+    assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
+    assert_eq!(
+        result.consumed[0].id, "pci:0000:00:02.0",
+        "sysfs GPU fallback should consume its backing PCI device"
+    );
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].source.as_deref(), Some("lspci -nn -k"));
+}
+
+#[tokio::test]
+async fn gpu_probe_ignores_non_display_and_non_device_sysfs_pci_entries() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/bus/pci/devices/*",
+            vec![
+                PathBuf::from("/sys/bus/pci/devices/0000:00:1f.3"),
+                PathBuf::from("/sys/bus/pci/devices/pci0000:00"),
+            ],
+        )
+        .with_file("/sys/bus/pci/devices/0000:00:1f.3/class", "0x040300\n")
+        .with_file("/sys/bus/pci/devices/pci0000:00/class", "0x030000\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    assert!(result.consumed.is_empty());
 }
 
 #[tokio::test]
