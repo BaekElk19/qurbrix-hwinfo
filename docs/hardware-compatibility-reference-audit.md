@@ -21,6 +21,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - Source execution has structured `Missing`, `PermissionDenied`, `Timeout`, and `Failed` classifications, which is cleaner than most reference scripts and should remain the project-wide pattern.
 - Command execution forces `LC_ALL=C`, `LANG=C`, and `LANGUAGE=en`, absorbing Deepin/Kylin's locale-stabilization practice for English-key parsers.
 - BIOS/motherboard probing falls back to `/sys/class/dmi/id` when `dmidecode` is missing or denied.
+- Memory probing falls back to `/proc/meminfo` total memory when `dmidecode -t memory` cannot run.
 
 Confirmed defects fixed during this audit:
 
@@ -34,6 +35,7 @@ Confirmed defects fixed during this audit:
 - English/C locale is now enforced for real command execution, preventing localized command keys from silently breaking parsers such as `lscpu`.
 - `/proc/hardware` fallback now recognizes `HUAWEI Kirin 990`, `kirin990`, and `HUAWEI Kirin 9006C`.
 - `/sys/class/dmi/id` fallback now preserves BIOS/baseboard identity when `dmidecode -t 0,1,2,3` cannot run.
+- `/proc/meminfo` fallback now preserves aggregate memory capacity when `dmidecode -t memory` cannot run.
 
 ## Component Matrix
 
@@ -43,7 +45,7 @@ Confirmed defects fixed during this audit:
 | Architecture/vendor normalization | `normalize_arch`, `normalize_cpu_vendor_id`, `infer_cpu_vendor_from_name`, `normalize_gpu_vendor`, `normalize_gpu_vendor_id`. | Deepin arch aliases for amd64/arm64/sw_64/loongarch; Kylin domestic CPU/GPU vendor heuristics. | Huawei/Kunpeng/HiSilicon canonical choice intentionally differs from Kylin; alias tables remain intentionally small. | P1 |
 | Monitor | `xrandr --query` for connector/resolution, `xrandr --verbose` and sysfs EDID for identity; EDID parser fills manufacturer/product/date/size/preferred mode. | Kylin xrandr verbose EDID extraction; Deepin sysfs DRM EDID parsing pattern; no `/tmp` temp file or external `edid-decode`. | No gamma/inch/maxmode fields; no `hwinfo_monitor`; ambiguous duplicate sysfs connectors are skipped rather than matched by card. | P2 |
 | GPU | `lspci -nn -k` display/VGA/3D records, driver/modules, text and numeric vendor normalization. | PCI GPU parsing and domestic GPU aliases from Kylin; driver extraction from lspci. | No `lshw -C display`, `glxinfo -B`, `/sys/class/drm/card*/device`, dmesg/nvidia memory enrichment. | P2/P3 |
-| Memory | `dmidecode -t memory`, DIMM size/vendor/type/speed/slot/serial/part, filters `No Module Installed`. | Main DMI memory path from both references. | No `lshw_memory`, `/proc/meminfo`, or sysfs fallback when DMI is unavailable/permission denied. | P2 |
+| Memory | `dmidecode -t memory`, DIMM size/vendor/type/speed/slot/serial/part, filters `No Module Installed`; falls back to `/proc/meminfo` aggregate total when DMI is unavailable/permission denied. | Main DMI memory path from both references plus procfs total-memory fallback. | No `lshw_memory` or sysfs DIMM-level fallback when DMI is unavailable/permission denied. | P2 |
 | BIOS / motherboard / DMI | `dmidecode -t 0,1,2,3`, with `/sys/class/dmi/id` fallback for BIOS vendor/version/date and baseboard manufacturer/product/serial when dmidecode cannot run; empty dmidecode output still produces `source_empty` rather than generic devices. | Core DMI BIOS/baseboard parsing, sysfs DMI fallback, and Deepin-style skip-empty behavior. | Chassis/system/language/memory-array data not modeled. | P2 |
 | Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN`, disk-only filtering, parse failure warning. | Basic lsblk disk enumeration. | No lshw/hwinfo/sysfs/hdparm/smartctl fusion; no WWN/firmware/SMART/temp/controller/driver enrichment. | P2 |
 | Network | `ip -j link`, interface/MAC/operstate; filters loopback/common virtual interfaces; malformed JSON produces warning. | Basic network interface enumeration plus Kylin-style avoidance of non-physical interfaces. | No lshw/lspci/sysfs/NM DBus fallback; no driver/wireless/type/speed/duplex/IP enrichment. | P1 |
@@ -68,7 +70,7 @@ Absorbed and preserved:
 
 Still weak:
 
-- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`NetworkProbe`, `StorageProbe`, `MemoryProbe`, `UsbProbe`, `BatteryProbe`).
+- Some probes still treat one source as hard failure even when Linux has obvious fallback sources (`NetworkProbe`, `StorageProbe`, `UsbProbe`, `BatteryProbe`).
 
 ## Deferred Items
 

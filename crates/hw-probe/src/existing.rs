@@ -10,8 +10,9 @@ use hw_parser::{
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
     parse_gpu_lspci, parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu,
-    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_size_to_bytes,
-    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord,
+    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes,
+    parse_size_to_bytes, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
+    DmiBiosBoardRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -392,7 +393,31 @@ impl Probe for MemoryProbe {
             )
             .await;
         if !result.is_success() {
-            return ProbeResult::source_failure(self.name(), &result);
+            let mut fallback = ProbeResult::source_failure(self.name(), &result);
+            let proc_meminfo_result = ctx.runner.read_file(Path::new("/proc/meminfo")).await;
+            if proc_meminfo_result.is_success() {
+                if let Some(size_bytes) =
+                    parse_proc_meminfo_total_bytes(&proc_meminfo_result.stdout)
+                {
+                    let device = Device::new(
+                        "memory:system",
+                        DeviceKind::Memory,
+                        "System Memory",
+                        DeviceProperties::Memory(MemoryInfo {
+                            size_bytes: Some(size_bytes),
+                            ..Default::default()
+                        }),
+                    )
+                    .with_source(SourceEvidence {
+                        source: proc_meminfo_result.source,
+                        kind: SourceKind::Procfs,
+                        status: SourceStatus::Success,
+                        summary: None,
+                    });
+                    fallback.devices.push(device);
+                }
+            }
+            return fallback;
         }
         let devices = parse_dmidecode_memory(&result.stdout)
             .into_iter()

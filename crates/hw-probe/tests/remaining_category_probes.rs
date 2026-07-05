@@ -1,4 +1,4 @@
-use hw_model::{DeviceKind, DeviceProperties, SourceKind};
+use hw_model::{DeviceKind, DeviceProperties, SourceKind, SourceStatus};
 use hw_probe::{BiosProbe, GpuProbe, MemoryProbe, MonitorProbe, Probe, ProbeContext};
 use hw_source::FakeSourceRunner;
 use std::{path::PathBuf, time::Duration};
@@ -13,6 +13,34 @@ async fn memory_probe_outputs_dimm_devices() {
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = MemoryProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Memory);
+}
+
+#[tokio::test]
+async fn memory_probe_uses_proc_meminfo_when_dmidecode_is_missing() {
+    let runner =
+        FakeSourceRunner::new().with_file("/proc/meminfo", "MemTotal:       16384000 kB\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Memory);
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.size_bytes, Some(16384000 * 1024));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == "/proc/meminfo"
+            && source.kind == SourceKind::Procfs
+            && source.status == SourceStatus::Success
+    }));
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(
+        result.warnings[0].source.as_deref(),
+        Some("dmidecode -t memory")
+    );
 }
 
 #[tokio::test]

@@ -100,6 +100,16 @@ pub fn parse_size_to_bytes(value: Option<&str>) -> Option<u64> {
     }
 }
 
+pub fn parse_proc_meminfo_total_bytes(input: &str) -> Option<u64> {
+    let line = input
+        .lines()
+        .find(|line| line.trim_start().starts_with("MemTotal:"))?;
+    let mut parts = line.split_whitespace();
+    (parts.next()? == "MemTotal:").then_some(())?;
+    let kib = parts.next()?.parse::<u64>().ok()?;
+    (parts.next()? == "kB").then_some(kib * 1024)
+}
+
 pub fn parse_speed_mtps(value: Option<&str>) -> Option<u32> {
     value?.split_whitespace().next()?.parse().ok()
 }
