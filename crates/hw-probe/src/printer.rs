@@ -1,8 +1,8 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, Device, DeviceKind, DeviceProperties, PrinterInfo, SourceEvidence, SourceKind,
-    SourceStatus,
+    device_id, Device, DeviceKind, DeviceProperties, PrinterInfo, ScanWarning, SourceEvidence,
+    SourceKind, SourceStatus,
 };
 use hw_parser::{parse_lpstat_a, parse_lpstat_v};
 use hw_source::CommandSpec;
@@ -51,7 +51,24 @@ impl Probe for PrinterProbe {
             warnings.extend(ProbeResult::source_failure(self.name(), &uri_result).warnings);
             Vec::new()
         };
-        let devices = parse_lpstat_a(&status.stdout)
+        let statuses = parse_lpstat_a(&status.stdout);
+        if statuses.is_empty() {
+            warnings.push(
+                ScanWarning::new("source_empty", "printer source produced no queue records")
+                    .with_source(status.source),
+            );
+            let devices = if uri_result.is_success() {
+                devices_from_uris(uris, &uri_result.source)
+            } else {
+                Vec::new()
+            };
+            return ProbeResult {
+                devices,
+                warnings,
+                consumed: Vec::new(),
+            };
+        }
+        let devices = statuses
             .into_iter()
             .map(|printer| {
                 let uri = uris

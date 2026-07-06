@@ -30,6 +30,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - Camera probing falls back to `/sys/class/video4linux/video*` when `v4l2-ctl --list-devices` cannot run.
 - Input probing falls back to `/sys/class/input/event*` when `/proc/bus/input/devices` cannot be read or parses no devices.
 - CD-ROM probing falls back to `/sys/class/block/sr*` when `/proc/sys/dev/cdrom/info` cannot be read or parses no drives.
+- Printer probing falls back to `lpstat -v` when `lpstat -a` cannot run or parses no queues.
 - PCI probing falls back to `/sys/bus/pci/devices/*` when `lspci -nn -k` cannot run.
 
 Confirmed defects fixed during this audit:
@@ -54,6 +55,7 @@ Confirmed defects fixed during this audit:
 - `/sys/class/video4linux` fallback now preserves basic camera name and `/dev/video*` node when `v4l2-ctl --list-devices` cannot run.
 - Empty successful `/proc/bus/input/devices` reads now produce a `source_empty` warning and still try `/sys/class/input/event*`.
 - Empty successful `/proc/sys/dev/cdrom/info` reads now produce a `source_empty` warning and still try `/sys/class/block/sr*`.
+- Empty successful `lpstat -a` output now produces a `source_empty` warning and still tries `lpstat -v`.
 
 ## Component Matrix
 
@@ -72,7 +74,7 @@ Confirmed defects fixed during this audit:
 | Input | `/proc/bus/input/devices`, handlers/IDs, keyboard/mouse/touchpad/touchscreen classification; falls back to `/sys/class/input/event*` for basic event node/name/id fields when proc input devices is unavailable or parses empty. | Proc input parsing, basic classification, Linux sysfs event fallback, and skip-empty warning behavior. | No lshw/hwinfo enrichment; no EV bitmask classification; `Tablet` remains unused; limited bus-specific classification; sysfs fallback cannot recover handlers. | P2 |
 | Camera | `v4l2-ctl --list-devices`, emits one device per physical camera record using the first `/dev/video*` node; falls back to `/sys/class/video4linux/video*` for basic name and node when `v4l2-ctl` cannot run. | Basic video device discovery, Deepin-style physical-device deduplication, and Linux video4linux sysfs fallback. | No lshw/hwinfo fallback; no vendor/driver/speed/serial enrichment. | P2 |
 | Battery | `upower --dump`, battery capacity/energy/voltage/vendor/model/serial; filters line-power devices; falls back to `/sys/class/power_supply/BAT*` for battery fields including cycle count. | UPower-based collection, Deepin-style line-power filtering, and Linux sysfs battery fallback. | No temperature fallback or vendor normalization. | P2 |
-| Printer | `lpstat -a`, optional `lpstat -v`; URI source failures warn; falls back to `lpstat -v` queue/URI records when `lpstat -a` cannot run. | CUPS queue enumeration plus URI-source fallback. | No make/model/default/state/interface; fallback cannot recover accepting state. | P2 |
+| Printer | `lpstat -a`, optional `lpstat -v`; URI source failures warn; falls back to `lpstat -v` queue/URI records when `lpstat -a` cannot run or parses empty. | CUPS queue enumeration, URI-source fallback, and skip-empty warning behavior. | No make/model/default/state/interface; fallback cannot recover accepting state. | P2 |
 | CD-ROM | `/proc/sys/dev/cdrom/info`, drive names and basic capabilities; falls back to `/sys/class/block/sr*` for basic drive nodes when proc cdrom info is unavailable or parses empty. | Proc cdrom discovery, Linux sysfs block fallback, and skip-empty warning behavior. | No lshw/hwinfo/lsscsi fallback; no vendor/model/firmware/serial; sysfs fallback cannot recover capabilities. | P2 |
 | USB | `lsusb` for bus/device/VID/PID/product; falls back to `/sys/bus/usb/devices/*` for bus/device IDs, VID/PID, device class/subclass/protocol, manufacturer, product, serial, and speed when `lsusb` cannot run; filters root hubs, USB hubs, sysfs host controllers, and sysfs interface entries. | Basic USB enumeration, Linux sysfs fallback, and Deepin/Kylin hub filtering. | No `lsusb -v`; no maxpower or detailed interface descriptor enrichment; USB devices consumed by Bluetooth/camera/input/printer are not deduplicated. | P2 |
 | PCI / Other PCI | `lspci -nn -k`, class/vendor/device IDs, driver/modules; falls back to `/sys/bus/pci/devices/*` for address, vendor/device/class/subsystem IDs when lspci cannot run; sysfs class IDs retain the full 24-bit code such as `040300`; display-class sysfs PCI nodes are consumed by GPU; unconsumed PCI devices become `OtherPci`. | PCI class and driver extraction plus Linux sysfs PCI ID fallback; GPU consumption of sysfs display-class PCI nodes. | Network/audio/storage/camera/bluetooth may duplicate as `OtherPci`; sysfs fallback lacks driver/modules and human-readable vendor/device/class names. | P2 |
@@ -92,7 +94,7 @@ Absorbed and preserved:
 - CD-ROM preserves the missing/failed `/proc/sys/dev/cdrom/info` warning while still emitting basic optical drive nodes from `/sys/class/block/sr*` when present, and emits `source_empty` plus sysfs fallback when proc cdrom parsing yields no drives.
 - PCI preserves the missing/failed `lspci -nn -k` warning while still emitting basic PCI ID devices from `/sys/bus/pci/devices/*` when present.
 - GPU preserves the missing/failed `lspci -nn -k` warning while still emitting GPU devices from display-class `/sys/bus/pci/devices/*` when present.
-- Printer preserves the missing/failed `lpstat -a` warning while still emitting queue/URI devices from `lpstat -v` when available.
+- Printer preserves the missing/failed `lpstat -a` warning while still emitting queue/URI devices from `lpstat -v` when available, and emits `source_empty` plus URI fallback when `lpstat -a` parsing yields no queues.
 - Fake runners and fixture tests cover missing commands, permission-denied DMI, bad EDID, ambiguous sysfs connectors, and numeric GPU vendor IDs.
 
 Still weak:

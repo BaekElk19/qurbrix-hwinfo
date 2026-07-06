@@ -471,6 +471,36 @@ async fn printer_probe_uses_uri_source_when_status_source_is_missing() {
 }
 
 #[tokio::test]
+async fn printer_probe_uses_uri_source_when_status_source_parses_empty() {
+    let runner = FakeSourceRunner::new()
+        .with_command("lpstat", ["-a"], "\n")
+        .with_command(
+            "lpstat",
+            ["-v"],
+            "device for Office: ipp://printer.local/ipp/print\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = PrinterProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Printer);
+    assert_eq!(result.devices[0].name, "Office");
+    assert_eq!(result.devices[0].sources[0].source, "lpstat -v");
+    let DeviceProperties::Printer(info) = &result.devices[0].properties else {
+        panic!("expected printer properties");
+    };
+    assert_eq!(info.queue_name.as_deref(), Some("Office"));
+    assert_eq!(
+        info.device_uri.as_deref(),
+        Some("ipp://printer.local/ipp/print")
+    );
+    assert_eq!(info.accepting, None);
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_empty");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("lpstat -a"));
+}
+
+#[tokio::test]
 async fn printer_probe_does_not_preserve_empty_uri_from_fallback_source() {
     let runner = FakeSourceRunner::new().with_command("lpstat", ["-v"], "device for Office:\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
