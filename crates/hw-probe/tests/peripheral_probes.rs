@@ -238,6 +238,43 @@ async fn camera_probe_emits_one_device_per_physical_camera() {
 }
 
 #[tokio::test]
+async fn camera_probe_reads_driver_from_sysfs_for_v4l2_node() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "v4l2-ctl",
+            ["--list-devices"],
+            "Integrated Camera:\n\t/dev/video0\n",
+        )
+        .with_file(
+            "/sys/class/video4linux/video0/device/uevent",
+            "DRIVER=uvcvideo\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CameraProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("uvcvideo")
+    );
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.source == "/sys/class/video4linux/video0"
+            && source.kind == SourceKind::Sysfs));
+}
+
+#[tokio::test]
 async fn camera_probe_uses_sysfs_when_v4l2_ctl_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(
@@ -248,6 +285,10 @@ async fn camera_probe_uses_sysfs_when_v4l2_ctl_is_missing() {
             ],
         )
         .with_file("/sys/class/video4linux/video0/name", "Integrated Camera\n")
+        .with_file(
+            "/sys/class/video4linux/video0/device/uevent",
+            "DRIVER=uvcvideo\n",
+        )
         .with_file("/sys/class/video4linux/video1/name", "Integrated Camera\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = CameraProbe.probe(&ctx).await;
@@ -268,6 +309,13 @@ async fn camera_probe_uses_sysfs_when_v4l2_ctl_is_missing() {
     };
     assert_eq!(info.video_node.as_deref(), Some("/dev/video0"));
     assert!(info.capabilities.is_empty());
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("uvcvideo")
+    );
     let DeviceProperties::Camera(info) = &result.devices[1].properties else {
         panic!("expected camera properties");
     };
