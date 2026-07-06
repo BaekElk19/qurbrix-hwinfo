@@ -89,38 +89,47 @@ impl Probe for PciProbe {
 async fn probe_sysfs_pci_devices(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let mut devices = Vec::new();
     for record in read_sysfs_pci_records(ctx).await {
-        devices.push(
-            Device::new(
-                device_id::pci(&record.address),
-                DeviceKind::Pci,
-                record.address.clone(),
-                DeviceProperties::Pci(PciInfo {
-                    address: record.address.clone(),
-                    class_name: None,
-                    class_id: record.class_id.clone(),
-                    vendor: None,
-                    vendor_id: record.vendor_id.clone(),
-                    device: None,
-                    device_id: record.device_id.clone(),
-                    subsystem_vendor_id: record.subsystem_vendor_id.clone(),
-                    subsystem_device_id: record.subsystem_device_id.clone(),
-                }),
-            )
-            .with_bus(BusInfo::Pci {
-                address: record.address,
-                vendor_id: record.vendor_id,
-                device_id: record.device_id,
-                subsystem_vendor_id: record.subsystem_vendor_id,
-                subsystem_device_id: record.subsystem_device_id,
-                class: record.class_id,
-            })
-            .with_source(SourceEvidence {
-                source: record.path.display().to_string(),
-                kind: SourceKind::Sysfs,
-                status: SourceStatus::Success,
-                summary: None,
+        let driver = record.driver.clone();
+        let mut device = Device::new(
+            device_id::pci(&record.address),
+            DeviceKind::Pci,
+            record.address.clone(),
+            DeviceProperties::Pci(PciInfo {
+                address: record.address.clone(),
+                class_name: None,
+                class_id: record.class_id.clone(),
+                vendor: None,
+                vendor_id: record.vendor_id.clone(),
+                device: None,
+                device_id: record.device_id.clone(),
+                subsystem_vendor_id: record.subsystem_vendor_id.clone(),
+                subsystem_device_id: record.subsystem_device_id.clone(),
             }),
-        );
+        )
+        .with_bus(BusInfo::Pci {
+            address: record.address,
+            vendor_id: record.vendor_id,
+            device_id: record.device_id,
+            subsystem_vendor_id: record.subsystem_vendor_id,
+            subsystem_device_id: record.subsystem_device_id,
+            class: record.class_id,
+        })
+        .with_source(SourceEvidence {
+            source: record.path.display().to_string(),
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+        if driver.is_some() {
+            device = device.with_driver(DriverInfo {
+                name: driver,
+                version: None,
+                modules: Vec::new(),
+                provider: None,
+                status: DriverStatus::InUse,
+            });
+        }
+        devices.push(device);
     }
 
     devices

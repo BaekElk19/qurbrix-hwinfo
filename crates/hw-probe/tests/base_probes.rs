@@ -1,4 +1,4 @@
-use hw_model::{BusInfo, DeviceKind, DeviceProperties, SourceKind, SourceStatus};
+use hw_model::{BusInfo, DeviceKind, DeviceProperties, DriverStatus, SourceKind, SourceStatus};
 use hw_probe::{PciProbe, Probe, ProbeContext, UsbProbe};
 use hw_source::FakeSourceRunner;
 use std::path::PathBuf;
@@ -45,6 +45,10 @@ async fn pci_probe_uses_sysfs_when_lspci_is_missing() {
         .with_file(
             "/sys/bus/pci/devices/0000:00:1f.3/subsystem_device",
             "0x087c\n",
+        )
+        .with_file(
+            "/sys/bus/pci/devices/0000:00:1f.3/uevent",
+            "DRIVER=snd_hda_intel\n",
         );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = PciProbe.probe(&ctx).await;
@@ -77,7 +81,17 @@ async fn pci_probe_uses_sysfs_when_lspci_is_missing() {
     assert_eq!(info.vendor, None);
     assert_eq!(info.device, None);
     assert_eq!(info.class_name, None);
-    assert_eq!(device.driver, None);
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("snd_hda_intel")
+    );
+    assert_eq!(
+        device.driver.as_ref().map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
     assert_eq!(device.sources.len(), 1);
     assert_eq!(
         device.sources[0].source,

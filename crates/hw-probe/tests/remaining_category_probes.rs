@@ -1,4 +1,4 @@
-use hw_model::{BusInfo, DeviceKind, DeviceProperties, SourceKind, SourceStatus};
+use hw_model::{BusInfo, DeviceKind, DeviceProperties, DriverStatus, SourceKind, SourceStatus};
 use hw_probe::{BiosProbe, GpuProbe, MemoryProbe, MonitorProbe, Probe, ProbeContext};
 use hw_source::FakeSourceRunner;
 use std::{path::PathBuf, time::Duration};
@@ -202,7 +202,8 @@ async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
         .with_file(
             "/sys/bus/pci/devices/0000:00:02.0/subsystem_device",
             "0x087c\n",
-        );
+        )
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/uevent", "DRIVER=i915\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = GpuProbe.probe(&ctx).await;
 
@@ -226,7 +227,20 @@ async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
         }
         other => panic!("expected gpu properties, got {other:?}"),
     }
-    assert_eq!(result.devices[0].driver, None);
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("i915")
+    );
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
     assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
     assert_eq!(
         result.consumed[0].id, "pci:0000:00:02.0",

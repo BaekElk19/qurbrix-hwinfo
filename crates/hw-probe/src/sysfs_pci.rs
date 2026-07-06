@@ -10,6 +10,7 @@ pub(crate) struct SysfsPciRecord {
     pub class_id: Option<String>,
     pub subsystem_vendor_id: Option<String>,
     pub subsystem_device_id: Option<String>,
+    pub driver: Option<String>,
 }
 
 pub(crate) async fn read_sysfs_pci_records(ctx: &ProbeContext<'_>) -> Vec<SysfsPciRecord> {
@@ -33,6 +34,7 @@ pub(crate) async fn read_sysfs_pci_records(ctx: &ProbeContext<'_>) -> Vec<SysfsP
             class_id: read_pci_id(ctx, &path.join("class")).await,
             subsystem_vendor_id: read_pci_id(ctx, &path.join("subsystem_vendor")).await,
             subsystem_device_id: read_pci_id(ctx, &path.join("subsystem_device")).await,
+            driver: read_uevent_value(ctx, &path.join("uevent"), "DRIVER").await,
         });
     }
 
@@ -62,4 +64,15 @@ async fn read_pci_id(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {
     }
     let value = result.stdout.trim().trim_start_matches("0x");
     (!value.is_empty()).then(|| value.to_ascii_lowercase())
+}
+
+async fn read_uevent_value(ctx: &ProbeContext<'_>, path: &Path, key: &str) -> Option<String> {
+    let result = ctx.runner.read_file(path).await;
+    if !result.is_success() {
+        return None;
+    }
+    result.stdout.lines().find_map(|line| {
+        let (candidate, value) = line.split_once('=')?;
+        (candidate == key && !value.trim().is_empty()).then(|| value.trim().to_string())
+    })
 }

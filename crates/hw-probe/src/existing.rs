@@ -1037,33 +1037,42 @@ async fn gpu_devices_from_sysfs_pci(
         consumed.push(DeviceRef {
             id: device_id::pci(&record.address),
         });
-        devices.push(
-            Device::new(
-                device_id::other("gpu:pci", &record.address),
-                DeviceKind::Gpu,
-                vendor
-                    .clone()
-                    .unwrap_or_else(|| format!("GPU {}", record.address)),
-                DeviceProperties::Gpu(GpuInfo {
-                    vendor,
-                    ..Default::default()
-                }),
-            )
-            .with_bus(BusInfo::Pci {
-                address: record.address,
-                vendor_id: record.vendor_id,
-                device_id: record.device_id,
-                subsystem_vendor_id: record.subsystem_vendor_id,
-                subsystem_device_id: record.subsystem_device_id,
-                class: record.class_id,
-            })
-            .with_source(SourceEvidence {
-                source: record.path.display().to_string(),
-                kind: SourceKind::Sysfs,
-                status: SourceStatus::Success,
-                summary: None,
+        let driver = record.driver.clone();
+        let mut device = Device::new(
+            device_id::other("gpu:pci", &record.address),
+            DeviceKind::Gpu,
+            vendor
+                .clone()
+                .unwrap_or_else(|| format!("GPU {}", record.address)),
+            DeviceProperties::Gpu(GpuInfo {
+                vendor,
+                ..Default::default()
             }),
-        );
+        )
+        .with_bus(BusInfo::Pci {
+            address: record.address,
+            vendor_id: record.vendor_id,
+            device_id: record.device_id,
+            subsystem_vendor_id: record.subsystem_vendor_id,
+            subsystem_device_id: record.subsystem_device_id,
+            class: record.class_id,
+        })
+        .with_source(SourceEvidence {
+            source: record.path.display().to_string(),
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+        if driver.is_some() {
+            device = device.with_driver(DriverInfo {
+                name: driver,
+                version: None,
+                modules: Vec::new(),
+                provider: None,
+                status: DriverStatus::InUse,
+            });
+        }
+        devices.push(device);
     }
 
     devices
