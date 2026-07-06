@@ -89,6 +89,43 @@ async fn memory_probe_uses_lshw_when_dmidecode_is_missing() {
 }
 
 #[tokio::test]
+async fn memory_probe_uses_lshw_when_dmidecode_parses_empty() {
+    let runner = FakeSourceRunner::new()
+        .with_command("dmidecode", ["-t", "memory"], "")
+        .with_command(
+            "lshw",
+            ["-class", "memory"],
+            "*-memory\n\
+                 description: System Memory\n\
+               *-bank:0\n\
+                    description: SODIMM DDR5 Synchronous 4800 MHz\n\
+                    product: HMCG66AGBSA092N\n\
+                    vendor: SK Hynix\n\
+                    serial: 12345678\n\
+                    slot: ChannelB-DIMM0\n\
+                    size: 16GiB\n\
+                    clock: 4800MHz\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.size_bytes, Some(16 * 1024 * 1024 * 1024));
+            assert_eq!(memory.vendor.as_deref(), Some("SK Hynix"));
+            assert_eq!(memory.memory_type.as_deref(), Some("DDR5"));
+            assert_eq!(memory.speed_mtps, Some(4800));
+            assert_eq!(memory.locator.as_deref(), Some("ChannelB-DIMM0"));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_empty" && warning.source.as_deref() == Some("dmidecode -t memory")
+    }));
+}
+
+#[tokio::test]
 async fn bios_probe_outputs_bios_and_motherboard_devices() {
     let runner = FakeSourceRunner::new().with_command(
         "dmidecode",

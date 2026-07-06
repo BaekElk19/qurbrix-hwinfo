@@ -48,6 +48,7 @@ Confirmed defects fixed during this audit:
 - `/sys/class/dmi/id` fallback now preserves BIOS/baseboard identity when `dmidecode -t 0,1,2,3` cannot run.
 - `/proc/meminfo` fallback now preserves aggregate memory capacity when `dmidecode -t memory` cannot run.
 - `lshw -class memory` fallback now preserves DIMM slot, vendor, serial, part number, size, type, and speed when `dmidecode -t memory` cannot run.
+- Empty successful `dmidecode -t memory` or `lshw -class memory` output now produces a `source_empty` warning and continues to lower-priority memory fallbacks.
 - `/sys/class/power_supply` fallback now preserves battery identity, capacity, energy, voltage, temperature, cycle count, and present state when UPower cannot run.
 - Battery probing now normalizes `LGC`/`LG Chem` vendor strings consistently across UPower and sysfs sources.
 - Network probing now preserves IPv4/IPv6 addresses from `ip -j addr` when available; `/sys/class/net` preserves interface name, MAC, operstate, speed, duplex, wireless/ethernet type/capabilities, and kernel driver, including when `ip -j link` cannot run.
@@ -98,6 +99,7 @@ Absorbed and preserved:
 
 - `hw-source` classifies command/file errors as `Missing`, `PermissionDenied`, `Timeout`, or `Failed`, and runs commands with stable English/C locale environment.
 - CPU treats `lscpu`, `lshw`, and `dmidecode` as optional and emits warnings for failed sources while still producing a CPU when any useful source exists.
+- Memory emits `source_empty` for successful but unparsable DMI/lshw memory sources and continues through lshw/procfs fallbacks.
 - Monitor treats `xrandr --verbose` and sysfs EDID as optional and continues after bad EDID with `edid_parse_failed` warnings.
 - USB preserves the missing/failed `lsusb` warning while still emitting devices from `/sys/bus/usb/devices/*` when usable sysfs device directories exist.
 - Storage treats `smartctl -a -j` as optional enrichment and preserves SMART data from parseable stdout even when smartctl exits non-zero.

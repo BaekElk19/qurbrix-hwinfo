@@ -810,56 +810,80 @@ impl Probe for MemoryProbe {
             )
             .await;
         if !result.is_success() {
-            let mut fallback = ProbeResult::source_failure(self.name(), &result);
-            let lshw_result = ctx
-                .runner
-                .run_command(&CommandSpec::new("lshw", ["-class", "memory"]), ctx.timeout)
-                .await;
-            if lshw_result.is_success() {
-                let records = parse_lshw_memory(&lshw_result.stdout);
-                if !records.is_empty() {
-                    fallback.devices = memory_devices_from_records(
-                        records,
-                        &lshw_result.source,
-                        SourceKind::Command,
-                    );
-                    return fallback;
-                }
-            } else {
-                fallback
-                    .warnings
-                    .extend(ProbeResult::source_failure(self.name(), &lshw_result).warnings);
-            }
-
-            let proc_meminfo_result = ctx.runner.read_file(Path::new("/proc/meminfo")).await;
-            if proc_meminfo_result.is_success() {
-                if let Some(size_bytes) =
-                    parse_proc_meminfo_total_bytes(&proc_meminfo_result.stdout)
-                {
-                    let device = Device::new(
-                        "memory:system",
-                        DeviceKind::Memory,
-                        "System Memory",
-                        DeviceProperties::Memory(MemoryInfo {
-                            size_bytes: Some(size_bytes),
-                            ..Default::default()
-                        }),
-                    )
-                    .with_source(SourceEvidence {
-                        source: proc_meminfo_result.source,
-                        kind: SourceKind::Procfs,
-                        status: SourceStatus::Success,
-                        summary: None,
-                    });
-                    fallback.devices.push(device);
-                }
-            }
-            return fallback;
+            return memory_fallback_from_lshw_or_proc(
+                ctx,
+                ProbeResult::source_failure(self.name(), &result),
+            )
+            .await;
         }
         let records = parse_dmidecode_memory(&result.stdout);
+        if records.is_empty() {
+            let fallback = ProbeResult {
+                devices: Vec::new(),
+                warnings: vec![ScanWarning::new(
+                    "source_empty",
+                    "memory source produced no DIMM records",
+                )
+                .with_source(result.source)],
+                consumed: Vec::new(),
+            };
+            return memory_fallback_from_lshw_or_proc(ctx, fallback).await;
+        }
         let devices = memory_devices_from_records(records, &result.source, SourceKind::Command);
         ProbeResult::with_devices(devices)
     }
+}
+
+async fn memory_fallback_from_lshw_or_proc(
+    ctx: &ProbeContext<'_>,
+    mut fallback: ProbeResult,
+) -> ProbeResult {
+    let lshw_result = ctx
+        .runner
+        .run_command(&CommandSpec::new("lshw", ["-class", "memory"]), ctx.timeout)
+        .await;
+    if lshw_result.is_success() {
+        let records = parse_lshw_memory(&lshw_result.stdout);
+        if !records.is_empty() {
+            fallback.devices =
+                memory_devices_from_records(records, &lshw_result.source, SourceKind::Command);
+            return fallback;
+        }
+        fallback.warnings.push(
+            ScanWarning::new(
+                "source_empty",
+                "lshw memory source produced no DIMM records",
+            )
+            .with_source(lshw_result.source),
+        );
+    } else {
+        fallback
+            .warnings
+            .extend(ProbeResult::source_failure("memory", &lshw_result).warnings);
+    }
+
+    let proc_meminfo_result = ctx.runner.read_file(Path::new("/proc/meminfo")).await;
+    if proc_meminfo_result.is_success() {
+        if let Some(size_bytes) = parse_proc_meminfo_total_bytes(&proc_meminfo_result.stdout) {
+            let device = Device::new(
+                "memory:system",
+                DeviceKind::Memory,
+                "System Memory",
+                DeviceProperties::Memory(MemoryInfo {
+                    size_bytes: Some(size_bytes),
+                    ..Default::default()
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: proc_meminfo_result.source,
+                kind: SourceKind::Procfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+            fallback.devices.push(device);
+        }
+    }
+    fallback
 }
 
 fn memory_devices_from_records(
