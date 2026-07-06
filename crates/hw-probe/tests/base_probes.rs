@@ -126,7 +126,8 @@ async fn usb_probe_builds_devices() {
             "Realtek Semiconductor Corp.\n",
         )
         .with_file("/sys/bus/usb/devices/1-2/serial", "ABC123\n")
-        .with_file("/sys/bus/usb/devices/1-2/speed", "480\n");
+        .with_file("/sys/bus/usb/devices/1-2/speed", "480\n")
+        .with_file("/sys/bus/usb/devices/1-2/bMaxPower", "500mA\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = UsbProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].id, "usb:0bda:5689:ABC123");
@@ -143,6 +144,7 @@ async fn usb_probe_builds_devices() {
     assert_eq!(info.class.as_deref(), Some("ef"));
     assert_eq!(info.subclass.as_deref(), Some("02"));
     assert_eq!(info.protocol.as_deref(), Some("01"));
+    assert_eq!(info.max_power_ma, Some(500));
     assert!(result.devices[0]
         .sources
         .iter()
@@ -206,6 +208,7 @@ async fn usb_probe_uses_sysfs_when_lsusb_is_missing() {
         .with_file("/sys/bus/usb/devices/1-2/product", "Integrated Camera\n")
         .with_file("/sys/bus/usb/devices/1-2/serial", "ABC123\n")
         .with_file("/sys/bus/usb/devices/1-2/speed", "480\n")
+        .with_file("/sys/bus/usb/devices/1-2/bMaxPower", "500mA\n")
         .with_file(
             "/sys/bus/usb/devices/usb1/product",
             "xHCI Host Controller\n",
@@ -243,6 +246,7 @@ async fn usb_probe_uses_sysfs_when_lsusb_is_missing() {
                 && info.product.as_deref() == Some("Integrated Camera")
                 && info.serial.as_deref() == Some("ABC123")
                 && info.speed.as_deref() == Some("480")
+                && info.max_power_ma == Some(500)
     ));
     assert_eq!(device.sources.len(), 1);
     assert_eq!(device.sources[0].source, "/sys/bus/usb/devices/1-2");

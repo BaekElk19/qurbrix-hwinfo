@@ -55,6 +55,7 @@ impl Probe for UsbProbe {
                         record.serial = record.serial.or(sysfs.serial.clone());
                         record.speed = record.speed.or(sysfs.speed.clone());
                     }
+                    let max_power_ma = sysfs.and_then(|record| record.max_power_ma);
                     let id = device_id::usb(
                         record.bus.as_deref(),
                         record.device.as_deref(),
@@ -81,6 +82,7 @@ impl Probe for UsbProbe {
                             product: record.product.clone(),
                             serial: record.serial.clone(),
                             speed: record.speed.clone(),
+                            max_power_ma,
                         }),
                     )
                     .with_bus(BusInfo::Usb {
@@ -125,6 +127,7 @@ struct SysfsUsbRecord {
     product: Option<String>,
     serial: Option<String>,
     speed: Option<String>,
+    max_power_ma: Option<u32>,
 }
 
 async fn probe_sysfs_usb(ctx: &ProbeContext<'_>) -> Vec<Device> {
@@ -158,6 +161,7 @@ async fn probe_sysfs_usb(ctx: &ProbeContext<'_>) -> Vec<Device> {
                     product: record.product,
                     serial: record.serial,
                     speed: record.speed,
+                    max_power_ma: record.max_power_ma,
                 }),
             )
             .with_bus(BusInfo::Usb {
@@ -201,6 +205,9 @@ async fn read_sysfs_usb_records(ctx: &ProbeContext<'_>) -> Vec<SysfsUsbRecord> {
         let manufacturer = read_sysfs_value(ctx, &path, "manufacturer").await;
         let serial = read_sysfs_value(ctx, &path, "serial").await;
         let speed = read_sysfs_value(ctx, &path, "speed").await;
+        let max_power_ma = read_sysfs_value(ctx, &path, "bMaxPower")
+            .await
+            .and_then(parse_usb_max_power_ma);
 
         records.push(SysfsUsbRecord {
             path,
@@ -215,9 +222,14 @@ async fn read_sysfs_usb_records(ctx: &ProbeContext<'_>) -> Vec<SysfsUsbRecord> {
             product,
             serial,
             speed,
+            max_power_ma,
         });
     }
     records
+}
+
+fn parse_usb_max_power_ma(value: String) -> Option<u32> {
+    value.trim().trim_end_matches("mA").trim().parse().ok()
 }
 
 async fn read_sysfs_value(ctx: &ProbeContext<'_>, path: &Path, name: &str) -> Option<String> {

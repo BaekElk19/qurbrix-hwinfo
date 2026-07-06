@@ -222,6 +222,7 @@ pub struct UsbInfo {
     pub product: Option<String>,
     pub serial: Option<String>,
     pub speed: Option<String>,
+    pub max_power_ma: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
