@@ -1,4 +1,4 @@
-use hw_model::{DeviceKind, DeviceProperties, InputKind, SourceKind, SourceStatus};
+use hw_model::{DeviceKind, DeviceProperties, DriverStatus, InputKind, SourceKind, SourceStatus};
 use hw_probe::{
     AudioProbe, BatteryProbe, BluetoothProbe, CameraProbe, CdromProbe, InputProbe, PrinterProbe,
     Probe, ProbeContext,
@@ -9,13 +9,53 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn audio_probe_reads_proc_asound() {
-    let runner = FakeSourceRunner::new().with_file(
-        "/proc/asound/cards",
-        " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xa1230000 irq 145\n",
-    );
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/asound/cards",
+            " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xa1230000 irq 145\n",
+        )
+        .with_glob(
+            "/proc/asound/card0/codec#*",
+            vec![PathBuf::from("/proc/asound/card0/codec#0")],
+        )
+        .with_file("/proc/asound/card0/codec#0", "Codec: Realtek ALC256\n")
+        .with_file(
+            "/sys/class/sound/card0/device/uevent",
+            "DRIVER=snd_hda_intel\n",
+        )
+        .with_file("/sys/class/sound/card0/device/subsystem_vendor", "0x1028\n")
+        .with_file("/sys/class/sound/card0/device/subsystem_device", "0x087c\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = AudioProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Audio);
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("snd_hda_intel")
+    );
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
+
+    let DeviceProperties::Audio(info) = &result.devices[0].properties else {
+        panic!("expected audio properties");
+    };
+    assert_eq!(info.codec.as_deref(), Some("Realtek ALC256"));
+    assert_eq!(info.subsystem.as_deref(), Some("1028:087c"));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.source == "/proc/asound/card0/codec#0"
+            && source.kind == SourceKind::Procfs));
+    assert!(result.devices[0].sources.iter().any(|source| source.source
+        == "/sys/class/sound/card0"
+        && source.kind == SourceKind::Sysfs));
 }
 
 #[tokio::test]
@@ -33,7 +73,13 @@ async fn audio_probe_uses_sysfs_when_proc_asound_cards_is_missing() {
                 PathBuf::from("/sys/class/sound/card0"),
             ],
         )
-        .with_file("/sys/class/sound/card0/id", "PCH\n");
+        .with_file("/sys/class/sound/card0/id", "PCH\n")
+        .with_file(
+            "/sys/class/sound/card0/device/uevent",
+            "DRIVER=snd_hda_intel\n",
+        )
+        .with_file("/sys/class/sound/card0/device/subsystem_vendor", "0x1028\n")
+        .with_file("/sys/class/sound/card0/device/subsystem_device", "0x087c\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = AudioProbe.probe(&ctx).await;
 
@@ -47,12 +93,28 @@ async fn audio_probe_uses_sysfs_when_proc_asound_cards_is_missing() {
     );
     assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
     assert_eq!(result.devices[0].sources[0].status, SourceStatus::Success);
+    assert_eq!(
+        result.devices[0]
+            .sources
+            .iter()
+            .filter(|source| source.source == "/sys/class/sound/card0")
+            .count(),
+        1
+    );
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("snd_hda_intel")
+    );
 
     let DeviceProperties::Audio(info) = &result.devices[0].properties else {
         panic!("expected audio properties");
     };
     assert_eq!(info.card_index, Some(0));
     assert_eq!(info.card_name.as_deref(), Some("PCH"));
+    assert_eq!(info.subsystem.as_deref(), Some("1028:087c"));
 
     assert_eq!(result.devices[1].name, "Audio card 1");
     let DeviceProperties::Audio(info) = &result.devices[1].properties else {
