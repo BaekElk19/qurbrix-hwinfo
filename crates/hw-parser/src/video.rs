@@ -43,3 +43,32 @@ pub fn parse_v4l2_list_devices(input: &str) -> Vec<VideoDeviceRecord> {
     }
     records
 }
+
+pub fn parse_v4l2_list_formats_ext(input: &str) -> Vec<String> {
+    let mut capabilities = Vec::new();
+    let mut current_format: Option<String> = None;
+
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if let Some((_, rest)) = trimmed.split_once("]: '") {
+            current_format = rest.split_once('\'').map(|(format, _)| format.to_string());
+            continue;
+        }
+        let Some(format) = current_format.as_deref() else {
+            continue;
+        };
+        let Some(size) = trimmed.strip_prefix("Size: Discrete ") else {
+            continue;
+        };
+        let size = size.split_whitespace().next().unwrap_or(size);
+        if size.is_empty() {
+            continue;
+        }
+        let capability = format!("{format} {size}");
+        if !capabilities.contains(&capability) {
+            capabilities.push(capability);
+        }
+    }
+
+    capabilities
+}

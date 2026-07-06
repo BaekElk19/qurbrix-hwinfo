@@ -423,6 +423,40 @@ async fn camera_probe_reads_usb_identity_from_sysfs_for_v4l2_node() {
 }
 
 #[tokio::test]
+async fn camera_probe_reads_v4l2_format_capabilities() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "v4l2-ctl",
+            ["--list-devices"],
+            "Integrated Camera:\n\t/dev/video0\n",
+        )
+        .with_command(
+            "v4l2-ctl",
+            ["--device", "/dev/video0", "--list-formats-ext"],
+            "ioctl: VIDIOC_ENUM_FMT\n\
+             \t[0]: 'MJPG' (Motion-JPEG, compressed)\n\
+             \t\tSize: Discrete 1280x720\n\
+             \t\tSize: Discrete 640x480\n\
+             \t[1]: 'YUYV' (YUYV 4:2:2)\n\
+             \t\tSize: Discrete 640x480\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CameraProbe.probe(&ctx).await;
+
+    let DeviceProperties::Camera(info) = &result.devices[0].properties else {
+        panic!("expected camera properties");
+    };
+    assert_eq!(
+        info.capabilities,
+        vec!["MJPG 1280x720", "MJPG 640x480", "YUYV 640x480"]
+    );
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.kind == SourceKind::Command
+            && source.source == "v4l2-ctl --device /dev/video0 --list-formats-ext"
+    }));
+}
+
+#[tokio::test]
 async fn camera_probe_uses_sysfs_when_v4l2_ctl_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(

@@ -107,3 +107,22 @@ fn parses_bluetooth_and_video() {
     assert_eq!(paired.len(), 2);
     assert_eq!(cameras[0].nodes, vec!["/dev/video0", "/dev/video1"]);
 }
+
+#[test]
+fn parses_v4l2_format_capabilities() {
+    let capabilities = parse_v4l2_list_formats_ext(
+        "ioctl: VIDIOC_ENUM_FMT\n\
+         \tType: Video Capture\n\
+         \n\
+         \t[0]: 'MJPG' (Motion-JPEG, compressed)\n\
+         \t\tSize: Discrete 1280x720\n\
+         \t\tSize: Discrete 640x480\n\
+         \t[1]: 'YUYV' (YUYV 4:2:2)\n\
+         \t\tSize: Discrete 640x480\n",
+    );
+
+    assert_eq!(
+        capabilities,
+        vec!["MJPG 1280x720", "MJPG 640x480", "YUYV 640x480"]
+    );
+}

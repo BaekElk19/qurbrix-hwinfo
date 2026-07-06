@@ -4,7 +4,7 @@ use hw_model::{
     device_id, BusInfo, CameraInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
     SourceEvidence, SourceKind, SourceStatus,
 };
-use hw_parser::parse_v4l2_list_devices;
+use hw_parser::{parse_v4l2_list_devices, parse_v4l2_list_formats_ext};
 use hw_source::CommandSpec;
 use std::path::Path;
 
@@ -53,7 +53,8 @@ impl Probe for CameraProbe {
                 status: SourceStatus::Success,
                 summary: None,
             });
-            devices.push(apply_camera_sysfs_enrichment(ctx, device, &node).await);
+            let device = apply_camera_sysfs_enrichment(ctx, device, &node).await;
+            devices.push(apply_camera_format_enrichment(ctx, device, &node).await);
         }
         ProbeResult::with_devices(devices)
     }
@@ -88,10 +89,57 @@ async fn probe_sysfs_cameras(ctx: &ProbeContext<'_>) -> Vec<Device> {
             status: SourceStatus::Success,
             summary: None,
         });
-        devices.push(apply_camera_sysfs_enrichment(ctx, device, &video_node).await);
+        let device = apply_camera_sysfs_enrichment(ctx, device, &video_node).await;
+        devices.push(apply_camera_format_enrichment(ctx, device, &video_node).await);
     }
 
     devices
+}
+
+async fn apply_camera_format_enrichment(
+    ctx: &ProbeContext<'_>,
+    mut device: Device,
+    video_node: &str,
+) -> Device {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("v4l2-ctl", ["--device", video_node, "--list-formats-ext"]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return device;
+    }
+
+    let capabilities = parse_v4l2_list_formats_ext(&result.stdout);
+    if capabilities.is_empty() {
+        return device;
+    }
+
+    let mut contributed = false;
+    if let DeviceProperties::Camera(info) = &mut device.properties {
+        for capability in capabilities {
+            if !info.capabilities.contains(&capability) {
+                info.capabilities.push(capability);
+                contributed = true;
+            }
+        }
+    }
+    if contributed
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == result.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: result.source,
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
 }
 
 async fn apply_camera_sysfs_enrichment(
