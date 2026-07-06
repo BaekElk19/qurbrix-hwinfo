@@ -9,6 +9,11 @@ pub struct DmiMemoryRecord {
     pub part_number: Option<String>,
     pub memory_type: Option<String>,
     pub speed: Option<String>,
+    pub total_width: Option<String>,
+    pub data_width: Option<String>,
+    pub minimum_voltage: Option<String>,
+    pub maximum_voltage: Option<String>,
+    pub configured_voltage: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -110,6 +115,11 @@ pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
                     record.speed = clean_memory_value(value);
                 }
             }
+            "Total Width" => record.total_width = clean_memory_value(value),
+            "Data Width" => record.data_width = clean_memory_value(value),
+            "Minimum Voltage" => record.minimum_voltage = clean_memory_value(value),
+            "Maximum Voltage" => record.maximum_voltage = clean_memory_value(value),
+            "Configured Voltage" => record.configured_voltage = clean_memory_value(value),
             _ => {}
         }
     }
@@ -429,6 +439,14 @@ pub fn parse_speed_mtps(value: Option<&str>) -> Option<u32> {
     value?.split_whitespace().next()?.parse().ok()
 }
 
+pub fn parse_width_bits(value: Option<&str>) -> Option<u32> {
+    value?.split_whitespace().next()?.parse().ok()
+}
+
+pub fn parse_voltage_v(value: Option<&str>) -> Option<f32> {
+    value?.split_whitespace().next()?.parse().ok()
+}
+
 fn push_memory_record(records: &mut Vec<DmiMemoryRecord>, record: Option<DmiMemoryRecord>) {
     let Some(record) = record else {
         return;
@@ -446,6 +464,11 @@ fn memory_record_has_data(record: &DmiMemoryRecord) -> bool {
         || record.part_number.is_some()
         || record.memory_type.is_some()
         || record.speed.is_some()
+        || record.total_width.is_some()
+        || record.data_width.is_some()
+        || record.minimum_voltage.is_some()
+        || record.maximum_voltage.is_some()
+        || record.configured_voltage.is_some()
 }
 
 fn clean_memory_value(value: &str) -> Option<String> {

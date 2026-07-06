@@ -16,6 +16,44 @@ async fn memory_probe_outputs_dimm_devices() {
 }
 
 #[tokio::test]
+async fn memory_probe_preserves_dmi_width_and_voltage_fields() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "memory"],
+        "Memory Device\n\
+         \tSize: 16 GB\n\
+         \tLocator: ChannelA-DIMM0\n\
+         \tManufacturer: Samsung\n\
+         \tType: DDR5\n\
+         \tSpeed: 5600 MT/s\n\
+         \tTotal Width: 72 bits\n\
+         \tData Width: 64 bits\n\
+         \tMinimum Voltage: 1.1 V\n\
+         \tMaximum Voltage: 1.2 V\n\
+         \tConfigured Voltage: 1.1 V\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+
+    assert_eq!(memory.total_width_bits, Some(72));
+    assert_eq!(memory.data_width_bits, Some(64));
+    assert!(memory
+        .min_voltage_v
+        .is_some_and(|value| (value - 1.1).abs() < 0.0001));
+    assert!(memory
+        .max_voltage_v
+        .is_some_and(|value| (value - 1.2).abs() < 0.0001));
+    assert!(memory
+        .configured_voltage_v
+        .is_some_and(|value| (value - 1.1).abs() < 0.0001));
+}
+
+#[tokio::test]
 async fn memory_probe_uses_proc_meminfo_when_dmidecode_is_missing() {
     let runner =
         FakeSourceRunner::new().with_file("/proc/meminfo", "MemTotal:       16384000 kB\n");

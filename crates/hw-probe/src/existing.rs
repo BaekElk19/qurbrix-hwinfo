@@ -19,10 +19,10 @@ use hw_parser::{
     parse_lshw_storage, parse_lspci_nn_k, parse_nvidia_settings_videoram,
     parse_nvidia_smi_memory_csv, parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
-    parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_xrandr_query,
-    parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord,
-    GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord,
-    LshwNetworkRecord, LshwStorageRecord, PciRecord,
+    parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_voltage_v, parse_width_bits,
+    parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord,
+    DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord,
+    LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord, LshwStorageRecord, PciRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -2229,6 +2229,11 @@ fn memory_record_has_data(record: &DmiMemoryRecord) -> bool {
         || record.part_number.is_some()
         || record.memory_type.is_some()
         || record.speed.is_some()
+        || record.total_width.is_some()
+        || record.data_width.is_some()
+        || record.minimum_voltage.is_some()
+        || record.maximum_voltage.is_some()
+        || record.configured_voltage.is_some()
 }
 
 fn memory_devices_from_sysfs_records(records: Vec<SysfsMemoryRecord>) -> Vec<Device> {
@@ -2281,6 +2286,11 @@ fn memory_device_from_record(
             vendor: mem.manufacturer,
             memory_type: mem.memory_type,
             speed_mtps: parse_speed_mtps(mem.speed.as_deref()),
+            total_width_bits: parse_width_bits(mem.total_width.as_deref()),
+            data_width_bits: parse_width_bits(mem.data_width.as_deref()),
+            min_voltage_v: parse_voltage_v(mem.minimum_voltage.as_deref()),
+            max_voltage_v: parse_voltage_v(mem.maximum_voltage.as_deref()),
+            configured_voltage_v: parse_voltage_v(mem.configured_voltage.as_deref()),
             locator: mem.locator,
             serial: mem.serial,
             part_number: mem.part_number,
