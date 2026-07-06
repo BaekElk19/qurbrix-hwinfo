@@ -1,7 +1,10 @@
-use crate::{Probe, ProbeContext, ProbeResult};
+use crate::{
+    sysfs_pci::{pci_bus_from_uevent, read_kernel_modules},
+    Probe, ProbeContext, ProbeResult,
+};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, AudioInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
+    device_id, AudioInfo, BusInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
     SourceEvidence, SourceKind, SourceStatus,
 };
 use hw_parser::parse_proc_asound_cards;
@@ -57,6 +60,8 @@ impl Probe for AudioProbe {
 
 struct AudioEnrichment {
     driver: Option<String>,
+    modules: Vec<String>,
+    bus: Option<BusInfo>,
     vendor: Option<String>,
     codec: Option<String>,
     codec_source: Option<String>,
@@ -114,9 +119,12 @@ async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
 
 async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment {
     let sysfs_path = Path::new("/sys/class/sound").join(format!("card{index}"));
-    let driver = read_trimmed(ctx, &sysfs_path.join("device/uevent"))
-        .await
-        .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"));
+    let uevent = read_trimmed(ctx, &sysfs_path.join("device/uevent")).await;
+    let driver = uevent
+        .as_deref()
+        .and_then(|uevent| parse_uevent_value(uevent, "DRIVER"));
+    let bus = uevent.as_deref().and_then(pci_bus_from_uevent);
+    let modules = read_kernel_modules(ctx, &sysfs_path.join("device")).await;
     let vendor = read_trimmed(ctx, &sysfs_path.join("device/vendor"))
         .await
         .and_then(normalize_audio_vendor_id);
@@ -134,8 +142,14 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
 
     AudioEnrichment {
         sysfs_source: sysfs_path.display().to_string(),
-        sysfs_contributed: driver.is_some() || vendor.is_some() || subsystem.is_some(),
+        sysfs_contributed: driver.is_some()
+            || !modules.is_empty()
+            || bus.is_some()
+            || vendor.is_some()
+            || subsystem.is_some(),
         driver,
+        modules,
+        bus,
         vendor,
         codec,
         codec_source,
@@ -168,11 +182,15 @@ fn apply_audio_enrichment(mut device: Device, enrichment: AudioEnrichment) -> De
         device.vendor = Some(vendor);
     }
 
-    if let Some(driver) = enrichment.driver {
+    if let Some(bus) = enrichment.bus {
+        device = device.with_bus(bus);
+    }
+
+    if enrichment.driver.is_some() || !enrichment.modules.is_empty() {
         device = device.with_driver(DriverInfo {
-            name: Some(driver),
+            name: enrichment.driver,
             version: None,
-            modules: Vec::new(),
+            modules: enrichment.modules,
             provider: None,
             status: DriverStatus::InUse,
         });

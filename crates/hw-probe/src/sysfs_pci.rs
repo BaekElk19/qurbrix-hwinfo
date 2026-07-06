@@ -1,4 +1,5 @@
 use crate::ProbeContext;
+use hw_model::BusInfo;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -84,6 +85,47 @@ pub(crate) async fn read_kernel_modules(ctx: &ProbeContext<'_>, path: &Path) -> 
     modules
 }
 
+pub(crate) fn pci_bus_from_uevent(uevent: &str) -> Option<BusInfo> {
+    let address = parse_uevent_value_str(uevent, "PCI_SLOT_NAME")?.to_string();
+    let (vendor_id, device_id) = parse_pci_id_pair(parse_uevent_value_str(uevent, "PCI_ID"));
+    let (subsystem_vendor_id, subsystem_device_id) =
+        parse_pci_id_pair(parse_uevent_value_str(uevent, "PCI_SUBSYS_ID"));
+    let class = parse_uevent_value_str(uevent, "PCI_CLASS").and_then(|class| {
+        normalize_pci_hex_id(class).map(|class| {
+            if class.len() == 5 {
+                format!("0{class}")
+            } else {
+                class
+            }
+        })
+    });
+
+    Some(BusInfo::Pci {
+        address,
+        vendor_id,
+        device_id,
+        subsystem_vendor_id,
+        subsystem_device_id,
+        class,
+    })
+}
+
+fn parse_pci_id_pair(value: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some((vendor, device)) = value.and_then(|value| value.split_once(':')) else {
+        return (None, None);
+    };
+    (normalize_pci_hex_id(vendor), normalize_pci_hex_id(device))
+}
+
+fn normalize_pci_hex_id(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    (!value.is_empty() && value.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
+}
+
 async fn read_pci_id(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {
     let result = ctx.runner.read_file(path).await;
     if !result.is_success() {
@@ -98,8 +140,12 @@ async fn read_uevent_value(ctx: &ProbeContext<'_>, path: &Path, key: &str) -> Op
     if !result.is_success() {
         return None;
     }
-    result.stdout.lines().find_map(|line| {
+    parse_uevent_value_str(&result.stdout, key).map(str::to_string)
+}
+
+fn parse_uevent_value_str<'a>(input: &'a str, key: &str) -> Option<&'a str> {
+    input.lines().find_map(|line| {
         let (candidate, value) = line.split_once('=')?;
-        (candidate == key && !value.trim().is_empty()).then(|| value.trim().to_string())
+        (candidate == key && !value.trim().is_empty()).then(|| value.trim())
     })
 }
