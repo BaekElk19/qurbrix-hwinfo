@@ -35,8 +35,53 @@ async fn memory_probe_uses_proc_meminfo_when_dmidecode_is_missing() {
             && source.kind == SourceKind::Procfs
             && source.status == SourceStatus::Success
     }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_missing" && warning.source.as_deref() == Some("dmidecode -t memory")
+    }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_missing" && warning.source.as_deref() == Some("lshw -class memory")
+    }));
+}
+
+#[tokio::test]
+async fn memory_probe_uses_lshw_when_dmidecode_is_missing() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lshw",
+        ["-class", "memory"],
+        "*-memory\n\
+             description: System Memory\n\
+           *-bank:0\n\
+                description: SODIMM DDR4 Synchronous 3200 MHz (0.3 ns)\n\
+                product: M471A2K43CB1-CTD\n\
+                vendor: Samsung\n\
+                serial: ABCD1234\n\
+                slot: ChannelA-DIMM0\n\
+                size: 8GiB\n\
+                clock: 3200MHz (0.3ns)\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Memory);
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.size_bytes, Some(8 * 1024 * 1024 * 1024));
+            assert_eq!(memory.vendor.as_deref(), Some("Samsung"));
+            assert_eq!(memory.memory_type.as_deref(), Some("DDR4"));
+            assert_eq!(memory.speed_mtps, Some(3200));
+            assert_eq!(memory.locator.as_deref(), Some("ChannelA-DIMM0"));
+            assert_eq!(memory.serial.as_deref(), Some("ABCD1234"));
+            assert_eq!(memory.part_number.as_deref(), Some("M471A2K43CB1-CTD"));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == "lshw -class memory"
+            && source.kind == SourceKind::Command
+            && source.status == SourceStatus::Success
+    }));
     assert_eq!(result.warnings.len(), 1);
-    assert_eq!(result.warnings[0].code, "source_missing");
     assert_eq!(
         result.warnings[0].source.as_deref(),
         Some("dmidecode -t memory")

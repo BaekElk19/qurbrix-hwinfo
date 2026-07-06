@@ -30,6 +30,34 @@ fn parses_upower_battery() {
 }
 
 #[test]
+fn parses_lshw_memory_banks() {
+    let records = parse_lshw_memory(
+        "*-memory\n\
+             description: System Memory\n\
+           *-bank:0\n\
+                description: SODIMM DDR4 Synchronous 3200 MHz (0.3 ns)\n\
+                product: M471A2K43CB1-CTD\n\
+                vendor: Samsung\n\
+                serial: ABCD1234\n\
+                slot: ChannelA-DIMM0\n\
+                size: 8GiB\n\
+                clock: 3200MHz (0.3ns)\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].locator.as_deref(), Some("ChannelA-DIMM0"));
+    assert_eq!(records[0].manufacturer.as_deref(), Some("Samsung"));
+    assert_eq!(records[0].serial.as_deref(), Some("ABCD1234"));
+    assert_eq!(records[0].part_number.as_deref(), Some("M471A2K43CB1-CTD"));
+    assert_eq!(records[0].memory_type.as_deref(), Some("DDR4"));
+    assert_eq!(
+        parse_size_to_bytes(records[0].size.as_deref()),
+        Some(8 * 1024 * 1024 * 1024)
+    );
+    assert_eq!(parse_speed_mtps(records[0].speed.as_deref()), Some(3200));
+}
+
+#[test]
 fn parses_printer_status_and_uri() {
     let statuses = parse_lpstat_a(&hw_testdata::fixture("printer/lpstat-a.txt"));
     let uris = parse_lpstat_v(&hw_testdata::fixture("printer/lpstat-v.txt"));

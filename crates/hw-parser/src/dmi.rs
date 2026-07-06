@@ -60,6 +60,46 @@ pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
     records
 }
 
+pub fn parse_lshw_memory(input: &str) -> Vec<DmiMemoryRecord> {
+    let mut records = Vec::new();
+    let mut current: Option<DmiMemoryRecord> = None;
+
+    for line in input.lines().chain(std::iter::once("")) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("*-bank") {
+            push_memory_record(&mut records, current.take());
+            current = Some(DmiMemoryRecord::default());
+            continue;
+        }
+
+        let Some(record) = current.as_mut() else {
+            continue;
+        };
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "description" => {
+                record.memory_type = lshw_memory_type(value);
+                if record.speed.is_none() {
+                    record.speed = lshw_clock_speed(value);
+                }
+            }
+            "product" => record.part_number = clean_memory_value(value),
+            "vendor" => record.manufacturer = clean_memory_value(value),
+            "serial" => record.serial = clean_memory_value(value),
+            "slot" => record.locator = clean_memory_value(value),
+            "size" => record.size = clean_memory_value(value),
+            "clock" => record.speed = lshw_clock_speed(value),
+            _ => {}
+        }
+    }
+
+    push_memory_record(&mut records, current.take());
+    records
+}
+
 pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
     let mut record = DmiBiosBoardRecord::default();
     let mut section = "";
@@ -89,8 +129,21 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
 pub fn parse_size_to_bytes(value: Option<&str>) -> Option<u64> {
     let value = value?;
     let mut parts = value.split_whitespace();
-    let number = parts.next()?.parse::<u64>().ok()?;
-    let unit = parts.next().unwrap_or("").to_ascii_lowercase();
+    let first = parts.next()?;
+    let (number, unit) = match first.parse::<u64>() {
+        Ok(number) => (number, parts.next().unwrap_or("").to_string()),
+        Err(_) => {
+            let split = first.find(|c: char| !c.is_ascii_digit())?;
+            if split == 0 {
+                return None;
+            }
+            (
+                first[..split].parse::<u64>().ok()?,
+                first[split..].to_string(),
+            )
+        }
+    };
+    let unit = unit.to_ascii_lowercase();
     match unit.as_str() {
         "kb" | "kib" => Some(number * 1024),
         "mb" | "mib" => Some(number * 1024 * 1024),
@@ -112,4 +165,42 @@ pub fn parse_proc_meminfo_total_bytes(input: &str) -> Option<u64> {
 
 pub fn parse_speed_mtps(value: Option<&str>) -> Option<u32> {
     value?.split_whitespace().next()?.parse().ok()
+}
+
+fn push_memory_record(records: &mut Vec<DmiMemoryRecord>, record: Option<DmiMemoryRecord>) {
+    let Some(record) = record else {
+        return;
+    };
+    let has_data = record.size.is_some()
+        || record.locator.is_some()
+        || record.manufacturer.is_some()
+        || record.serial.is_some()
+        || record.part_number.is_some()
+        || record.memory_type.is_some()
+        || record.speed.is_some();
+    if has_data && record.size.as_deref() != Some("No Module Installed") {
+        records.push(record);
+    }
+}
+
+fn clean_memory_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && !value.eq_ignore_ascii_case("Not Specified")).then(|| value.to_string())
+}
+
+fn lshw_memory_type(description: &str) -> Option<String> {
+    description
+        .split_whitespace()
+        .map(|token| token.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
+        .find(|token| token.to_ascii_uppercase().starts_with("DDR"))
+        .map(str::to_string)
+}
+
+fn lshw_clock_speed(value: &str) -> Option<String> {
+    let start = value.find(|c: char| c.is_ascii_digit())?;
+    let digits: String = value[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    (!digits.is_empty()).then(|| format!("{digits} MT/s"))
 }

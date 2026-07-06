@@ -10,9 +10,9 @@ use hw_parser::{
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
     parse_gpu_lspci, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
-    parse_lscpu, parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware,
+    parse_lscpu, parse_lshw_memory, parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps,
-    parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord,
+    parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -811,6 +811,26 @@ impl Probe for MemoryProbe {
             .await;
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
+            let lshw_result = ctx
+                .runner
+                .run_command(&CommandSpec::new("lshw", ["-class", "memory"]), ctx.timeout)
+                .await;
+            if lshw_result.is_success() {
+                let records = parse_lshw_memory(&lshw_result.stdout);
+                if !records.is_empty() {
+                    fallback.devices = memory_devices_from_records(
+                        records,
+                        &lshw_result.source,
+                        SourceKind::Command,
+                    );
+                    return fallback;
+                }
+            } else {
+                fallback
+                    .warnings
+                    .extend(ProbeResult::source_failure(self.name(), &lshw_result).warnings);
+            }
+
             let proc_meminfo_result = ctx.runner.read_file(Path::new("/proc/meminfo")).await;
             if proc_meminfo_result.is_success() {
                 if let Some(size_bytes) =
@@ -836,47 +856,56 @@ impl Probe for MemoryProbe {
             }
             return fallback;
         }
-        let devices = parse_dmidecode_memory(&result.stdout)
-            .into_iter()
-            .enumerate()
-            .map(|(idx, mem)| {
-                let id = mem
-                    .serial
-                    .as_ref()
-                    .filter(|serial| !serial.trim().is_empty())
-                    .map(|serial| format!("memory:serial:{serial}"))
-                    .unwrap_or_else(|| {
-                        format!(
-                            "memory:slot:{}",
-                            mem.locator.clone().unwrap_or_else(|| idx.to_string())
-                        )
-                    });
-                Device::new(
-                    id,
-                    DeviceKind::Memory,
-                    mem.locator
-                        .clone()
-                        .unwrap_or_else(|| format!("Memory DIMM {idx}")),
-                    DeviceProperties::Memory(MemoryInfo {
-                        size_bytes: parse_size_to_bytes(mem.size.as_deref()),
-                        vendor: mem.manufacturer,
-                        memory_type: mem.memory_type,
-                        speed_mtps: parse_speed_mtps(mem.speed.as_deref()),
-                        locator: mem.locator,
-                        serial: mem.serial,
-                        part_number: mem.part_number,
-                    }),
-                )
-                .with_source(SourceEvidence {
-                    source: result.source.clone(),
-                    kind: SourceKind::Command,
-                    status: SourceStatus::Success,
-                    summary: None,
-                })
-            })
-            .collect();
+        let records = parse_dmidecode_memory(&result.stdout);
+        let devices = memory_devices_from_records(records, &result.source, SourceKind::Command);
         ProbeResult::with_devices(devices)
     }
+}
+
+fn memory_devices_from_records(
+    records: Vec<DmiMemoryRecord>,
+    source: &str,
+    source_kind: SourceKind,
+) -> Vec<Device> {
+    records
+        .into_iter()
+        .enumerate()
+        .map(|(idx, mem)| {
+            let id = mem
+                .serial
+                .as_ref()
+                .filter(|serial| !serial.trim().is_empty())
+                .map(|serial| format!("memory:serial:{serial}"))
+                .unwrap_or_else(|| {
+                    format!(
+                        "memory:slot:{}",
+                        mem.locator.clone().unwrap_or_else(|| idx.to_string())
+                    )
+                });
+            Device::new(
+                id,
+                DeviceKind::Memory,
+                mem.locator
+                    .clone()
+                    .unwrap_or_else(|| format!("Memory DIMM {idx}")),
+                DeviceProperties::Memory(MemoryInfo {
+                    size_bytes: parse_size_to_bytes(mem.size.as_deref()),
+                    vendor: mem.manufacturer,
+                    memory_type: mem.memory_type,
+                    speed_mtps: parse_speed_mtps(mem.speed.as_deref()),
+                    locator: mem.locator,
+                    serial: mem.serial,
+                    part_number: mem.part_number,
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: source.to_string(),
+                kind: source_kind,
+                status: SourceStatus::Success,
+                summary: None,
+            })
+        })
+        .collect()
 }
 
 #[async_trait]
