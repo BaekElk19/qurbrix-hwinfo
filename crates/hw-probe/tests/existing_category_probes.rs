@@ -527,12 +527,33 @@ async fn network_probe_warns_when_json_output_is_malformed() {
 async fn storage_probe_outputs_storage_device() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",
-        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN"],
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
         r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
     );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Storage);
+}
+
+#[tokio::test]
+async fn storage_probe_preserves_wwn_and_firmware_from_lsblk_success_path() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lsblk",
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+        r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata","wwn":"0x5002538F00000000","rev":"1.0A"}]}"#,
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "storage:wwn:5002538F00000000");
+    assert_eq!(result.devices[0].serial.as_deref(), Some("S1"));
+    assert_eq!(result.devices[0].model.as_deref(), Some("Disk"));
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.wwn.as_deref(), Some("5002538F00000000"));
+    assert_eq!(storage.firmware.as_deref(), Some("1.0A"));
 }
 
 #[tokio::test]
@@ -570,7 +591,7 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
     assert_eq!(
         warning_pairs(&result),
         vec![(
-            Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN"),
+            Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"),
             "source_missing"
         )]
     );
@@ -619,7 +640,7 @@ async fn storage_probe_warns_when_json_output_is_malformed() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
             "not json",
         )
         .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/sda")])
@@ -632,6 +653,6 @@ async fn storage_probe_warns_when_json_output_is_malformed() {
     assert_eq!(result.warnings[0].code, "parse_failed");
     assert_eq!(
         result.warnings[0].source.as_deref(),
-        Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN")
+        Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV")
     );
 }

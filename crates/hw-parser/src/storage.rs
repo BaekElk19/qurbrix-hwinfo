@@ -15,6 +15,8 @@ pub struct LsblkDevice {
     pub model: Option<String>,
     pub serial: Option<String>,
     pub tran: Option<String>,
+    pub wwn: Option<String>,
+    pub rev: Option<String>,
 }
 
 pub fn parse_lsblk_json(input: &str) -> Vec<LsblkDevice> {

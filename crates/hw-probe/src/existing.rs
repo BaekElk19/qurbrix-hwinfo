@@ -541,7 +541,7 @@ impl Probe for StorageProbe {
             .run_command(
                 &CommandSpec::new(
                     "lsblk",
-                    ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN"],
+                    ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
                 ),
                 ctx.timeout,
             )
@@ -573,14 +573,17 @@ impl Probe for StorageProbe {
             .filter(|dev| dev.device_type.as_deref() == Some("disk"))
             .map(|dev| {
                 let node = format!("/dev/{}", dev.name);
-                Device::new(
-                    device_id::storage(None, dev.serial.as_deref(), &node),
+                let wwn = dev.wwn.map(normalize_storage_wwn);
+                let mut device = Device::new(
+                    device_id::storage(wwn.as_deref(), dev.serial.as_deref(), &node),
                     DeviceKind::Storage,
                     dev.model.clone().unwrap_or_else(|| node.clone()),
                     DeviceProperties::Storage(StorageInfo {
                         device_node: Some(node),
                         size_bytes: dev.size,
                         media_type: dev.tran,
+                        firmware: dev.rev,
+                        wwn,
                         ..Default::default()
                     }),
                 )
@@ -589,7 +592,10 @@ impl Probe for StorageProbe {
                     kind: SourceKind::Command,
                     status: SourceStatus::Success,
                     summary: None,
-                })
+                });
+                device.model = dev.model;
+                device.serial = dev.serial;
+                device
             })
             .collect();
         ProbeResult::with_devices(devices)
