@@ -204,6 +204,38 @@ fn parses_dmidecode_memory_bank_locator_fallback() {
 }
 
 #[test]
+fn parses_dmidecode_memory_configured_speed_fallback() {
+    let records = parse_dmidecode_memory(
+        "Memory Device\n\
+         \tSize: 16 GB\n\
+         \tLocator: DIMM 0\n\
+         \tManufacturer: Samsung\n\
+         \tType: DDR5\n\
+         \tSpeed: Unknown\n\
+         \tConfigured Memory Speed: 5600 MT/s\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].speed.as_deref(), Some("5600 MT/s"));
+    assert_eq!(parse_speed_mtps(records[0].speed.as_deref()), Some(5600));
+}
+
+#[test]
+fn parses_dmidecode_memory_ignores_out_of_spec_type() {
+    let records = parse_dmidecode_memory(
+        "Memory Device\n\
+         \tSize: 16 GB\n\
+         \tLocator: DIMM 0\n\
+         \tManufacturer: Samsung\n\
+         \tType: <OUT OF SPEC>\n\
+         \tSpeed: 3200 MT/s\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].memory_type, None);
+}
+
+#[test]
 fn parses_spd_decode_dimms_records() {
     let records = parse_spd_decode_dimms(
         "Decoding EEPROM: /sys/bus/i2c/drivers/eeprom/0-0050\n\

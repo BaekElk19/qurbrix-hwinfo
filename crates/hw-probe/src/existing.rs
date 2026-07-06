@@ -1732,6 +1732,9 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
         return device;
     };
     if smart.smart_status.is_none()
+        && smart.model.is_none()
+        && smart.serial.is_none()
+        && smart.firmware.is_none()
         && smart.temperature_celsius.is_none()
         && smart.power_on_hours.is_none()
         && smart.power_cycle_count.is_none()
@@ -1745,7 +1748,17 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
     {
         return device;
     }
+    if let Some(model) = smart.model.clone() {
+        device.name = model.clone();
+        device.model = Some(model);
+    }
+    if smart.serial.is_some() {
+        device.serial = smart.serial.clone();
+    }
     if let DeviceProperties::Storage(storage) = &mut device.properties {
+        if storage.firmware.is_none() {
+            storage.firmware = smart.firmware.clone();
+        }
         storage.smart_status = storage.smart_status.take().or(smart.smart_status);
         storage.temperature_celsius = storage.temperature_celsius.or(smart.temperature_celsius);
         storage.power_on_hours = storage.power_on_hours.or(smart.power_on_hours);
@@ -1761,6 +1774,14 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
         storage.data_units_written = storage.data_units_written.or(smart.data_units_written);
         storage.media_errors = storage.media_errors.or(smart.media_errors);
         storage.error_log_entries = storage.error_log_entries.or(smart.error_log_entries);
+    }
+    if smart.serial.is_some() {
+        if let DeviceProperties::Storage(storage) = &device.properties {
+            if let Some(node) = storage.device_node.as_deref() {
+                device.id =
+                    device_id::storage(storage.wwn.as_deref(), device.serial.as_deref(), node);
+            }
+        }
     }
 
     device.with_source(SourceEvidence {

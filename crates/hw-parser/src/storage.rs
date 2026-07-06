@@ -21,6 +21,9 @@ pub struct LsblkDevice {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SmartctlInfo {
+    pub model: Option<String>,
+    pub serial: Option<String>,
+    pub firmware: Option<String>,
     pub smart_status: Option<String>,
     pub temperature_celsius: Option<f32>,
     pub power_on_hours: Option<u64>,
@@ -72,6 +75,10 @@ pub struct HdparmIdentifyRecord {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 struct SmartctlReport {
+    model_name: Option<String>,
+    model_number: Option<String>,
+    serial_number: Option<String>,
+    firmware_version: Option<String>,
     smart_status: Option<SmartctlStatus>,
     temperature: Option<SmartctlTemperature>,
     power_on_time: Option<SmartctlPowerOnTime>,
@@ -117,6 +124,12 @@ pub fn parse_smartctl_json(input: &str) -> Result<SmartctlInfo, serde_json::Erro
     serde_json::from_str::<SmartctlReport>(input).map(|report| {
         let nvme = report.nvme_smart_health_information_log;
         SmartctlInfo {
+            model: report
+                .model_name
+                .or(report.model_number)
+                .and_then(clean_smartctl_value),
+            serial: report.serial_number.and_then(clean_smartctl_value),
+            firmware: report.firmware_version.and_then(clean_smartctl_value),
             smart_status: report
                 .smart_status
                 .and_then(|status| status.passed)
@@ -143,6 +156,14 @@ pub fn parse_smartctl_json(input: &str) -> Result<SmartctlInfo, serde_json::Erro
             error_log_entries: nvme.and_then(|value| value.num_err_log_entries),
         }
     })
+}
+
+fn clean_smartctl_value(value: String) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()
+        && !value.eq_ignore_ascii_case("unknown")
+        && !value.eq_ignore_ascii_case("not specified"))
+    .then(|| value.to_string())
 }
 
 pub fn parse_lshw_disk(input: &str) -> Vec<LshwDiskRecord> {

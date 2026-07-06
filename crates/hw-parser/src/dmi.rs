@@ -103,8 +103,13 @@ pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
             }
             "Serial Number" => record.serial = Some(value.to_string()),
             "Part Number" => record.part_number = Some(value.to_string()),
-            "Type" => record.memory_type = Some(value.to_string()),
-            "Speed" => record.speed = Some(value.to_string()),
+            "Type" => record.memory_type = clean_memory_type(value),
+            "Speed" => record.speed = clean_memory_value(value),
+            "Configured Memory Speed" => {
+                if record.speed.is_none() {
+                    record.speed = clean_memory_value(value);
+                }
+            }
             _ => {}
         }
     }
@@ -445,7 +450,14 @@ fn memory_record_has_data(record: &DmiMemoryRecord) -> bool {
 
 fn clean_memory_value(value: &str) -> Option<String> {
     let value = value.trim();
-    (!value.is_empty() && !value.eq_ignore_ascii_case("Not Specified")).then(|| value.to_string())
+    (!value.is_empty()
+        && !value.eq_ignore_ascii_case("Not Specified")
+        && !value.eq_ignore_ascii_case("Unknown"))
+    .then(|| value.to_string())
+}
+
+fn clean_memory_type(value: &str) -> Option<String> {
+    clean_memory_value(value).filter(|value| value != "<OUT OF SPEC>")
 }
 
 fn ddr4_spd_size(bytes: &[u8]) -> Option<u64> {

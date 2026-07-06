@@ -918,6 +918,44 @@ async fn storage_probe_reads_smart_health_and_temperature() {
 }
 
 #[tokio::test]
+async fn storage_probe_enriches_identity_from_smartctl() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"USB SATA Bridge","tran":"sata"}]}"#,
+        )
+        .with_command(
+            "smartctl",
+            ["-a", "-j", "/dev/sda"],
+            r#"{
+              "model_name": "Samsung SSD 870 EVO 500GB",
+              "serial_number": "S6P012345678",
+              "firmware_version": "SVT02B6Q"
+            }"#,
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices[0].id, "storage:serial:S6P012345678");
+    assert_eq!(result.devices[0].name, "Samsung SSD 870 EVO 500GB");
+    assert_eq!(
+        result.devices[0].model.as_deref(),
+        Some("Samsung SSD 870 EVO 500GB")
+    );
+    assert_eq!(result.devices[0].serial.as_deref(), Some("S6P012345678"));
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.firmware.as_deref(), Some("SVT02B6Q"));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command
+            && source.source == "smartctl -a -j /dev/sda"));
+}
+
+#[tokio::test]
 async fn storage_probe_reads_nvme_smart_health_details() {
     let runner = FakeSourceRunner::new()
         .with_command(
