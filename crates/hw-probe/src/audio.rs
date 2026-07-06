@@ -7,8 +7,9 @@ use hw_model::{
     device_id, AudioInfo, BusInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
     SourceEvidence, SourceKind, SourceStatus,
 };
-use hw_parser::parse_proc_asound_cards;
-use std::path::Path;
+use hw_parser::{parse_lshw_multimedia, parse_proc_asound_cards, LshwMultimediaRecord};
+use hw_source::CommandSpec;
+use std::{collections::HashMap, path::Path};
 
 pub struct AudioProbe;
 
@@ -29,6 +30,7 @@ impl Probe for AudioProbe {
             fallback.devices = probe_sysfs_audio_cards(ctx).await;
             return fallback;
         }
+        let lshw = audio_lshw_records(ctx).await;
         let mut devices = Vec::new();
         for card in parse_proc_asound_cards(&result.stdout) {
             let enrichment = audio_enrichment(ctx, card.index).await;
@@ -52,10 +54,17 @@ impl Probe for AudioProbe {
                 status: SourceStatus::Success,
                 summary: None,
             });
-            devices.push(apply_audio_enrichment(device, enrichment));
+            let device = apply_audio_enrichment(device, enrichment);
+            devices.push(apply_audio_lshw_enrichment(device, &lshw));
         }
         ProbeResult::with_devices(devices)
     }
+}
+
+#[derive(Default)]
+struct AudioLshwRecords {
+    source: String,
+    by_pci_address: HashMap<String, LshwMultimediaRecord>,
 }
 
 struct AudioEnrichment {
@@ -71,6 +80,7 @@ struct AudioEnrichment {
 }
 
 async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
+    let lshw = audio_lshw_records(ctx).await;
     let mut devices = Vec::new();
     let mut cards = ctx
         .runner
@@ -111,10 +121,33 @@ async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
             status: SourceStatus::Success,
             summary: None,
         });
-        devices.push(apply_audio_enrichment(device, enrichment));
+        let device = apply_audio_enrichment(device, enrichment);
+        devices.push(apply_audio_lshw_enrichment(device, &lshw));
     }
 
     devices
+}
+
+async fn audio_lshw_records(ctx: &ProbeContext<'_>) -> AudioLshwRecords {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("lshw", ["-class", "multimedia"]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return AudioLshwRecords::default();
+    }
+
+    let by_pci_address = parse_lshw_multimedia(&result.stdout)
+        .into_iter()
+        .filter_map(|record| Some((lshw_pci_address(record.bus_info.as_deref()?)?, record)))
+        .collect();
+    AudioLshwRecords {
+        source: result.source,
+        by_pci_address,
+    }
 }
 
 async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment {
@@ -219,6 +252,64 @@ fn apply_audio_enrichment(mut device: Device, enrichment: AudioEnrichment) -> De
     }
 
     device
+}
+
+fn apply_audio_lshw_enrichment(mut device: Device, lshw: &AudioLshwRecords) -> Device {
+    let Some(address) = device.bus.as_ref().and_then(audio_pci_address) else {
+        return device;
+    };
+    let Some(record) = lshw.by_pci_address.get(address) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if device.vendor.is_none() && record.vendor.is_some() {
+        device.vendor = record.vendor.clone();
+        contributed = true;
+    }
+    if device.model.is_none() && record.product.is_some() {
+        device.model = record.product.clone();
+        contributed = true;
+    }
+    if record.driver.is_some() {
+        let mut driver = device.driver.take().unwrap_or(DriverInfo {
+            name: None,
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        let original = driver.clone();
+        driver.name = driver.name.or_else(|| record.driver.clone());
+        contributed |= driver != original;
+        device.driver = Some(driver);
+    }
+    if contributed
+        && !lshw.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == lshw.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: lshw.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn audio_pci_address(bus: &BusInfo) -> Option<&str> {
+    match bus {
+        BusInfo::Pci { address, .. } => Some(address),
+        _ => None,
+    }
+}
+
+fn lshw_pci_address(value: &str) -> Option<String> {
+    value.strip_prefix("pci@").map(ToString::to_string)
 }
 
 fn parse_uevent_value(input: &str, key: &str) -> Option<String> {

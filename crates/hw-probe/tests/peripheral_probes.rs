@@ -104,6 +104,43 @@ async fn audio_probe_preserves_pci_identity_and_modules_from_sysfs() {
 }
 
 #[tokio::test]
+async fn audio_probe_enriches_human_readable_lshw_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/asound/cards",
+            " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xa1230000 irq 145\n",
+        )
+        .with_file(
+            "/sys/class/sound/card0/device/uevent",
+            "DRIVER=snd_hda_intel\nPCI_CLASS=40300\nPCI_ID=8086:A0C8\nPCI_SUBSYS_ID=1028:087C\nPCI_SLOT_NAME=0000:00:1f.3\n",
+        )
+        .with_command(
+            "lshw",
+            ["-class", "multimedia"],
+            "  *-multimedia\n\
+                  description: Audio device\n\
+                  product: Alder Lake PCH-P High Definition Audio Controller\n\
+                  vendor: Intel Corporation\n\
+                  bus info: pci@0000:00:1f.3\n\
+                  configuration: driver=snd_hda_intel latency=64\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = AudioProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.vendor.as_deref(), Some("Intel Corporation"));
+    assert_eq!(
+        device.model.as_deref(),
+        Some("Alder Lake PCH-P High Definition Audio Controller")
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command
+            && source.source == "lshw -class multimedia"));
+}
+
+#[tokio::test]
 async fn audio_probe_uses_sysfs_when_proc_asound_cards_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(

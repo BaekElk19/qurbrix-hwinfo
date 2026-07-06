@@ -21,6 +21,27 @@ fn parses_asound_cards() {
 }
 
 #[test]
+fn parses_lshw_multimedia_audio_devices() {
+    let records = parse_lshw_multimedia(
+        "  *-multimedia\n\
+              description: Audio device\n\
+              product: Alder Lake PCH-P High Definition Audio Controller\n\
+              vendor: Intel Corporation\n\
+              bus info: pci@0000:00:1f.3\n\
+              configuration: driver=snd_hda_intel latency=64\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].product.as_deref(),
+        Some("Alder Lake PCH-P High Definition Audio Controller")
+    );
+    assert_eq!(records[0].vendor.as_deref(), Some("Intel Corporation"));
+    assert_eq!(records[0].bus_info.as_deref(), Some("pci@0000:00:1f.3"));
+    assert_eq!(records[0].driver.as_deref(), Some("snd_hda_intel"));
+}
+
+#[test]
 fn parses_upower_battery() {
     let devices = parse_upower_dump(&hw_testdata::fixture("power/upower-dump.txt"));
     assert_eq!(devices.len(), 1);
