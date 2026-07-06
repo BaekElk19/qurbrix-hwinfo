@@ -1093,6 +1093,12 @@ async fn memory_fallback_from_lshw_or_proc(
             .extend(ProbeResult::source_failure("memory", &lshw_result).warnings);
     }
 
+    let sysfs_records = memory_records_from_edac_sysfs(ctx).await;
+    if !sysfs_records.is_empty() {
+        fallback.devices = memory_devices_from_sysfs_records(sysfs_records);
+        return fallback;
+    }
+
     let proc_meminfo_result = ctx.runner.read_file(Path::new("/proc/meminfo")).await;
     if proc_meminfo_result.is_success() {
         if let Some(size_bytes) = parse_proc_meminfo_total_bytes(&proc_meminfo_result.stdout) {
@@ -1117,6 +1123,85 @@ async fn memory_fallback_from_lshw_or_proc(
     fallback
 }
 
+struct SysfsMemoryRecord {
+    record: DmiMemoryRecord,
+    source: String,
+}
+
+async fn memory_records_from_edac_sysfs(ctx: &ProbeContext<'_>) -> Vec<SysfsMemoryRecord> {
+    let mut mc_paths = ctx
+        .runner
+        .glob("/sys/devices/system/edac/mc/mc*")
+        .await
+        .paths;
+    mc_paths.sort();
+
+    let mut records = Vec::new();
+    for mc_path in mc_paths {
+        let mut dimm_paths = ctx
+            .runner
+            .glob(&format!("{}/dimm*", mc_path.display()))
+            .await
+            .paths;
+        dimm_paths.sort();
+
+        for dimm_path in dimm_paths {
+            let label = read_optional_trimmed(ctx, &dimm_path.join("dimm_label"))
+                .await
+                .or(read_optional_trimmed(ctx, &dimm_path.join("dimm_location")).await);
+            let memory_type = read_optional_trimmed(ctx, &dimm_path.join("dimm_mem_type")).await;
+            let size = read_optional_trimmed(ctx, &dimm_path.join("size"))
+                .await
+                .and_then(edac_size_to_dmi_size);
+            let record = DmiMemoryRecord {
+                size,
+                locator: label,
+                memory_type,
+                ..Default::default()
+            };
+            if memory_record_has_data(&record) {
+                records.push(SysfsMemoryRecord {
+                    record,
+                    source: dimm_path.display().to_string(),
+                });
+            }
+        }
+    }
+
+    records
+}
+
+fn edac_size_to_dmi_size(value: String) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else if value.chars().all(|ch| ch.is_ascii_digit()) {
+        Some(format!("{value} MB"))
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn memory_record_has_data(record: &DmiMemoryRecord) -> bool {
+    record.size.is_some()
+        || record.locator.is_some()
+        || record.manufacturer.is_some()
+        || record.serial.is_some()
+        || record.part_number.is_some()
+        || record.memory_type.is_some()
+        || record.speed.is_some()
+}
+
+fn memory_devices_from_sysfs_records(records: Vec<SysfsMemoryRecord>) -> Vec<Device> {
+    records
+        .into_iter()
+        .enumerate()
+        .map(|(idx, record)| {
+            memory_device_from_record(record.record, idx, &record.source, SourceKind::Sysfs)
+        })
+        .collect()
+}
+
 fn memory_devices_from_records(
     records: Vec<DmiMemoryRecord>,
     source: &str,
@@ -1125,42 +1210,49 @@ fn memory_devices_from_records(
     records
         .into_iter()
         .enumerate()
-        .map(|(idx, mem)| {
-            let id = mem
-                .serial
-                .as_ref()
-                .filter(|serial| !serial.trim().is_empty())
-                .map(|serial| format!("memory:serial:{serial}"))
-                .unwrap_or_else(|| {
-                    format!(
-                        "memory:slot:{}",
-                        mem.locator.clone().unwrap_or_else(|| idx.to_string())
-                    )
-                });
-            Device::new(
-                id,
-                DeviceKind::Memory,
-                mem.locator
-                    .clone()
-                    .unwrap_or_else(|| format!("Memory DIMM {idx}")),
-                DeviceProperties::Memory(MemoryInfo {
-                    size_bytes: parse_size_to_bytes(mem.size.as_deref()),
-                    vendor: mem.manufacturer,
-                    memory_type: mem.memory_type,
-                    speed_mtps: parse_speed_mtps(mem.speed.as_deref()),
-                    locator: mem.locator,
-                    serial: mem.serial,
-                    part_number: mem.part_number,
-                }),
-            )
-            .with_source(SourceEvidence {
-                source: source.to_string(),
-                kind: source_kind,
-                status: SourceStatus::Success,
-                summary: None,
-            })
-        })
+        .map(|(idx, mem)| memory_device_from_record(mem, idx, source, source_kind))
         .collect()
+}
+
+fn memory_device_from_record(
+    mem: DmiMemoryRecord,
+    idx: usize,
+    source: &str,
+    source_kind: SourceKind,
+) -> Device {
+    let id = mem
+        .serial
+        .as_ref()
+        .filter(|serial| !serial.trim().is_empty())
+        .map(|serial| format!("memory:serial:{serial}"))
+        .unwrap_or_else(|| {
+            format!(
+                "memory:slot:{}",
+                mem.locator.clone().unwrap_or_else(|| idx.to_string())
+            )
+        });
+    Device::new(
+        id,
+        DeviceKind::Memory,
+        mem.locator
+            .clone()
+            .unwrap_or_else(|| format!("Memory DIMM {idx}")),
+        DeviceProperties::Memory(MemoryInfo {
+            size_bytes: parse_size_to_bytes(mem.size.as_deref()),
+            vendor: mem.manufacturer,
+            memory_type: mem.memory_type,
+            speed_mtps: parse_speed_mtps(mem.speed.as_deref()),
+            locator: mem.locator,
+            serial: mem.serial,
+            part_number: mem.part_number,
+        }),
+    )
+    .with_source(SourceEvidence {
+        source: source.to_string(),
+        kind: source_kind,
+        status: SourceStatus::Success,
+        summary: None,
+    })
 }
 
 #[async_trait]

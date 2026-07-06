@@ -126,6 +126,64 @@ async fn memory_probe_uses_lshw_when_dmidecode_parses_empty() {
 }
 
 #[tokio::test]
+async fn memory_probe_uses_edac_sysfs_when_command_sources_are_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/devices/system/edac/mc/mc*",
+            vec![PathBuf::from("/sys/devices/system/edac/mc/mc0")],
+        )
+        .with_glob(
+            "/sys/devices/system/edac/mc/mc0/dimm*",
+            vec![
+                PathBuf::from("/sys/devices/system/edac/mc/mc0/dimm0"),
+                PathBuf::from("/sys/devices/system/edac/mc/mc0/dimm1"),
+            ],
+        )
+        .with_file(
+            "/sys/devices/system/edac/mc/mc0/dimm0/dimm_label",
+            "ChannelA-DIMM0\n",
+        )
+        .with_file(
+            "/sys/devices/system/edac/mc/mc0/dimm0/dimm_mem_type",
+            "DDR4\n",
+        )
+        .with_file("/sys/devices/system/edac/mc/mc0/dimm0/size", "8192\n")
+        .with_file(
+            "/sys/devices/system/edac/mc/mc0/dimm1/dimm_label",
+            "ChannelB-DIMM0\n",
+        )
+        .with_file(
+            "/sys/devices/system/edac/mc/mc0/dimm1/dimm_mem_type",
+            "DDR4\n",
+        )
+        .with_file("/sys/devices/system/edac/mc/mc0/dimm1/size", "8192\n")
+        .with_file("/proc/meminfo", "MemTotal:       16384000 kB\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.size_bytes, Some(8192 * 1024 * 1024));
+            assert_eq!(memory.memory_type.as_deref(), Some("DDR4"));
+            assert_eq!(memory.locator.as_deref(), Some("ChannelA-DIMM0"));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == "/sys/devices/system/edac/mc/mc0/dimm0"
+            && source.kind == SourceKind::Sysfs
+            && source.status == SourceStatus::Success
+    }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_missing" && warning.source.as_deref() == Some("dmidecode -t memory")
+    }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_missing" && warning.source.as_deref() == Some("lshw -class memory")
+    }));
+}
+
+#[tokio::test]
 async fn bios_probe_outputs_bios_and_motherboard_devices() {
     let runner = FakeSourceRunner::new().with_command(
         "dmidecode",
