@@ -25,11 +25,13 @@ async fn audio_probe_reads_proc_asound() {
             "/sys/class/sound/card0/device/uevent",
             "DRIVER=snd_hda_intel\n",
         )
+        .with_file("/sys/class/sound/card0/device/vendor", "0x8086\n")
         .with_file("/sys/class/sound/card0/device/subsystem_vendor", "0x1028\n")
         .with_file("/sys/class/sound/card0/device/subsystem_device", "0x087c\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = AudioProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Audio);
+    assert_eq!(result.devices[0].vendor.as_deref(), Some("Intel"));
     assert_eq!(
         result.devices[0]
             .driver

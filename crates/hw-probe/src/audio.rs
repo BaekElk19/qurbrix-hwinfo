@@ -57,6 +57,7 @@ impl Probe for AudioProbe {
 
 struct AudioEnrichment {
     driver: Option<String>,
+    vendor: Option<String>,
     codec: Option<String>,
     codec_source: Option<String>,
     subsystem: Option<String>,
@@ -116,6 +117,9 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
     let driver = read_trimmed(ctx, &sysfs_path.join("device/uevent"))
         .await
         .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"));
+    let vendor = read_trimmed(ctx, &sysfs_path.join("device/vendor"))
+        .await
+        .and_then(normalize_audio_vendor_id);
     let subsystem_vendor = read_trimmed(ctx, &sysfs_path.join("device/subsystem_vendor"))
         .await
         .map(normalize_hex_id);
@@ -130,8 +134,9 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
 
     AudioEnrichment {
         sysfs_source: sysfs_path.display().to_string(),
-        sysfs_contributed: driver.is_some() || subsystem.is_some(),
+        sysfs_contributed: driver.is_some() || vendor.is_some() || subsystem.is_some(),
         driver,
+        vendor,
         codec,
         codec_source,
         subsystem,
@@ -159,6 +164,10 @@ async fn read_audio_codec(ctx: &ProbeContext<'_>, index: u32) -> (Option<String>
 }
 
 fn apply_audio_enrichment(mut device: Device, enrichment: AudioEnrichment) -> Device {
+    if let Some(vendor) = enrichment.vendor {
+        device.vendor = Some(vendor);
+    }
+
     if let Some(driver) = enrichment.driver {
         device = device.with_driver(DriverInfo {
             name: Some(driver),
@@ -207,6 +216,17 @@ fn normalize_hex_id(value: String) -> String {
         .or_else(|| value.strip_prefix("0X"))
         .unwrap_or(&value)
         .to_ascii_lowercase()
+}
+
+fn normalize_audio_vendor_id(value: String) -> Option<String> {
+    match normalize_hex_id(value).as_str() {
+        "8086" => Some("Intel".to_string()),
+        "1002" | "1022" => Some("AMD".to_string()),
+        "10ec" => Some("Realtek".to_string()),
+        "14f1" => Some("Conexant".to_string()),
+        "1102" => Some("Creative".to_string()),
+        _ => None,
+    }
 }
 
 fn audio_card_index(name: &str) -> Option<u32> {
