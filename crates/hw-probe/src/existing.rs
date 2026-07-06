@@ -1087,34 +1087,94 @@ fn storage_device_from_hwinfo(record: HwinfoDiskRecord, source: &str) -> Device 
 
 async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str) -> Device {
     let sysfs_path = Path::new("/sys/block").join(name);
-    let Some(driver) = read_optional_trimmed(ctx, &sysfs_path.join("device/uevent"))
-        .await
-        .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"))
-    else {
-        return device;
-    };
+    let mut device = device;
 
-    let mut device = device.with_driver(DriverInfo {
-        name: Some(driver),
-        version: None,
-        modules: Vec::new(),
-        provider: None,
-        status: DriverStatus::InUse,
-    });
-    let source = sysfs_path.display().to_string();
-    if !device
-        .sources
-        .iter()
-        .any(|evidence| evidence.source == source)
-    {
-        device = device.with_source(SourceEvidence {
-            source,
-            kind: SourceKind::Sysfs,
-            status: SourceStatus::Success,
-            summary: None,
-        });
+    if let Some(uevent) = read_optional_trimmed(ctx, &sysfs_path.join("device/uevent")).await {
+        let mut contributed = false;
+        if let Some(driver) = parse_uevent_value(&uevent, "DRIVER") {
+            device = device.with_driver(DriverInfo {
+                name: Some(driver),
+                version: None,
+                modules: Vec::new(),
+                provider: None,
+                status: DriverStatus::InUse,
+            });
+            contributed = true;
+        }
+        if device.bus.is_none() {
+            if let Some(bus) = pci_bus_from_uevent(&uevent) {
+                device = device.with_bus(bus);
+                contributed = true;
+            }
+        }
+        if contributed {
+            let source = sysfs_path.display().to_string();
+            if !device
+                .sources
+                .iter()
+                .any(|evidence| evidence.source == source)
+            {
+                device = device.with_source(SourceEvidence {
+                    source,
+                    kind: SourceKind::Sysfs,
+                    status: SourceStatus::Success,
+                    summary: None,
+                });
+            }
+        }
+    }
+
+    if device.bus.is_none() {
+        if let Some(controller) = nvme_controller_name(name) {
+            let path = Path::new("/sys/class/nvme")
+                .join(controller)
+                .join("device/uevent");
+            if let Some(uevent) = read_optional_trimmed(ctx, &path).await {
+                let mut contributed = false;
+                if let Some(bus) = pci_bus_from_uevent(&uevent) {
+                    device = device.with_bus(bus);
+                    contributed = true;
+                }
+                if device.driver.is_none() {
+                    if let Some(driver) = parse_uevent_value(&uevent, "DRIVER") {
+                        device = device.with_driver(DriverInfo {
+                            name: Some(driver),
+                            version: None,
+                            modules: Vec::new(),
+                            provider: None,
+                            status: DriverStatus::InUse,
+                        });
+                        contributed = true;
+                    }
+                }
+                if contributed {
+                    let source = path.display().to_string();
+                    if !device
+                        .sources
+                        .iter()
+                        .any(|evidence| evidence.source == source)
+                    {
+                        device = device.with_source(SourceEvidence {
+                            source,
+                            kind: SourceKind::Sysfs,
+                            status: SourceStatus::Success,
+                            summary: None,
+                        });
+                    }
+                }
+            }
+        }
     }
     device
+}
+
+fn nvme_controller_name(name: &str) -> Option<String> {
+    let rest = name.strip_prefix("nvme")?;
+    let digit_count = rest.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_count == 0 || !rest[digit_count..].starts_with('n') {
+        return None;
+    }
+    Some(format!("nvme{}", &rest[..digit_count]))
 }
 
 fn apply_storage_hwinfo_enrichment(mut device: Device, hwinfo: &StorageHwinfoRecords) -> Device {
