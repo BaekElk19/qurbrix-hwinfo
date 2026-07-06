@@ -9,10 +9,10 @@ use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
-    parse_gpu_lspci, parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu,
-    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes,
-    parse_size_to_bytes, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
-    DmiBiosBoardRecord,
+    parse_gpu_lspci, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
+    parse_lscpu, parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware,
+    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_speed_mtps, parse_xrandr_query,
+    parse_xrandr_verbose, DmiBiosBoardRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -280,12 +280,20 @@ impl Probe for NetworkProbe {
                 };
             }
         };
+        let mut warnings = Vec::new();
+        let addresses = network_ip_addresses(ctx, self.name(), &mut warnings).await;
         let mut devices = Vec::new();
         for net in records {
             if is_ignored_network_interface(&net.ifname) {
                 continue;
             }
             let enrichment = network_sysfs_enrichment(ctx, &net.ifname).await;
+            let address_info = addresses
+                .by_interface
+                .get(&net.ifname)
+                .cloned()
+                .unwrap_or_default();
+            let has_ip_addresses = !address_info.ipv4.is_empty() || !address_info.ipv6.is_empty();
             let mut device = Device::new(
                 device_id::network(net.address.as_deref(), &net.ifname),
                 DeviceKind::Network,
@@ -296,6 +304,8 @@ impl Probe for NetworkProbe {
                     operstate: net.operstate,
                     speed_mbps: enrichment.speed_mbps,
                     duplex: enrichment.duplex.clone(),
+                    ipv4: address_info.ipv4,
+                    ipv6: address_info.ipv6,
                     ..Default::default()
                 }),
             )
@@ -305,10 +315,86 @@ impl Probe for NetworkProbe {
                 status: SourceStatus::Success,
                 summary: None,
             });
+            if has_ip_addresses {
+                device = device.with_source(SourceEvidence {
+                    source: addresses.source.clone(),
+                    kind: SourceKind::Command,
+                    status: SourceStatus::Success,
+                    summary: None,
+                });
+            }
             device = apply_network_enrichment(device, enrichment);
             devices.push(device);
         }
-        ProbeResult::with_devices(devices)
+        ProbeResult {
+            devices,
+            warnings,
+            consumed: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct NetworkIpAddressInfo {
+    ipv4: Vec<String>,
+    ipv6: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct NetworkIpAddresses {
+    source: String,
+    by_interface: HashMap<String, NetworkIpAddressInfo>,
+}
+
+async fn network_ip_addresses(
+    ctx: &ProbeContext<'_>,
+    probe_name: &str,
+    warnings: &mut Vec<ScanWarning>,
+) -> NetworkIpAddresses {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("ip", ["-j", "addr"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        warnings.extend(ProbeResult::source_failure(probe_name, &result).warnings);
+        return NetworkIpAddresses::default();
+    }
+
+    let records = match parse_ip_j_addr_result(&result.stdout) {
+        Ok(records) => records,
+        Err(err) => {
+            warnings.push(
+                ScanWarning::new(
+                    "parse_failed",
+                    format!(
+                        "network source '{}' could not be parsed: {err}",
+                        result.source
+                    ),
+                )
+                .with_source(result.source),
+            );
+            return NetworkIpAddresses::default();
+        }
+    };
+
+    let mut by_interface: HashMap<String, NetworkIpAddressInfo> = HashMap::new();
+    for record in records {
+        let entry = by_interface.entry(record.ifname).or_default();
+        for addr in record.addr_info {
+            let Some(local) = addr.local.filter(|local| !local.is_empty()) else {
+                continue;
+            };
+            match addr.family.as_deref() {
+                Some("inet") => entry.ipv4.push(local),
+                Some("inet6") => entry.ipv6.push(local),
+                _ => {}
+            }
+        }
+    }
+
+    NetworkIpAddresses {
+        source: result.source,
+        by_interface,
     }
 }
 

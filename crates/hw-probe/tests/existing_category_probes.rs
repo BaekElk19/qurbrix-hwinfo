@@ -418,6 +418,45 @@ async fn network_probe_outputs_network_device() {
 }
 
 #[tokio::test]
+async fn network_probe_reads_ip_addresses_from_ip_addr() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "ip",
+            ["-j", "link"],
+            r#"[{"ifname":"wlan0","address":"aa:bb:cc:dd:ee:ff","operstate":"UP","mtu":1500}]"#,
+        )
+        .with_command(
+            "ip",
+            ["-j", "addr"],
+            r#"[
+                {
+                    "ifname":"wlan0",
+                    "addr_info":[
+                        {"family":"inet","local":"192.168.1.23","prefixlen":24},
+                        {"family":"inet6","local":"fe80::1234","prefixlen":64}
+                    ]
+                }
+            ]"#,
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = NetworkProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert!(result.warnings.is_empty());
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "ip -j addr"));
+    match &result.devices[0].properties {
+        DeviceProperties::Network(network) => {
+            assert_eq!(network.ipv4, vec!["192.168.1.23"]);
+            assert_eq!(network.ipv6, vec!["fe80::1234"]);
+        }
+        other => panic!("expected network properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn network_probe_filters_loopback_and_common_virtual_interfaces() {
     let runner = FakeSourceRunner::new().with_command(
         "ip",

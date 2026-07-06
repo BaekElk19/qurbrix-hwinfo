@@ -5,7 +5,7 @@
 更新说明（2026-07-06）：本报告保留为初始差距基线。当前实现已经吸收部分当时缺口，最新状态以
 `docs/hardware-compatibility-reference-audit.md` 为准。已完成的 CPU 关键改进包括：
 `lscpu` + `lshw -class processor` + `dmidecode -t 4` 多源合并、`/proc/cpuinfo`
-`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；PCI 已在 `lspci -nn -k` 不可用时读取 `/sys/bus/pci/devices/*` 基础 ID 字段，GPU 已可消费其中 display-class 节点；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Audio 已在 `/proc/asound/cards` 不可用时读取 `/sys/class/sound/card*` 基础声卡节点，并从 `/proc/asound/card*/codec#*` 与 sysfs 声卡节点补 codec/driver/subsystem；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段；Input 已在 `/proc/bus/input/devices` 不可用时读取 `/sys/class/input/event*` 基础事件节点；Camera 已在 `v4l2-ctl --list-devices` 不可用时读取 `/sys/class/video4linux/video*` 基础节点，并从 video4linux sysfs 补 kernel driver；Printer 已在 `lpstat -a` 不可用时使用 `lpstat -v` 恢复基础队列/URI；CD-ROM 已在 `/proc/sys/dev/cdrom/info` 不可用时读取 `/sys/class/block/sr*` 基础光驱节点。
+`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化；PCI 已在 `lspci -nn -k` 不可用时读取 `/sys/bus/pci/devices/*` 基础 ID 字段，GPU 已可消费其中 display-class 节点；Network 已可从 `ip -j addr` 补 IPv4/IPv6；USB 已在 `lsusb` 不可用时读取 `/sys/bus/usb/devices/*` 基础 device 字段；Audio 已在 `/proc/asound/cards` 不可用时读取 `/sys/class/sound/card*` 基础声卡节点，并从 `/proc/asound/card*/codec#*` 与 sysfs 声卡节点补 codec/driver/subsystem；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` 基础 controller 字段；Input 已在 `/proc/bus/input/devices` 不可用时读取 `/sys/class/input/event*` 基础事件节点；Camera 已在 `v4l2-ctl --list-devices` 不可用时读取 `/sys/class/video4linux/video*` 基础节点，并从 video4linux sysfs 补 kernel driver；Printer 已在 `lpstat -a` 不可用时使用 `lpstat -v` 恢复基础队列/URI；CD-ROM 已在 `/proc/sys/dev/cdrom/info` 不可用时读取 `/sys/class/block/sr*` 基础光驱节点。
 
 ## 1. Executive Summary
 
@@ -49,7 +49,7 @@
 | Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV` + `/sys/block/*` fallback | 正常路径取 disk 并保留 WWN/firmware；fallback 路径补 node/vendor/model/serial/WWN/firmware/size/rotational；仍缺 SMART、temperature、controller/driver | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | GPU | `lspci -nn -k`，GPU parser；`lspci` 不可用时可消费 `/sys/bus/pci/devices/*` display-class 节点 | 能识别 PCI GPU 和 driver；sysfs fallback 可保留基础 PCI ID/VID/PID/class，但仍缺 glxinfo/drm enrichment 和 sysfs driver/modules | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Monitor | `xrandr --query` | 只取 connector/resolution；缺少 EDID/vendor/product/week/year/size | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:368-399` |
-| Network | `ip -j link` + `/sys/class/net/*` enrichment/fallback | 正常路径取 interface/MAC/operstate，并从 sysfs 补 speed/duplex、wireless capability、uevent driver；fallback 路径也补这些字段；过滤 loopback/常见虚拟网卡；仍缺 lshw/lspci/NM DBus、IP 地址和显式以太/无线 type 字段 | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
+| Network | `ip -j link` + `ip -j addr` + `/sys/class/net/*` enrichment/fallback | 正常路径取 interface/MAC/operstate/IPv4/IPv6，并从 sysfs 补 speed/duplex、wireless capability、uevent driver；fallback 路径也补 sysfs 字段；过滤 loopback/常见虚拟网卡；仍缺 lshw/lspci/NM DBus 和显式以太/无线 type 字段 | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Error handling | command/read/glob 抽象，区分 Missing/PermissionDenied/Timeout/Failed | 优于多数脚本式参考实现，建议保留 | `qurbrix-hwinfo/crates/hw-source/src/runner.rs:22-59` |
 | Dedup | 仅按 `Device.id` 合并 sources/warnings/capabilities | 有基础去重；缺少基于 bus/class/vendor/serial 的语义合并 | `qurbrix-hwinfo/crates/hw-collect/src/merge.rs:4-20` |
 | Tests/fixtures | 有 PCI/USB/蓝牙/打印机/电源/音频/输入/摄像头等 fixtures | 缺少 CPU 架构/国产平台 fixtures | `qurbrix-hwinfo/crates/hw-testdata/fixtures/pci/lspci-nn-k.txt`；`qurbrix-hwinfo/crates/hw-testdata/fixtures/usb/lsusb.txt` |
@@ -130,7 +130,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | `/proc/meminfo` | 非核心证据 | 有注释/部分系统信息逻辑 | memory probe 已在 dmidecode 失败时读取 MemTotal 总量 | 已吸收部分 | 后续如需 DIMM 级信息仍需 DMI/lshw/sysfs |
 | `/sys/class/dmi/id` | 主要走 dmidecode | 可作为系统信息来源 | BIOS/board probe 已作为 dmidecode fallback 使用 | 已吸收 | 后续可扩 chassis/system/language/memory-array |
 | `/sys/class/drm` | 参考项目使用 xrandr/EDID 类能力 | 通过 xrandr verbose/EDID | 未使用 | P1/P2 | headless/Wayland 下补 sysfs drm/edid |
-| `/sys/class/net` | Deepin 有网络 sysfs/MAC 过滤逻辑 | 结合 lshw/lspci/driver | Network probe 已读取 MAC/operstate/speed/duplex、wireless 目录和 uevent driver，并在 `ip` 失败时作为 fallback | 已吸收部分 | 后续补 IP、NM DBus/lshw/lspci、显式 type 字段 |
+| `/sys/class/net` | Deepin 有网络 sysfs/MAC 过滤逻辑 | 结合 lshw/lspci/driver | Network probe 已读取 MAC/operstate/speed/duplex、wireless 目录和 uevent driver，并在 `ip` 失败时作为 fallback；`ip -j addr` 已补 IPv4/IPv6 | 已吸收部分 | 后续补 NM DBus/lshw/lspci、显式 type 字段 |
 | `/sys/class/power_supply` | Deepin 使用 upower/dmesg 类电源源 | Kylin 有电源厂商 alias | Battery probe 已在 UPower 失败时读取 BAT* sysfs 字段 | 已吸收部分 | 后续可补温度和厂商归一化 |
 | `/sys/block` | Deepin 用 lsblk/sg | Kylin 磁盘逻辑复杂 | Storage probe 已在 `lsblk` 失败时读取 vendor/model/serial/WWN/firmware/size/rotational | 已吸收部分 | 后续补 controller/SMART/temperature |
 | `/sys/bus/pci` | 参考项目重视 PCI/driver | lspci/lshw/driver | `lspci -nn -k`；无 lspci 时读 sysfs vendor/device/class/subsystem，GPU 消费 display-class 节点 | P2 | 后续补 sysfs driver/modules 和跨类别消费 |
@@ -155,7 +155,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | 硬盘/分区/控制器 | lsblk/sg/lshw/厂商修正 | lsblk disk，失败时 fallback 到 `/sys/block/*` 并保留 vendor/model/serial/WWN/firmware/size/rotational | 缺 SMART/temperature/controller/driver | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 显卡/显示控制器 | lspci、nvidia、国产 GPU alias | lspci GPU/driver；lspci 不可用时从 sysfs PCI display-class 生成基础 GPU 并消费对应 PCI | 缺 glxinfo/drm、sysfs driver/modules、人类可读设备名 | P2 | 是 | Kylin `.../cpuinfo.py:415-425`；qurbrix `crates/hw-probe/src/existing.rs` |
 | 显示器 | xrandr verbose/EDID/product/year/size | xrandr query connector/resolution | EDID 缺失 | P1/P2 | 是 | Kylin `.../cpuinfo.py:1339-1411`；qurbrix `crates/hw-probe/src/existing.rs:368-399` |
-| 网卡/Wi-Fi/蓝牙 | sysfs/MAC/filter、lshw/lspci/driver | network 使用 `ip -j link` 并用 `/sys/class/net/*` enrich speed/duplex/wireless/driver，失败时 fallback 到 sysfs；bluetooth 使用 `hciconfig -a`，失败时 fallback 到 `/sys/class/bluetooth/hci*` 基础 controller/rfkill 字段 | Network 仍缺 IP、NM DBus/lshw/lspci 和显式 type 字段；Bluetooth 仍缺 lshw/hwinfo/BlueZ DBus enrichment 和 controller address fallback | P1/P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs`；`crates/hw-probe/src/bluetooth.rs` |
+| 网卡/Wi-Fi/蓝牙 | sysfs/MAC/filter、lshw/lspci/driver | network 使用 `ip -j link`/`ip -j addr` 并用 `/sys/class/net/*` enrich speed/duplex/wireless/driver，失败时 fallback 到 sysfs；bluetooth 使用 `hciconfig -a`，失败时 fallback 到 `/sys/class/bluetooth/hci*` 基础 controller/rfkill 字段 | Network 仍缺 NM DBus/lshw/lspci 和显式 type 字段；Bluetooth 仍缺 lshw/hwinfo/BlueZ DBus enrichment 和 controller address fallback | P1/P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs`；`crates/hw-probe/src/bluetooth.rs` |
 | 声卡 | lshw、`/proc/asound`、SoC vendor | qurbrix 使用 `/proc/asound/cards`，可从 `/proc/asound/card*/codec#*` 和 `/sys/class/sound/card*/device` 补 codec/driver/subsystem，proc cards 缺失时 fallback 到 sysfs card | 仍缺 lshw/hwinfo/PCI fusion、vendor normalization、完整 profile | P2 | 是 | Deepin `.../GetInfoPool.cpp:88,119`；Kylin `.../cpuinfo.py:479-483` |
 | USB 设备 | 过滤 hub/重复/无效设备，详细描述符 | `lsusb` 基础字段；`lsusb` 缺失时读 sysfs 基础字段并过滤 hub/host controller/interface entries | 无 `lsusb -v`、maxpower、详细 interface descriptor、跨类别 consumed dedup | P2 | 是 | qurbrix `crates/hw-probe/src/usb.rs` |
 | PCI 设备 | PCI 分类、驱动识别 | lspci class/vendor/device/driver | 分类消费只对部分类别；alias 不足 | P2 | 是 | qurbrix `crates/hw-probe/src/pci.rs:22-83` |
@@ -228,7 +228,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | --- | --- |
 | 目标 | 网络、USB、存储、DMI 的 fallback 和过滤 |
 | 涉及模块 | `NetworkProbe`、`UsbProbe`、`StorageProbe`、`BiosProbe`、parser tests |
-| 推荐实现方式 | network 已加 `/sys/class/net` speed/duplex/wireless/driver enrichment，后续补 IP、DBus/lshw/lspci 和显式 type；USB 已补无 `lsusb` 时的 `/sys/bus/usb/devices/*` fallback，后续加 `lsusb -v` optional interface/maxpower；DMI 加 `/sys/class/dmi/id` fallback；storage 已补 `/sys/block` rotational/WWN/firmware/vendor |
+| 推荐实现方式 | network 已加 `/sys/class/net` speed/duplex/wireless/driver enrichment 和 `ip -j addr` 地址补齐，后续补 DBus/lshw/lspci 和显式 type；USB 已补无 `lsusb` 时的 `/sys/bus/usb/devices/*` fallback，后续加 `lsusb -v` optional interface/maxpower；DMI 加 `/sys/class/dmi/id` fallback；storage 已补 `/sys/block` rotational/WWN/firmware/vendor |
 | 不建议照抄 reference 的原因 | 参考项目大量展示逻辑、发行版服务和临时文件协议不适合 qurbrix |
 | 建议测试 | virtual NIC、USB hub、空 serial、dmidecode permission denied |
 | 验收标准 | 关键字段补齐，虚拟/无效设备不会污染核心类别 |
