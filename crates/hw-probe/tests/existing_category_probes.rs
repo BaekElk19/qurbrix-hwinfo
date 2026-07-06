@@ -838,6 +838,43 @@ async fn storage_probe_reads_driver_from_sysfs_for_lsblk_disk() {
 }
 
 #[tokio::test]
+async fn storage_probe_enriches_human_readable_lshw_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"tran":"sata"}]}"#,
+        )
+        .with_command(
+            "lshw",
+            ["-class", "disk"],
+            "  *-disk\n\
+                  description: ATA Disk\n\
+                  product: Samsung SSD 980\n\
+                  vendor: Samsung\n\
+                  logical name: /dev/sda\n\
+                  serial: S12345\n\
+                  configuration: ansiversion=5 firmware=3B2QGXA7 sectorsize=512\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "Samsung SSD 980");
+    assert_eq!(device.vendor.as_deref(), Some("Samsung"));
+    assert_eq!(device.model.as_deref(), Some("Samsung SSD 980"));
+    assert_eq!(device.serial.as_deref(), Some("S12345"));
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "lshw -class disk"));
+    let DeviceProperties::Storage(storage) = &device.properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
+}
+
+#[tokio::test]
 async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(

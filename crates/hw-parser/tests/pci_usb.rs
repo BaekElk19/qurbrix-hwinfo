@@ -1,4 +1,6 @@
-use hw_parser::{parse_lspci_nn_k, parse_lsusb, parse_lsusb_verbose, parse_smartctl_json};
+use hw_parser::{
+    parse_lshw_disk, parse_lspci_nn_k, parse_lsusb, parse_lsusb_verbose, parse_smartctl_json,
+};
 
 #[test]
 fn parses_lspci_driver_and_modules() {
@@ -54,6 +56,47 @@ fn parses_lsusb_verbose_interface_descriptors() {
     assert_eq!(records[0].class.as_deref(), Some("0e"));
     assert_eq!(records[0].subclass.as_deref(), Some("02"));
     assert_eq!(records[0].protocol.as_deref(), Some("00"));
+}
+
+#[test]
+fn parses_lshw_disk_records() {
+    let records = parse_lshw_disk(
+        "  *-disk\n\
+              description: ATA Disk\n\
+              product: Samsung SSD 980\n\
+              vendor: Samsung\n\
+              logical name: /dev/sda\n\
+              serial: S12345\n\
+              size: 953GiB\n\
+              configuration: ansiversion=5 firmware=3B2QGXA7 sectorsize=512\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].logical_name.as_deref(), Some("/dev/sda"));
+    assert_eq!(records[0].product.as_deref(), Some("Samsung SSD 980"));
+    assert_eq!(records[0].vendor.as_deref(), Some("Samsung"));
+    assert_eq!(records[0].serial.as_deref(), Some("S12345"));
+    assert_eq!(records[0].firmware.as_deref(), Some("3B2QGXA7"));
+}
+
+#[test]
+fn lshw_disk_parser_ignores_child_volume_sections() {
+    let records = parse_lshw_disk(
+        "  *-disk\n\
+              product: Samsung SSD 980\n\
+              logical name: /dev/sda\n\
+              serial: S12345\n\
+              configuration: firmware=3B2QGXA7\n\
+           *-volume:0\n\
+              description: EXT4 volume\n\
+              logical name: /dev/sda1\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].logical_name.as_deref(), Some("/dev/sda"));
+    assert_eq!(records[0].product.as_deref(), Some("Samsung SSD 980"));
+    assert_eq!(records[0].serial.as_deref(), Some("S12345"));
+    assert_eq!(records[0].firmware.as_deref(), Some("3B2QGXA7"));
 }
 
 #[test]
