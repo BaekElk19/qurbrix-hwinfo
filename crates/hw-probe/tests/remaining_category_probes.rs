@@ -210,6 +210,66 @@ async fn bios_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
 }
 
 #[tokio::test]
+async fn bios_probe_reads_uefi_secure_boot_state() {
+    let secure_boot =
+        PathBuf::from("/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c");
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "dmidecode",
+            ["-t", "0,1,2,3"],
+            "BIOS Information\n\tVendor: LENOVO\n\tVersion: N2IET98W\n\tRelease Date: 01/01/2026\n",
+        )
+        .with_glob(
+            "/sys/firmware/efi",
+            vec![PathBuf::from("/sys/firmware/efi")],
+        )
+        .with_glob(
+            "/sys/firmware/efi/efivars/SecureBoot-*",
+            vec![secure_boot.clone()],
+        )
+        .with_file_bytes(secure_boot, vec![0, 0, 0, 0, 1]);
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    let bios = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Bios)
+        .expect("expected bios device");
+    match &bios.properties {
+        DeviceProperties::Bios(info) => {
+            assert_eq!(info.firmware_type.as_deref(), Some("uefi"));
+            assert_eq!(info.secure_boot.as_deref(), Some("enabled"));
+        }
+        other => panic!("expected bios properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn bios_probe_marks_legacy_bios_when_efi_is_absent() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "0,1,2,3"],
+        "BIOS Information\n\tVendor: LENOVO\n\tVersion: N2IET98W\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    let bios = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Bios)
+        .expect("expected bios device");
+    match &bios.properties {
+        DeviceProperties::Bios(info) => {
+            assert_eq!(info.firmware_type.as_deref(), Some("bios"));
+            assert_eq!(info.secure_boot, None);
+        }
+        other => panic!("expected bios properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn gpu_and_monitor_probes_output_devices() {
     let runner = FakeSourceRunner::new()
         .with_command("lspci", ["-nn", "-k"], "00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics [8086:9a49]\n\tKernel driver in use: i915\n")

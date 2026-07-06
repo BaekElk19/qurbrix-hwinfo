@@ -1184,7 +1184,9 @@ impl Probe for BiosProbe {
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
             if let Some(dmi) = read_sysfs_dmi(ctx).await {
-                fallback.devices = bios_board_devices(dmi, "/sys/class/dmi/id", SourceKind::Sysfs);
+                let runtime = read_bios_runtime_info(ctx).await;
+                fallback.devices =
+                    bios_board_devices(dmi, "/sys/class/dmi/id", SourceKind::Sysfs, runtime);
             }
             return fallback;
         }
@@ -1200,7 +1202,65 @@ impl Probe for BiosProbe {
                 consumed: Vec::new(),
             };
         }
-        ProbeResult::with_devices(bios_board_devices(dmi, &result.source, SourceKind::Command))
+        let runtime = read_bios_runtime_info(ctx).await;
+        ProbeResult::with_devices(bios_board_devices(
+            dmi,
+            &result.source,
+            SourceKind::Command,
+            runtime,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct BiosRuntimeInfo {
+    firmware_type: Option<String>,
+    secure_boot: Option<String>,
+    source: Option<String>,
+}
+
+async fn read_bios_runtime_info(ctx: &ProbeContext<'_>) -> BiosRuntimeInfo {
+    let efi_paths = ctx.runner.glob("/sys/firmware/efi").await.paths;
+    if efi_paths.is_empty() {
+        return BiosRuntimeInfo {
+            firmware_type: Some("bios".to_string()),
+            ..Default::default()
+        };
+    }
+
+    BiosRuntimeInfo {
+        firmware_type: Some("uefi".to_string()),
+        secure_boot: read_secure_boot_state(ctx).await,
+        source: Some("/sys/firmware/efi".to_string()),
+    }
+}
+
+async fn read_secure_boot_state(ctx: &ProbeContext<'_>) -> Option<String> {
+    let mut paths = ctx
+        .runner
+        .glob("/sys/firmware/efi/efivars/SecureBoot-*")
+        .await
+        .paths;
+    paths.sort();
+    let path = paths.first()?;
+    let result = ctx.runner.read_file_bytes(path).await;
+    if result.is_success() {
+        parse_secure_boot_bytes(&result.bytes)
+    } else {
+        None
+    }
+}
+
+fn parse_secure_boot_bytes(bytes: &[u8]) -> Option<String> {
+    let value = if bytes.len() >= 5 {
+        bytes[4]
+    } else {
+        *bytes.first()?
+    };
+    match value {
+        0 => Some("disabled".to_string()),
+        1 => Some("enabled".to_string()),
+        _ => None,
     }
 }
 
@@ -1240,8 +1300,9 @@ fn bios_board_devices(
     dmi: DmiBiosBoardRecord,
     source: &str,
     source_kind: SourceKind,
+    runtime: BiosRuntimeInfo,
 ) -> Vec<Device> {
-    let bios = Device::new(
+    let mut bios = Device::new(
         "bios:0",
         DeviceKind::Bios,
         dmi.bios_version
@@ -1251,7 +1312,8 @@ fn bios_board_devices(
             vendor: dmi.bios_vendor,
             version: dmi.bios_version,
             release_date: dmi.bios_release_date,
-            ..Default::default()
+            firmware_type: runtime.firmware_type,
+            secure_boot: runtime.secure_boot,
         }),
     )
     .with_source(SourceEvidence {
@@ -1260,6 +1322,14 @@ fn bios_board_devices(
         status: SourceStatus::Success,
         summary: None,
     });
+    if let Some(source) = runtime.source {
+        bios = bios.with_source(SourceEvidence {
+            source,
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
     let board = Device::new(
         dmi.board_serial
             .as_ref()
