@@ -1,8 +1,8 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, CdromInfo, Device, DeviceKind, DeviceProperties, SourceEvidence, SourceKind,
-    SourceStatus,
+    device_id, CdromInfo, Device, DeviceKind, DeviceProperties, ScanWarning, SourceEvidence,
+    SourceKind, SourceStatus,
 };
 use hw_parser::parse_proc_cdrom_info;
 use std::path::Path;
@@ -30,6 +30,17 @@ impl Probe for CdromProbe {
             return fallback;
         }
         let info = parse_proc_cdrom_info(&result.stdout);
+        if info.drive_names.is_empty() {
+            return ProbeResult {
+                devices: probe_sysfs_cdroms(ctx).await,
+                warnings: vec![ScanWarning::new(
+                    "source_empty",
+                    "cdrom source produced no drive records",
+                )
+                .with_source(result.source)],
+                consumed: Vec::new(),
+            };
+        }
         let devices = info
             .drive_names
             .into_iter()
