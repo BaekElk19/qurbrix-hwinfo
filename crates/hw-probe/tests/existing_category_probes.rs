@@ -441,6 +441,27 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
 }
 
 #[tokio::test]
+async fn cpu_probe_normalizes_vendor_from_proc_cpuinfo_samples() {
+    for (path, expected_vendor) in [
+        ("cpu/proc-cpuinfo-amd-x86_64.txt", "AMD"),
+        ("cpu/proc-cpuinfo-hygon.txt", "Hygon"),
+        ("cpu/proc-cpuinfo-zhaoxin.txt", "Zhaoxin"),
+        ("cpu/proc-cpuinfo-sunway.txt", "Sunway"),
+    ] {
+        let runner = FakeSourceRunner::new().with_file("/proc/cpuinfo", hw_testdata::fixture(path));
+        let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+        let result = CpuProbe.probe(&ctx).await;
+
+        assert_eq!(result.devices.len(), 1, "{path}");
+        let DeviceProperties::Cpu(cpu) = &result.devices[0].properties else {
+            panic!("expected CPU properties");
+        };
+        assert_eq!(cpu.vendor.as_deref(), Some(expected_vendor), "{path}");
+        assert_eq!(cpu.threads, Some(2), "{path}");
+    }
+}
+
+#[tokio::test]
 async fn cpu_probe_uses_proc_hardware_kirin_when_other_sources_are_missing() {
     let runner =
         FakeSourceRunner::new().with_file("/proc/hardware", "Hardware\t: HUAWEI Kirin 9006C\n");

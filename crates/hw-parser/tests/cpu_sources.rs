@@ -1,6 +1,6 @@
 use hw_parser::{
-    merge_cpu_records, parse_dmidecode_processor, parse_lscpu, parse_lshw_processor,
-    parse_proc_cpuinfo, parse_proc_hardware, DmidecodeCpuRecord,
+    infer_cpu_vendor_from_name, merge_cpu_records, parse_dmidecode_processor, parse_lscpu,
+    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, DmidecodeCpuRecord,
 };
 use hw_testdata::fixture;
 
@@ -70,6 +70,43 @@ fn parse_proc_cpuinfo_reads_loongarch_cpu_model() {
     assert_eq!(cpu.threads, Some(2));
     assert_eq!(cpu.bogomips.as_deref(), Some("4800.00"));
     assert_eq!(cpu.flags, vec!["cpucfg", "lam", "ual", "fpu"]);
+}
+
+#[test]
+fn parse_proc_cpuinfo_covers_domestic_and_x86_vendor_samples() {
+    for (path, expected_name, expected_vendor, expected_threads) in [
+        (
+            "cpu/proc-cpuinfo-amd-x86_64.txt",
+            "AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics",
+            "AMD",
+            2,
+        ),
+        (
+            "cpu/proc-cpuinfo-hygon.txt",
+            "Hygon C86 7285 32-core Processor",
+            "Hygon",
+            2,
+        ),
+        (
+            "cpu/proc-cpuinfo-zhaoxin.txt",
+            "ZHAOXIN KaiXian KX-U6780A@2.7GHz",
+            "Zhaoxin",
+            2,
+        ),
+        ("cpu/proc-cpuinfo-sunway.txt", "Sunway SW1621", "Sunway", 2),
+    ] {
+        let cpu = parse_proc_cpuinfo(&fixture(path));
+
+        assert_eq!(cpu.model_name.as_deref(), Some(expected_name), "{path}");
+        assert_eq!(cpu.threads, Some(expected_threads), "{path}");
+        assert_eq!(
+            cpu.model_name
+                .as_deref()
+                .and_then(infer_cpu_vendor_from_name),
+            Some(expected_vendor),
+            "{path}"
+        );
+    }
 }
 
 #[test]

@@ -1,0 +1,43 @@
+processor	: 0
+vendor_id	: AuthenticAMD
+cpu family	: 25
+model		: 116
+model name	: AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics
+stepping	: 1
+cpu MHz		: 3300.000
+cache size	: 1024 KB
+physical id	: 0
+siblings	: 2
+core id		: 0
+cpu cores	: 1
+apicid		: 0
+initial apicid	: 0
+fpu		: yes
+fpu_exception	: yes
+cpuid level	: 16
+wp		: yes
+flags		: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr
+bugs		: sysret_ss_attrs spectre_v1 spectre_v2
+bogomips	: 6587.42
+
+processor	: 1
+vendor_id	: AuthenticAMD
+cpu family	: 25
+model		: 116
+model name	: AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics
+stepping	: 1
+cpu MHz		: 3300.000
+cache size	: 1024 KB
+physical id	: 0
+siblings	: 2
+core id		: 0
+cpu cores	: 1
+apicid		: 1
+initial apicid	: 1
+fpu		: yes
+fpu_exception	: yes
+cpuid level	: 16
+wp		: yes
+flags		: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr
+bugs		: sysret_ss_attrs spectre_v1 spectre_v2
+bogomips	: 6587.42

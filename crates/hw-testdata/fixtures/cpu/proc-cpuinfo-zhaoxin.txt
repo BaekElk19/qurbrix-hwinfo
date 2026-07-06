@@ -1,0 +1,43 @@
+processor	: 0
+vendor_id	: Shanghai
+cpu family	: 7
+model		: 59
+model name	: ZHAOXIN KaiXian KX-U6780A@2.7GHz
+stepping	: 0
+cpu MHz		: 2700.000
+cache size	: 8192 KB
+physical id	: 0
+siblings	: 2
+core id		: 0
+cpu cores	: 1
+apicid		: 0
+initial apicid	: 0
+fpu		: yes
+fpu_exception	: yes
+cpuid level	: 10
+wp		: yes
+flags		: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr
+bugs		: spectre_v1 spectre_v2
+bogomips	: 5400.00
+
+processor	: 1
+vendor_id	: Shanghai
+cpu family	: 7
+model		: 59
+model name	: ZHAOXIN KaiXian KX-U6780A@2.7GHz
+stepping	: 0
+cpu MHz		: 2700.000
+cache size	: 8192 KB
+physical id	: 0
+siblings	: 2
+core id		: 0
+cpu cores	: 1
+apicid		: 1
+initial apicid	: 1
+fpu		: yes
+fpu_exception	: yes
+cpuid level	: 10
+wp		: yes
+flags		: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr
+bugs		: spectre_v1 spectre_v2
+bogomips	: 5400.00

@@ -13,3 +13,6 @@ hw-parser = { path = "../hw-parser" }
 hw-source = { path = "../hw-source" }
 serde = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+hw-testdata = { path = "../hw-testdata" }

@@ -229,6 +229,7 @@ dependencies = [
  "hw-model",
  "hw-parser",
  "hw-source",
+ "hw-testdata",
  "serde",
  "tokio",
 ]

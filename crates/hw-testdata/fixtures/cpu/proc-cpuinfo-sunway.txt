@@ -1,0 +1,11 @@
+processor	: 0
+cpu model	: Sunway SW1621
+cpu MHz		: 2000.000
+bogomips	: 4000.00
+Features	: fpu simd crypto
+
+processor	: 1
+cpu model	: Sunway SW1621
+cpu MHz		: 2000.000
+bogomips	: 4000.00
+Features	: fpu simd crypto
