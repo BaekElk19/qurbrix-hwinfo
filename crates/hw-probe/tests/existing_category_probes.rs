@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use hw_model::{
     BusInfo, Device, DeviceKind, DeviceProperties, DriverStatus, SourceKind, SourceStatus,
 };
-use hw_probe::{CpuProbe, NetworkProbe, Probe, ProbeContext, StorageProbe};
+use hw_probe::{CpuProbe, NetworkProbe, Probe, ProbeContext, StorageProbe, SystemProbe};
 use hw_source::{
     CommandSpec, FakeSourceRunner, GlobResult, SourceBytesResult, SourceErrorKind, SourceResult,
     SourceRunner,
@@ -29,6 +29,107 @@ fn warning_pairs(result: &hw_probe::ProbeResult) -> Vec<(Option<&str>, &str)> {
         .collect::<Vec<_>>();
     pairs.sort_unstable();
     pairs
+}
+
+#[tokio::test]
+async fn system_probe_outputs_runtime_and_dmi_system_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_file("/proc/sys/kernel/hostname", "deepin-host\n")
+        .with_file("/etc/os-release", "PRETTY_NAME=\"Deepin 25\"\n")
+        .with_command("uname", ["-r"], "6.12.1-amd64\n")
+        .with_command("uname", ["-m"], "x86_64\n")
+        .with_command(
+            "dmidecode",
+            ["-t", "1"],
+            "System Information\n\
+                 \tManufacturer: LENOVO\n\
+                 \tProduct Name: ThinkPad X1\n\
+                 \tVersion: ThinkPad X1 Carbon Gen 12\n\
+                 \tSerial Number: SYS123\n\
+                 \tUUID: 11111111-2222-3333-4444-555555555555\n\
+                 \tWake-up Type: Power Switch\n\
+                 \tSKU Number: SKU123\n\
+                 \tFamily: ThinkPad X1\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = SystemProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let device = &result.devices[0];
+    assert_eq!(device.id, "system:serial:SYS123");
+    assert_eq!(device.kind, DeviceKind::System);
+    assert_eq!(device.name, "ThinkPad X1");
+    assert_eq!(device.vendor.as_deref(), Some("LENOVO"));
+    assert_eq!(device.model.as_deref(), Some("ThinkPad X1"));
+    assert_eq!(device.serial.as_deref(), Some("SYS123"));
+    match &device.properties {
+        DeviceProperties::System(info) => {
+            assert_eq!(info.hostname.as_deref(), Some("deepin-host"));
+            assert_eq!(info.os.as_deref(), Some("Deepin 25"));
+            assert_eq!(info.kernel.as_deref(), Some("6.12.1-amd64"));
+            assert_eq!(info.architecture.as_deref(), Some("x86_64"));
+            assert_eq!(info.manufacturer.as_deref(), Some("LENOVO"));
+            assert_eq!(info.product_name.as_deref(), Some("ThinkPad X1"));
+            assert_eq!(info.version.as_deref(), Some("ThinkPad X1 Carbon Gen 12"));
+            assert_eq!(info.serial.as_deref(), Some("SYS123"));
+            assert_eq!(
+                info.uuid.as_deref(),
+                Some("11111111-2222-3333-4444-555555555555")
+            );
+            assert_eq!(info.wake_up_type.as_deref(), Some("Power Switch"));
+            assert_eq!(info.sku_number.as_deref(), Some("SKU123"));
+            assert_eq!(info.family.as_deref(), Some("ThinkPad X1"));
+        }
+        other => panic!("expected system properties, got {other:?}"),
+    }
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| { source.kind == SourceKind::Command && source.source == "dmidecode -t 1" }));
+}
+
+#[tokio::test]
+async fn system_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_file("/sys/class/dmi/id/sys_vendor", "LENOVO\n")
+        .with_file("/sys/class/dmi/id/product_name", "ThinkPad X1\n")
+        .with_file(
+            "/sys/class/dmi/id/product_version",
+            "ThinkPad X1 Carbon Gen 12\n",
+        )
+        .with_file("/sys/class/dmi/id/product_serial", "SYS123\n")
+        .with_file(
+            "/sys/class/dmi/id/product_uuid",
+            "11111111-2222-3333-4444-555555555555\n",
+        )
+        .with_file("/sys/class/dmi/id/product_sku", "SKU123\n")
+        .with_file("/sys/class/dmi/id/product_family", "ThinkPad X1\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = SystemProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "system:serial:SYS123");
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.kind == SourceKind::Sysfs && source.source == "/sys/class/dmi/id"
+    }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_missing" && warning.source.as_deref() == Some("dmidecode -t 1")
+    }));
+    match &result.devices[0].properties {
+        DeviceProperties::System(info) => {
+            assert_eq!(info.manufacturer.as_deref(), Some("LENOVO"));
+            assert_eq!(info.product_name.as_deref(), Some("ThinkPad X1"));
+            assert_eq!(info.version.as_deref(), Some("ThinkPad X1 Carbon Gen 12"));
+            assert_eq!(info.serial.as_deref(), Some("SYS123"));
+            assert_eq!(
+                info.uuid.as_deref(),
+                Some("11111111-2222-3333-4444-555555555555")
+            );
+            assert_eq!(info.sku_number.as_deref(), Some("SKU123"));
+            assert_eq!(info.family.as_deref(), Some("ThinkPad X1"));
+        }
+        other => panic!("expected system properties, got {other:?}"),
+    }
 }
 
 struct PermissionDeniedDmidecodeRunner {

@@ -4,7 +4,7 @@ use hw_model::{DeviceKind, ScanConfig, ScanReport};
 use hw_probe::{
     other_pci_from, AudioProbe, BatteryProbe, BiosProbe, BluetoothProbe, CameraProbe, CdromProbe,
     CpuProbe, GpuProbe, InputProbe, MemoryProbe, MonitorProbe, NetworkProbe, PciProbe,
-    PrinterProbe, Probe, ProbeContext, StorageProbe, UsbProbe,
+    PrinterProbe, Probe, ProbeContext, StorageProbe, SystemProbe, UsbProbe,
 };
 use hw_source::{RealSourceRunner, SourceRunner};
 use std::collections::HashSet;
@@ -20,6 +20,7 @@ pub async fn collect_scan_report_with_runner(
 ) -> Result<ScanReport> {
     let ctx = ProbeContext::new(runner, config.timeout);
     let probes: Vec<Box<dyn Probe>> = vec![
+        Box::new(SystemProbe),
         Box::new(PciProbe),
         Box::new(UsbProbe),
         Box::new(CpuProbe),

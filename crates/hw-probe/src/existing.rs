@@ -6,24 +6,25 @@ use async_trait::async_trait;
 use hw_model::{
     device_id, BiosInfo, BusInfo, CpuInfo, Device, DeviceKind, DeviceProperties, DeviceRef,
     DriverInfo, DriverStatus, GpuInfo, MemoryInfo, MonitorInfo, MotherboardInfo, NetworkInfo,
-    ScanWarning, SourceEvidence, SourceKind, SourceStatus, StorageInfo,
+    ScanWarning, SourceEvidence, SourceKind, SourceStatus, StorageInfo, SystemDeviceInfo,
 };
 use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
-    parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
-    parse_gpu_lspci, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
-    parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
-    parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
-    parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes,
-    parse_smartctl_json, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
-    DmiBiosBoardRecord, DmiMemoryRecord, HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord,
-    LshwDisplayRecord, LshwNetworkRecord,
+    parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor,
+    parse_dmidecode_system, parse_edid, parse_gpu_lspci, parse_hwinfo_disk, parse_hwinfo_monitor,
+    parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu,
+    parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
+    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes,
+    parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps, parse_xrandr_query,
+    parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, HwinfoDiskRecord,
+    HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
 
 pub struct CpuProbe;
+pub struct SystemProbe;
 pub struct NetworkProbe;
 pub struct StorageProbe;
 pub struct MemoryProbe;
@@ -220,6 +221,258 @@ impl Probe for CpuProbe {
             consumed: Vec::new(),
         }
     }
+}
+
+#[async_trait]
+impl Probe for SystemProbe {
+    fn name(&self) -> &'static str {
+        "system"
+    }
+
+    fn kinds(&self) -> &'static [DeviceKind] {
+        &[DeviceKind::System]
+    }
+
+    async fn probe(&self, ctx: &ProbeContext<'_>) -> ProbeResult {
+        let runtime = read_system_runtime_info(ctx).await;
+        let dmi_result = ctx
+            .runner
+            .run_command(&CommandSpec::new("dmidecode", ["-t", "1"]), ctx.timeout)
+            .await;
+        let mut warnings = Vec::new();
+        let mut dmi_source = None;
+        let dmi = if dmi_result.is_success() {
+            let record = parse_dmidecode_system(&dmi_result.stdout);
+            if record.is_empty() {
+                warnings.push(
+                    ScanWarning::new(
+                        "source_empty",
+                        "system source produced no DMI System Information fields",
+                    )
+                    .with_source(dmi_result.source),
+                );
+                let record = read_sysfs_system_dmi(ctx).await;
+                if record.is_some() {
+                    dmi_source = Some(SourceEvidence {
+                        source: "/sys/class/dmi/id".to_string(),
+                        kind: SourceKind::Sysfs,
+                        status: SourceStatus::Success,
+                        summary: None,
+                    });
+                }
+                record
+            } else {
+                dmi_source = Some(SourceEvidence {
+                    source: dmi_result.source,
+                    kind: SourceKind::Command,
+                    status: SourceStatus::Success,
+                    summary: None,
+                });
+                Some(record)
+            }
+        } else {
+            warnings.extend(ProbeResult::source_failure(self.name(), &dmi_result).warnings);
+            let record = read_sysfs_system_dmi(ctx).await;
+            if record.is_some() {
+                dmi_source = Some(SourceEvidence {
+                    source: "/sys/class/dmi/id".to_string(),
+                    kind: SourceKind::Sysfs,
+                    status: SourceStatus::Success,
+                    summary: None,
+                });
+            }
+            record
+        };
+
+        let Some(device) = system_device(runtime, dmi, dmi_source) else {
+            return ProbeResult {
+                devices: Vec::new(),
+                warnings,
+                consumed: Vec::new(),
+            };
+        };
+
+        ProbeResult {
+            devices: vec![device],
+            warnings,
+            consumed: Vec::new(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct SystemRuntimeInfo {
+    hostname: Option<String>,
+    os: Option<String>,
+    kernel: Option<String>,
+    architecture: Option<String>,
+    sources: Vec<SourceEvidence>,
+}
+
+async fn read_system_runtime_info(ctx: &ProbeContext<'_>) -> SystemRuntimeInfo {
+    let mut info = SystemRuntimeInfo::default();
+
+    let hostname_result = ctx
+        .runner
+        .read_file(Path::new("/proc/sys/kernel/hostname"))
+        .await;
+    if hostname_result.is_success() {
+        info.hostname = clean_sysfs_dmi_value(&hostname_result.stdout);
+        if info.hostname.is_some() {
+            info.sources.push(SourceEvidence {
+                source: hostname_result.source,
+                kind: SourceKind::Procfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+    }
+
+    let os_release_result = ctx.runner.read_file(Path::new("/etc/os-release")).await;
+    if os_release_result.is_success() {
+        info.os = parse_os_pretty_name(&os_release_result.stdout);
+        if info.os.is_some() {
+            info.sources.push(SourceEvidence {
+                source: os_release_result.source,
+                kind: SourceKind::File,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+    }
+
+    let kernel_result = ctx
+        .runner
+        .run_command(&CommandSpec::new("uname", ["-r"]), ctx.timeout)
+        .await;
+    if kernel_result.is_success() {
+        info.kernel = clean_sysfs_dmi_value(&kernel_result.stdout);
+        if info.kernel.is_some() {
+            info.sources.push(SourceEvidence {
+                source: kernel_result.source,
+                kind: SourceKind::Command,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+    }
+
+    let arch_result = ctx
+        .runner
+        .run_command(&CommandSpec::new("uname", ["-m"]), ctx.timeout)
+        .await;
+    if arch_result.is_success() {
+        info.architecture = clean_sysfs_dmi_value(&arch_result.stdout);
+        if info.architecture.is_some() {
+            info.sources.push(SourceEvidence {
+                source: arch_result.source,
+                kind: SourceKind::Command,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+    }
+
+    info
+}
+
+fn parse_os_pretty_name(input: &str) -> Option<String> {
+    input.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key == "PRETTY_NAME").then(|| {
+            value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string()
+        })
+    })
+}
+
+async fn read_sysfs_system_dmi(ctx: &ProbeContext<'_>) -> Option<DmiSystemRecord> {
+    let record = DmiSystemRecord {
+        manufacturer: read_sysfs_dmi_value(ctx, "sys_vendor").await,
+        product_name: read_sysfs_dmi_value(ctx, "product_name").await,
+        version: read_sysfs_dmi_value(ctx, "product_version").await,
+        serial: read_sysfs_dmi_value(ctx, "product_serial").await,
+        uuid: read_sysfs_dmi_value(ctx, "product_uuid").await,
+        wake_up_type: None,
+        sku_number: read_sysfs_dmi_value(ctx, "product_sku").await,
+        family: read_sysfs_dmi_value(ctx, "product_family").await,
+    };
+    (!record.is_empty()).then_some(record)
+}
+
+fn system_device(
+    runtime: SystemRuntimeInfo,
+    dmi: Option<DmiSystemRecord>,
+    dmi_source: Option<SourceEvidence>,
+) -> Option<Device> {
+    if runtime.hostname.is_none()
+        && runtime.os.is_none()
+        && runtime.kernel.is_none()
+        && runtime.architecture.is_none()
+        && dmi.is_none()
+    {
+        return None;
+    }
+
+    let dmi = dmi.unwrap_or_default();
+    let id = dmi
+        .serial
+        .as_deref()
+        .filter(|serial| !serial.trim().is_empty())
+        .map(|serial| format!("system:serial:{serial}"))
+        .or_else(|| {
+            dmi.uuid
+                .as_deref()
+                .filter(|uuid| !uuid.trim().is_empty())
+                .map(|uuid| format!("system:uuid:{uuid}"))
+        })
+        .or_else(|| {
+            runtime
+                .hostname
+                .as_deref()
+                .map(|hostname| device_id::other("system:hostname", hostname))
+        })
+        .unwrap_or_else(|| "system:0".to_string());
+    let name = dmi
+        .product_name
+        .clone()
+        .or_else(|| runtime.hostname.clone())
+        .unwrap_or_else(|| "System".to_string());
+    let mut device = Device::new(
+        id,
+        DeviceKind::System,
+        name,
+        DeviceProperties::System(SystemDeviceInfo {
+            hostname: runtime.hostname,
+            os: runtime.os,
+            kernel: runtime.kernel,
+            architecture: runtime.architecture,
+            manufacturer: dmi.manufacturer,
+            product_name: dmi.product_name,
+            version: dmi.version,
+            serial: dmi.serial,
+            uuid: dmi.uuid,
+            wake_up_type: dmi.wake_up_type,
+            sku_number: dmi.sku_number,
+            family: dmi.family,
+        }),
+    );
+    if let DeviceProperties::System(info) = &device.properties {
+        device.vendor = info.manufacturer.clone();
+        device.model = info.product_name.clone();
+        device.serial = info.serial.clone();
+    }
+    for source in runtime.sources {
+        device = device.with_source(source);
+    }
+    if let Some(source) = dmi_source {
+        device = device.with_source(source);
+    }
+
+    Some(device)
 }
 
 fn merge_cpu_record_fallback(

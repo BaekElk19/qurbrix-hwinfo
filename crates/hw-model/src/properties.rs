@@ -31,6 +31,14 @@ pub struct SystemDeviceInfo {
     pub os: Option<String>,
     pub kernel: Option<String>,
     pub architecture: Option<String>,
+    pub manufacturer: Option<String>,
+    pub product_name: Option<String>,
+    pub version: Option<String>,
+    pub serial: Option<String>,
+    pub uuid: Option<String>,
+    pub wake_up_type: Option<String>,
+    pub sku_number: Option<String>,
+    pub family: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

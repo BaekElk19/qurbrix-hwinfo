@@ -39,6 +39,24 @@ pub struct DmiBiosBoardRecord {
     pub chassis_sku_number: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DmiSystemRecord {
+    pub manufacturer: Option<String>,
+    pub product_name: Option<String>,
+    pub version: Option<String>,
+    pub serial: Option<String>,
+    pub uuid: Option<String>,
+    pub wake_up_type: Option<String>,
+    pub sku_number: Option<String>,
+    pub family: Option<String>,
+}
+
+impl DmiSystemRecord {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
     let mut records = Vec::new();
     let mut current: Option<DmiMemoryRecord> = None;
@@ -116,6 +134,47 @@ pub fn parse_lshw_memory(input: &str) -> Vec<DmiMemoryRecord> {
 
     push_memory_record(&mut records, current.take());
     records
+}
+
+pub fn parse_dmidecode_system(input: &str) -> DmiSystemRecord {
+    let mut record = DmiSystemRecord::default();
+    let mut in_system = false;
+
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed == "System Information" {
+            in_system = true;
+            continue;
+        }
+        if in_system
+            && !line.starts_with(char::is_whitespace)
+            && !trimmed.is_empty()
+            && !trimmed.contains(':')
+        {
+            in_system = false;
+        }
+        if !in_system {
+            continue;
+        }
+
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().to_string();
+        match key.trim() {
+            "Manufacturer" => record.manufacturer = Some(value),
+            "Product Name" => record.product_name = Some(value),
+            "Version" => record.version = Some(value),
+            "Serial Number" => record.serial = Some(value),
+            "UUID" => record.uuid = Some(value),
+            "Wake-up Type" => record.wake_up_type = Some(value),
+            "SKU Number" => record.sku_number = Some(value),
+            "Family" => record.family = Some(value),
+            _ => {}
+        }
+    }
+
+    record
 }
 
 pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
