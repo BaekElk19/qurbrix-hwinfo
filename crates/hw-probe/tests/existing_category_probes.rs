@@ -513,6 +513,48 @@ async fn cpu_probe_uses_proc_hardware_kirin_when_other_sources_are_missing() {
 }
 
 #[tokio::test]
+async fn cpu_probe_uses_cpufreq_sysfs_when_lscpu_frequency_fields_are_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lscpu",
+            std::iter::empty::<&str>(),
+            "Architecture: aarch64\n\
+             CPU(s): 8\n\
+             Model name: Phytium D2000/8\n\
+             Vendor ID: \n\
+             Core(s) per socket: 8\n\
+             Socket(s): 1\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",
+            "2300000\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq",
+            "800000\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq",
+            "1800000\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.kind == SourceKind::Sysfs && source.source == "/sys/devices/system/cpu/cpu0/cpufreq"
+    }));
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.max_freq_mhz, Some(2300));
+            assert_eq!(cpu.min_freq_mhz, Some(800));
+            assert_eq!(cpu.current_freq_mhz, Some(1800));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn network_probe_outputs_network_device() {
     let runner = FakeSourceRunner::new()
         .with_command(

@@ -67,6 +67,7 @@ impl Probe for CpuProbe {
             .await;
         let proc_cpuinfo_result = ctx.runner.read_file(Path::new("/proc/cpuinfo")).await;
         let proc_hardware_result = ctx.runner.read_file(Path::new("/proc/hardware")).await;
+        let cpufreq = read_cpu_cpufreq(ctx).await;
 
         let mut warnings = Vec::new();
         let lscpu = if lscpu_result.is_success() {
@@ -109,11 +110,13 @@ impl Probe for CpuProbe {
         let dmi_contributed = !dmi.is_empty();
         let proc_cpuinfo_contributed = proc_cpuinfo.is_some();
         let proc_hardware_contributed = proc_hardware.is_some();
+        let cpufreq_contributed = cpufreq.is_some();
         if lscpu.is_none()
             && lshw.is_none()
             && dmi.is_empty()
             && proc_cpuinfo.is_none()
             && proc_hardware.is_none()
+            && cpufreq.is_none()
         {
             if !proc_cpuinfo_result.is_success() {
                 warnings.extend(
@@ -128,7 +131,7 @@ impl Probe for CpuProbe {
         }
         let lscpu_vendor = lscpu.as_ref().and_then(|record| record.vendor.clone());
         let lshw_vendor = lshw.as_ref().and_then(|record| record.vendor.clone());
-        let merged = merge_cpu_records(
+        let mut merged = merge_cpu_records(
             merge_cpu_record_fallback(
                 merge_cpu_record_fallback(lscpu, proc_cpuinfo),
                 proc_hardware,
@@ -136,6 +139,11 @@ impl Probe for CpuProbe {
             lshw,
             &dmi,
         );
+        if let Some(cpufreq) = cpufreq {
+            merged.max_freq_mhz = merged.max_freq_mhz.or(cpufreq.cpu_max_mhz);
+            merged.min_freq_mhz = merged.min_freq_mhz.or(cpufreq.cpu_min_mhz);
+            merged.current_freq_mhz = merged.current_freq_mhz.or(cpufreq.cpu_mhz);
+        }
         let architecture = merged
             .architecture
             .as_deref()
@@ -215,6 +223,14 @@ impl Probe for CpuProbe {
             device = device.with_source(SourceEvidence {
                 source: proc_hardware_result.source,
                 kind: SourceKind::Procfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+        if cpufreq_contributed {
+            device = device.with_source(SourceEvidence {
+                source: "/sys/devices/system/cpu/cpu0/cpufreq".to_string(),
+                kind: SourceKind::Sysfs,
                 status: SourceStatus::Success,
                 summary: None,
             });
@@ -509,6 +525,54 @@ fn merge_cpu_record_fallback(
     primary.virtualization = primary.virtualization.or(fallback.virtualization);
 
     Some(primary)
+}
+
+async fn read_cpu_cpufreq(ctx: &ProbeContext<'_>) -> Option<hw_parser::CpuRecord> {
+    let cpu_max_mhz = read_cpufreq_mhz(
+        ctx,
+        Path::new("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"),
+    )
+    .await;
+    let cpu_min_mhz = read_cpufreq_mhz(
+        ctx,
+        Path::new("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq"),
+    )
+    .await;
+    let mut cpu_mhz = read_cpufreq_mhz(
+        ctx,
+        Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
+    )
+    .await;
+    if cpu_mhz.is_none() {
+        cpu_mhz = read_cpufreq_mhz(
+            ctx,
+            Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed"),
+        )
+        .await;
+    }
+    let record = hw_parser::CpuRecord {
+        cpu_mhz,
+        cpu_max_mhz,
+        cpu_min_mhz,
+        ..Default::default()
+    };
+
+    (!record.is_empty()).then_some(record)
+}
+
+async fn read_cpufreq_mhz(ctx: &ProbeContext<'_>, path: &Path) -> Option<u32> {
+    let result = ctx.runner.read_file(path).await;
+    if result.is_success() {
+        parse_cpufreq_khz(&result.stdout)
+    } else {
+        None
+    }
+}
+
+fn parse_cpufreq_khz(value: &str) -> Option<u32> {
+    let khz = value.trim().parse::<u64>().ok()?;
+    let mhz = (khz + 500) / 1000;
+    u32::try_from(mhz).ok().filter(|value| *value > 0)
 }
 
 #[async_trait]
