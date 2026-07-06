@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use hw_model::{Device, DeviceKind, DeviceProperties, DriverStatus, SourceKind, SourceStatus};
+use hw_model::{
+    BusInfo, Device, DeviceKind, DeviceProperties, DriverStatus, SourceKind, SourceStatus,
+};
 use hw_probe::{CpuProbe, NetworkProbe, Probe, ProbeContext, StorageProbe};
 use hw_source::{
     CommandSpec, FakeSourceRunner, GlobResult, SourceBytesResult, SourceErrorKind, SourceResult,
@@ -488,6 +490,49 @@ async fn network_probe_marks_ethernet_capability_from_sysfs() {
         }
         other => panic!("expected network properties, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn network_probe_preserves_pci_identity_and_modules_from_sysfs() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "ip",
+            ["-j", "link"],
+            r#"[{"ifname":"enp1s0","address":"aa:bb:cc:dd:ee:ff","operstate":"UP","mtu":1500}]"#,
+        )
+        .with_command("ip", ["-j", "addr"], "[]")
+        .with_file(
+            "/sys/class/net/enp1s0/device/uevent",
+            "DRIVER=e1000e\nPCI_CLASS=20000\nPCI_ID=8086:15F3\nPCI_SUBSYS_ID=8086:0000\nPCI_SLOT_NAME=0000:01:00.0\n",
+        )
+        .with_glob(
+            "/sys/class/net/enp1s0/device/driver/module/drivers/*",
+            vec![PathBuf::from(
+                "/sys/class/net/enp1s0/device/driver/module/drivers/pci:e1000e",
+            )],
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = NetworkProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(
+        device.bus,
+        Some(BusInfo::Pci {
+            address: "0000:01:00.0".to_string(),
+            vendor_id: Some("8086".to_string()),
+            device_id: Some("15f3".to_string()),
+            subsystem_vendor_id: Some("8086".to_string()),
+            subsystem_device_id: Some("0000".to_string()),
+            class: Some("020000".to_string()),
+        })
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .map(|driver| driver.modules.as_slice()),
+        Some(&["e1000e".to_string()][..])
+    );
 }
 
 #[tokio::test]

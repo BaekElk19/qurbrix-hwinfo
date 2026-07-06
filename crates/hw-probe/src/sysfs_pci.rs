@@ -59,7 +59,7 @@ fn is_hex_len(value: &str, len: usize) -> bool {
     value.len() == len && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
-async fn read_kernel_modules(ctx: &ProbeContext<'_>, path: &Path) -> Vec<String> {
+pub(crate) async fn read_kernel_modules(ctx: &ProbeContext<'_>, path: &Path) -> Vec<String> {
     let pattern = format!("{}/driver/module/drivers/*", path.display());
     let mut modules: Vec<_> = ctx
         .runner

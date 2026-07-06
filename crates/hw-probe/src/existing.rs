@@ -1,4 +1,7 @@
-use crate::{sysfs_pci::read_sysfs_pci_records, Probe, ProbeContext, ProbeResult};
+use crate::{
+    sysfs_pci::{read_kernel_modules, read_sysfs_pci_records},
+    Probe, ProbeContext, ProbeResult,
+};
 use async_trait::async_trait;
 use hw_model::{
     device_id, BiosInfo, BusInfo, CpuInfo, Device, DeviceKind, DeviceProperties, DeviceRef,
@@ -411,6 +414,8 @@ struct NetworkSysfsEnrichment {
     wireless: bool,
     ethernet: bool,
     driver: Option<String>,
+    modules: Vec<String>,
+    bus: Option<BusInfo>,
     contributed: bool,
 }
 
@@ -479,10 +484,14 @@ async fn network_sysfs_enrichment(ctx: &ProbeContext<'_>, ifname: &str) -> Netwo
         .await
         .paths
         .is_empty();
-    let driver = read_optional_trimmed(ctx, &path.join("device/uevent"))
-        .await
-        .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"));
-    let ethernet = !wireless && (driver.is_some() || speed_mbps.is_some() || duplex.is_some());
+    let uevent = read_optional_trimmed(ctx, &path.join("device/uevent")).await;
+    let driver = uevent
+        .as_deref()
+        .and_then(|uevent| parse_uevent_value(uevent, "DRIVER"));
+    let bus = uevent.as_deref().and_then(parse_network_pci_bus);
+    let modules = read_kernel_modules(ctx, &path.join("device")).await;
+    let ethernet = !wireless
+        && (driver.is_some() || speed_mbps.is_some() || duplex.is_some() || bus.is_some());
 
     NetworkSysfsEnrichment {
         source: path.display().to_string(),
@@ -491,11 +500,17 @@ async fn network_sysfs_enrichment(ctx: &ProbeContext<'_>, ifname: &str) -> Netwo
         wireless,
         ethernet,
         driver,
+        modules,
+        bus,
         contributed: false,
     }
 }
 
 fn apply_network_enrichment(mut device: Device, mut enrichment: NetworkSysfsEnrichment) -> Device {
+    if let Some(bus) = enrichment.bus {
+        device = device.with_bus(bus);
+        enrichment.contributed = true;
+    }
     if enrichment.wireless {
         device.capabilities.push("wireless".to_string());
         enrichment.contributed = true;
@@ -503,11 +518,11 @@ fn apply_network_enrichment(mut device: Device, mut enrichment: NetworkSysfsEnri
         device.capabilities.push("ethernet".to_string());
         enrichment.contributed = true;
     }
-    if enrichment.driver.is_some() {
+    if enrichment.driver.is_some() || !enrichment.modules.is_empty() {
         device = device.with_driver(DriverInfo {
             name: enrichment.driver,
             version: None,
-            modules: Vec::new(),
+            modules: enrichment.modules,
             provider: None,
             status: DriverStatus::InUse,
         });
@@ -530,6 +545,47 @@ fn apply_network_enrichment(mut device: Device, mut enrichment: NetworkSysfsEnri
         });
     }
     device
+}
+
+fn parse_network_pci_bus(uevent: &str) -> Option<BusInfo> {
+    let address = parse_uevent_value(uevent, "PCI_SLOT_NAME")?;
+    let (vendor_id, device_id) = parse_pci_id_pair(parse_uevent_value(uevent, "PCI_ID").as_deref());
+    let (subsystem_vendor_id, subsystem_device_id) =
+        parse_pci_id_pair(parse_uevent_value(uevent, "PCI_SUBSYS_ID").as_deref());
+    let class = parse_uevent_value(uevent, "PCI_CLASS").and_then(|class| {
+        normalize_pci_hex_id(&class).map(|class| {
+            if class.len() == 5 {
+                format!("0{class}")
+            } else {
+                class
+            }
+        })
+    });
+
+    Some(BusInfo::Pci {
+        address,
+        vendor_id,
+        device_id,
+        subsystem_vendor_id,
+        subsystem_device_id,
+        class,
+    })
+}
+
+fn parse_pci_id_pair(value: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some((vendor, device)) = value.and_then(|value| value.split_once(':')) else {
+        return (None, None);
+    };
+    (normalize_pci_hex_id(vendor), normalize_pci_hex_id(device))
+}
+
+fn normalize_pci_hex_id(value: &str) -> Option<String> {
+    let value = value
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
+    (!value.is_empty() && value.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
 }
 
 fn parse_uevent_value(input: &str, key: &str) -> Option<String> {
