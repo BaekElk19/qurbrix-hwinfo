@@ -1,8 +1,8 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, BluetoothInfo, Device, DeviceKind, DeviceProperties, SourceEvidence, SourceKind,
-    SourceStatus,
+    device_id, BluetoothInfo, Device, DeviceKind, DeviceProperties, ScanWarning, SourceEvidence,
+    SourceKind, SourceStatus,
 };
 use hw_parser::{parse_bluetoothctl_paired_devices, parse_hciconfig};
 use hw_source::CommandSpec;
@@ -47,7 +47,17 @@ impl Probe for BluetoothProbe {
             warnings.extend(ProbeResult::source_failure(self.name(), &paired).warnings);
             Vec::new()
         };
-        let devices = parse_hciconfig(&hci.stdout)
+        let controllers = parse_hciconfig(&hci.stdout);
+        if controllers.is_empty() {
+            warnings.push(
+                ScanWarning::new(
+                    "source_empty",
+                    "bluetooth source produced no controller records",
+                )
+                .with_source(hci.source.clone()),
+            );
+        }
+        let devices = controllers
             .into_iter()
             .enumerate()
             .map(|(idx, ctrl)| {

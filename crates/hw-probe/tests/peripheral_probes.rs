@@ -319,6 +319,20 @@ async fn bluetooth_probe_warns_when_paired_devices_source_fails() {
 }
 
 #[tokio::test]
+async fn bluetooth_probe_warns_when_hciconfig_parses_no_controllers() {
+    let runner = FakeSourceRunner::new()
+        .with_command("hciconfig", ["-a"], "no bluetooth controllers here\n")
+        .with_command("bluetoothctl", ["paired-devices"], "");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BluetoothProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_empty");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("hciconfig -a"));
+}
+
+#[tokio::test]
 async fn bluetooth_probe_uses_sysfs_when_hciconfig_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(
