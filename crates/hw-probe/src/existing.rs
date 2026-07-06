@@ -12,9 +12,9 @@ use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor,
-    parse_dmidecode_system, parse_edid, parse_gpu_lspci, parse_hwinfo_disk, parse_hwinfo_monitor,
-    parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu,
-    parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
+    parse_dmidecode_system, parse_edid, parse_gpu_lspci, parse_hdparm_identify, parse_hwinfo_disk,
+    parse_hwinfo_monitor, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
+    parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
     parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes,
     parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps, parse_xrandr_query,
     parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, HwinfoDiskRecord,
@@ -991,6 +991,7 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         let device = apply_storage_driver(ctx, device, name).await;
         let device = apply_storage_lshw_enrichment(device, &lshw);
         let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
+        let device = apply_storage_hdparm_enrichment(ctx, device).await;
         devices.push(apply_storage_smartctl(ctx, device).await);
     }
 
@@ -1235,6 +1236,56 @@ fn apply_storage_lshw_enrichment(mut device: Device, lshw: &StorageLshwRecords) 
     device
 }
 
+async fn apply_storage_hdparm_enrichment(ctx: &ProbeContext<'_>, mut device: Device) -> Device {
+    let Some(node) = (match &device.properties {
+        DeviceProperties::Storage(storage) => storage.device_node.clone(),
+        _ => None,
+    }) else {
+        return device;
+    };
+
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("hdparm", ["-i".to_string(), node.clone()]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return device;
+    }
+
+    let record = parse_hdparm_identify(&result.stdout);
+    let mut contributed = false;
+    if device.model.is_none() && record.model.is_some() {
+        device.model = record.model.clone();
+        if device.name == node {
+            device.name = record.model.unwrap_or(device.name);
+        }
+        contributed = true;
+    }
+    if device.serial.is_none() && record.serial.is_some() {
+        device.serial = record.serial;
+        contributed = true;
+    }
+    if let DeviceProperties::Storage(storage) = &mut device.properties {
+        if storage.firmware.is_none() && record.firmware.is_some() {
+            storage.firmware = record.firmware;
+            contributed = true;
+        }
+    }
+
+    if contributed {
+        device = device.with_source(SourceEvidence {
+            source: result.source,
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
 async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> Device {
     let Some(node) = (match &device.properties {
         DeviceProperties::Storage(storage) => storage.device_node.clone(),
@@ -1405,6 +1456,7 @@ impl Probe for StorageProbe {
             let device = apply_storage_driver(ctx, device, &name).await;
             let device = apply_storage_lshw_enrichment(device, &lshw);
             let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
+            let device = apply_storage_hdparm_enrichment(ctx, device).await;
             devices.push(apply_storage_smartctl(ctx, device).await);
         }
         ProbeResult::with_devices(devices)

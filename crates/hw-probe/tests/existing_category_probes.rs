@@ -1078,6 +1078,37 @@ async fn storage_probe_enriches_human_readable_hwinfo_fields() {
 }
 
 #[tokio::test]
+async fn storage_probe_enriches_hdparm_identity_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"tran":"sata"}]}"#,
+        )
+        .with_command(
+            "hdparm",
+            ["-i", "/dev/sda"],
+            "/dev/sda:\n\
+             \n\
+             Model=Samsung SSD 870 EVO 500GB, FwRev=SVT02B6Q, SerialNo=S6P012345678\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "Samsung SSD 870 EVO 500GB");
+    assert_eq!(device.model.as_deref(), Some("Samsung SSD 870 EVO 500GB"));
+    assert_eq!(device.serial.as_deref(), Some("S6P012345678"));
+    assert!(device.sources.iter().any(|source| {
+        source.kind == SourceKind::Command && source.source == "hdparm -i /dev/sda"
+    }));
+    let DeviceProperties::Storage(storage) = &device.properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.firmware.as_deref(), Some("SVT02B6Q"));
+}
+
+#[tokio::test]
 async fn storage_probe_uses_hwinfo_when_lsblk_and_sysfs_are_missing() {
     let runner = FakeSourceRunner::new().with_command(
         "hwinfo",

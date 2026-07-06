@@ -1,6 +1,6 @@
 use hw_parser::{
-    parse_hwinfo_disk, parse_lshw_disk, parse_lspci_nn_k, parse_lsusb, parse_lsusb_verbose,
-    parse_smartctl_json,
+    parse_hdparm_identify, parse_hwinfo_disk, parse_lshw_disk, parse_lspci_nn_k, parse_lsusb,
+    parse_lsusb_verbose, parse_smartctl_json,
 };
 
 #[test]
@@ -124,6 +124,19 @@ fn parses_hwinfo_disk_records() {
     assert_eq!(records[0].driver.as_deref(), Some("nvme"));
     assert_eq!(records[0].driver_modules, vec!["nvme"]);
     assert_eq!(records[0].serial.as_deref(), Some("S12345"));
+}
+
+#[test]
+fn parses_hdparm_identify_fields() {
+    let record = parse_hdparm_identify(
+        "/dev/sda:\n\
+         \n\
+         Model=Samsung SSD 870 EVO 500GB, FwRev=SVT02B6Q, SerialNo=S6P012345678\n",
+    );
+
+    assert_eq!(record.model.as_deref(), Some("Samsung SSD 870 EVO 500GB"));
+    assert_eq!(record.firmware.as_deref(), Some("SVT02B6Q"));
+    assert_eq!(record.serial.as_deref(), Some("S6P012345678"));
 }
 
 #[test]

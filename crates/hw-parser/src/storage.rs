@@ -55,6 +55,13 @@ pub struct HwinfoDiskRecord {
     pub serial: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct HdparmIdentifyRecord {
+    pub model: Option<String>,
+    pub firmware: Option<String>,
+    pub serial: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 struct SmartctlReport {
     smart_status: Option<SmartctlStatus>,
@@ -183,6 +190,24 @@ pub fn parse_hwinfo_disk(input: &str) -> Vec<HwinfoDiskRecord> {
     records
 }
 
+pub fn parse_hdparm_identify(input: &str) -> HdparmIdentifyRecord {
+    let mut record = HdparmIdentifyRecord::default();
+
+    for part in input.lines().flat_map(|line| line.split(',')) {
+        let Some((key, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "Model" => record.model = clean_hdparm_value(value),
+            "FwRev" => record.firmware = clean_hdparm_value(value),
+            "SerialNo" => record.serial = clean_hdparm_value(value),
+            _ => {}
+        }
+    }
+
+    record
+}
+
 fn parse_hwinfo_disk_section(lines: &[&str]) -> Option<HwinfoDiskRecord> {
     let mut record = HwinfoDiskRecord::default();
     let mut is_disk = false;
@@ -267,6 +292,15 @@ fn clean_hwinfo_disk_value(value: &str) -> Option<String> {
     let value = value.trim();
     let value = value.split('"').nth(1).unwrap_or(value).trim();
     if value.is_empty() || value.contains("unknown") {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn clean_hdparm_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("n/a") || value.contains("unknown") {
         None
     } else {
         Some(value.to_string())
