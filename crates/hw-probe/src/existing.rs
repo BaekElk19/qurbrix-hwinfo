@@ -1281,9 +1281,9 @@ async fn apply_unique_storage_controller_pci_identity(
     ctx: &ProbeContext<'_>,
     mut device: Device,
 ) -> Device {
-    if !storage_media_type_uses_pci_controller(&device) {
+    let Some(media_type) = storage_media_type_for_pci_controller(&device) else {
         return device;
-    }
+    };
 
     let controllers: Vec<_> = read_sysfs_pci_records(ctx)
         .await
@@ -1295,8 +1295,27 @@ async fn apply_unique_storage_controller_pci_identity(
                 .is_some_and(|class| class.starts_with("01"))
         })
         .collect();
-    let [controller] = controllers.as_slice() else {
-        return device;
+    let matching_indexes: Vec<_> = controllers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| {
+            record
+                .class_id
+                .as_deref()
+                .is_some_and(|class| storage_controller_class_matches_media_type(media_type, class))
+                .then_some(index)
+        })
+        .collect();
+    let controller = if let [index] = matching_indexes.as_slice() {
+        &controllers[*index]
+    } else {
+        if !matching_indexes.is_empty() {
+            return device;
+        }
+        let [controller] = controllers.as_slice() else {
+            return device;
+        };
+        controller
     };
 
     let path = controller.path.join("uevent");
@@ -1324,14 +1343,24 @@ async fn apply_unique_storage_controller_pci_identity(
     device
 }
 
-fn storage_media_type_uses_pci_controller(device: &Device) -> bool {
+fn storage_media_type_for_pci_controller(device: &Device) -> Option<&str> {
     let DeviceProperties::Storage(storage) = &device.properties else {
-        return false;
+        return None;
     };
     storage
         .media_type
         .as_deref()
-        .is_some_and(|media_type| matches!(media_type, "sata" | "ata" | "scsi"))
+        .filter(|media_type| matches!(*media_type, "sata" | "ata" | "scsi"))
+}
+
+fn storage_controller_class_matches_media_type(media_type: &str, class: &str) -> bool {
+    let class = class.trim_start_matches("0x").trim_start_matches("0X");
+    match media_type {
+        "sata" => class.starts_with("0106"),
+        "ata" => class.starts_with("0101") || class.starts_with("0106"),
+        "scsi" => class.starts_with("0100") || class.starts_with("0107"),
+        _ => false,
+    }
 }
 
 fn nvme_controller_name(name: &str) -> Option<String> {
