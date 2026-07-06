@@ -41,28 +41,38 @@ impl Probe for CdromProbe {
                 consumed: Vec::new(),
             };
         }
-        let devices = info
-            .drive_names
-            .into_iter()
-            .map(|drive| {
-                Device::new(
-                    device_id::other("cdrom", &drive),
-                    DeviceKind::Cdrom,
-                    drive.clone(),
-                    DeviceProperties::Cdrom(CdromInfo {
-                        device_node: Some(format!("/dev/{drive}")),
-                        media_present: None,
-                        capabilities: info.capabilities.clone(),
-                    }),
-                )
-                .with_source(SourceEvidence {
-                    source: result.source.clone(),
-                    kind: SourceKind::Procfs,
+        let mut devices = Vec::new();
+        for drive in info.drive_names {
+            let mut device = Device::new(
+                device_id::other("cdrom", &drive),
+                DeviceKind::Cdrom,
+                drive.clone(),
+                DeviceProperties::Cdrom(CdromInfo {
+                    device_node: Some(format!("/dev/{drive}")),
+                    media_present: None,
+                    capabilities: info.capabilities.clone(),
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: result.source.clone(),
+                kind: SourceKind::Procfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+            let sysfs_path = Path::new("/sys/class/block").join(&drive);
+            device.vendor = read_trimmed(ctx, &sysfs_path.join("device/vendor")).await;
+            device.model = read_trimmed(ctx, &sysfs_path.join("device/model")).await;
+            device.serial = read_trimmed(ctx, &sysfs_path.join("device/serial")).await;
+            if device.vendor.is_some() || device.model.is_some() || device.serial.is_some() {
+                device = device.with_source(SourceEvidence {
+                    source: sysfs_path.display().to_string(),
+                    kind: SourceKind::Sysfs,
                     status: SourceStatus::Success,
                     summary: None,
-                })
-            })
-            .collect();
+                });
+            }
+            devices.push(device);
+        }
         ProbeResult::with_devices(devices)
     }
 }

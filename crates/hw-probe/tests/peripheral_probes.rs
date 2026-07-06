@@ -872,6 +872,29 @@ async fn cdrom_probe_uses_sysfs_when_proc_cdrom_info_is_missing() {
 }
 
 #[tokio::test]
+async fn cdrom_probe_enriches_proc_drives_from_sysfs_identity() {
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/sys/dev/cdrom/info",
+            "drive name:\t\tsr0\nCan read DVD:\t\t1\n",
+        )
+        .with_file("/sys/class/block/sr0/device/vendor", "HL-DT-ST\n")
+        .with_file("/sys/class/block/sr0/device/model", "DVDRAM GP60\n")
+        .with_file("/sys/class/block/sr0/device/serial", "ABC123\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CdromProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].vendor.as_deref(), Some("HL-DT-ST"));
+    assert_eq!(result.devices[0].model.as_deref(), Some("DVDRAM GP60"));
+    assert_eq!(result.devices[0].serial.as_deref(), Some("ABC123"));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Sysfs && source.source == "/sys/class/block/sr0"));
+}
+
+#[tokio::test]
 async fn cdrom_probe_uses_sysfs_when_proc_cdrom_info_parses_empty() {
     let runner = FakeSourceRunner::new()
         .with_file("/proc/sys/dev/cdrom/info", "CD-ROM information\n")
