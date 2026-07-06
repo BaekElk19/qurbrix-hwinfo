@@ -120,3 +120,35 @@ fn parses_smartctl_health_and_temperature() {
     assert_eq!(info.smart_status.as_deref(), Some("passed"));
     assert_eq!(info.temperature_celsius, Some(37.0));
 }
+
+#[test]
+fn parses_nvme_smartctl_health_details() {
+    let info = parse_smartctl_json(
+        r#"{
+          "smart_status": {"passed": true},
+          "temperature": {"current": 37},
+          "power_on_time": {"hours": 1234},
+          "power_cycle_count": 56,
+          "nvme_smart_health_information_log": {
+            "available_spare": 99,
+            "available_spare_threshold": 10,
+            "percentage_used": 3,
+            "data_units_read": 123456,
+            "data_units_written": 654321,
+            "media_errors": 2,
+            "num_err_log_entries": 4
+          }
+        }"#,
+    )
+    .expect("expected smartctl JSON to parse");
+
+    assert_eq!(info.power_on_hours, Some(1234));
+    assert_eq!(info.power_cycle_count, Some(56));
+    assert_eq!(info.available_spare_percent, Some(99));
+    assert_eq!(info.available_spare_threshold_percent, Some(10));
+    assert_eq!(info.percentage_used, Some(3));
+    assert_eq!(info.data_units_read, Some(123456));
+    assert_eq!(info.data_units_written, Some(654321));
+    assert_eq!(info.media_errors, Some(2));
+    assert_eq!(info.error_log_entries, Some(4));
+}

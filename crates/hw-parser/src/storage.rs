@@ -23,6 +23,15 @@ pub struct LsblkDevice {
 pub struct SmartctlInfo {
     pub smart_status: Option<String>,
     pub temperature_celsius: Option<f32>,
+    pub power_on_hours: Option<u64>,
+    pub power_cycle_count: Option<u64>,
+    pub available_spare_percent: Option<u8>,
+    pub available_spare_threshold_percent: Option<u8>,
+    pub percentage_used: Option<u8>,
+    pub data_units_read: Option<u64>,
+    pub data_units_written: Option<u64>,
+    pub media_errors: Option<u64>,
+    pub error_log_entries: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -38,6 +47,9 @@ pub struct LshwDiskRecord {
 struct SmartctlReport {
     smart_status: Option<SmartctlStatus>,
     temperature: Option<SmartctlTemperature>,
+    power_on_time: Option<SmartctlPowerOnTime>,
+    power_cycle_count: Option<u64>,
+    nvme_smart_health_information_log: Option<NvmeSmartHealthInformationLog>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -50,6 +62,22 @@ struct SmartctlTemperature {
     current: Option<f32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+struct SmartctlPowerOnTime {
+    hours: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+struct NvmeSmartHealthInformationLog {
+    available_spare: Option<u8>,
+    available_spare_threshold: Option<u8>,
+    percentage_used: Option<u8>,
+    data_units_read: Option<u64>,
+    data_units_written: Option<u64>,
+    media_errors: Option<u64>,
+    num_err_log_entries: Option<u64>,
+}
+
 pub fn parse_lsblk_json(input: &str) -> Vec<LsblkDevice> {
     parse_lsblk_json_result(input).unwrap_or_default()
 }
@@ -59,20 +87,34 @@ pub fn parse_lsblk_json_result(input: &str) -> Result<Vec<LsblkDevice>, serde_js
 }
 
 pub fn parse_smartctl_json(input: &str) -> Result<SmartctlInfo, serde_json::Error> {
-    serde_json::from_str::<SmartctlReport>(input).map(|report| SmartctlInfo {
-        smart_status: report
-            .smart_status
-            .and_then(|status| status.passed)
-            .map(|passed| {
-                if passed {
-                    "passed".to_string()
-                } else {
-                    "failed".to_string()
-                }
-            }),
-        temperature_celsius: report
-            .temperature
-            .and_then(|temperature| temperature.current),
+    serde_json::from_str::<SmartctlReport>(input).map(|report| {
+        let nvme = report.nvme_smart_health_information_log;
+        SmartctlInfo {
+            smart_status: report
+                .smart_status
+                .and_then(|status| status.passed)
+                .map(|passed| {
+                    if passed {
+                        "passed".to_string()
+                    } else {
+                        "failed".to_string()
+                    }
+                }),
+            temperature_celsius: report
+                .temperature
+                .and_then(|temperature| temperature.current),
+            power_on_hours: report.power_on_time.and_then(|value| value.hours),
+            power_cycle_count: report.power_cycle_count,
+            available_spare_percent: nvme.as_ref().and_then(|value| value.available_spare),
+            available_spare_threshold_percent: nvme
+                .as_ref()
+                .and_then(|value| value.available_spare_threshold),
+            percentage_used: nvme.as_ref().and_then(|value| value.percentage_used),
+            data_units_read: nvme.as_ref().and_then(|value| value.data_units_read),
+            data_units_written: nvme.as_ref().and_then(|value| value.data_units_written),
+            media_errors: nvme.as_ref().and_then(|value| value.media_errors),
+            error_log_entries: nvme.and_then(|value| value.num_err_log_entries),
+        }
     })
 }
 

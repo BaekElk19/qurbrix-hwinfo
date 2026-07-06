@@ -775,6 +775,55 @@ async fn storage_probe_reads_smart_health_and_temperature() {
 }
 
 #[tokio::test]
+async fn storage_probe_reads_nvme_smart_health_details() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"nvme0n1","type":"disk","size":1024,"model":"NVMe SSD","serial":"N1","tran":"nvme"}]}"#,
+        )
+        .with_command(
+            "smartctl",
+            ["-a", "-j", "/dev/nvme0n1"],
+            r#"{
+              "smart_status": {"passed": true},
+              "temperature": {"current": 37},
+              "power_on_time": {"hours": 1234},
+              "power_cycle_count": 56,
+              "nvme_smart_health_information_log": {
+                "available_spare": 99,
+                "available_spare_threshold": 10,
+                "percentage_used": 3,
+                "data_units_read": 123456,
+                "data_units_written": 654321,
+                "media_errors": 2,
+                "num_err_log_entries": 4
+              }
+            }"#,
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.power_on_hours, Some(1234));
+    assert_eq!(storage.power_cycle_count, Some(56));
+    assert_eq!(storage.available_spare_percent, Some(99));
+    assert_eq!(storage.available_spare_threshold_percent, Some(10));
+    assert_eq!(storage.percentage_used, Some(3));
+    assert_eq!(storage.data_units_read, Some(123456));
+    assert_eq!(storage.data_units_written, Some(654321));
+    assert_eq!(storage.media_errors, Some(2));
+    assert_eq!(storage.error_log_entries, Some(4));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command
+            && source.source == "smartctl -a -j /dev/nvme0n1"));
+}
+
+#[tokio::test]
 async fn storage_probe_reads_smart_health_from_nonzero_smartctl_json() {
     let runner = FakeSourceRunner::new()
         .with_command(

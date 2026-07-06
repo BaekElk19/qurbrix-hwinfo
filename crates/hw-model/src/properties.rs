@@ -90,6 +90,15 @@ pub struct StorageInfo {
     pub wwn: Option<String>,
     pub smart_status: Option<String>,
     pub temperature_celsius: Option<f32>,
+    pub power_on_hours: Option<u64>,
+    pub power_cycle_count: Option<u64>,
+    pub available_spare_percent: Option<u8>,
+    pub available_spare_threshold_percent: Option<u8>,
+    pub percentage_used: Option<u8>,
+    pub data_units_read: Option<u64>,
+    pub data_units_written: Option<u64>,
+    pub media_errors: Option<u64>,
+    pub error_log_entries: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

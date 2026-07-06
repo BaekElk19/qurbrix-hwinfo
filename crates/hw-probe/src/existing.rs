@@ -875,12 +875,36 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
     let Ok(smart) = parse_smartctl_json(&result.stdout) else {
         return device;
     };
-    if smart.smart_status.is_none() && smart.temperature_celsius.is_none() {
+    if smart.smart_status.is_none()
+        && smart.temperature_celsius.is_none()
+        && smart.power_on_hours.is_none()
+        && smart.power_cycle_count.is_none()
+        && smart.available_spare_percent.is_none()
+        && smart.available_spare_threshold_percent.is_none()
+        && smart.percentage_used.is_none()
+        && smart.data_units_read.is_none()
+        && smart.data_units_written.is_none()
+        && smart.media_errors.is_none()
+        && smart.error_log_entries.is_none()
+    {
         return device;
     }
     if let DeviceProperties::Storage(storage) = &mut device.properties {
         storage.smart_status = storage.smart_status.take().or(smart.smart_status);
         storage.temperature_celsius = storage.temperature_celsius.or(smart.temperature_celsius);
+        storage.power_on_hours = storage.power_on_hours.or(smart.power_on_hours);
+        storage.power_cycle_count = storage.power_cycle_count.or(smart.power_cycle_count);
+        storage.available_spare_percent = storage
+            .available_spare_percent
+            .or(smart.available_spare_percent);
+        storage.available_spare_threshold_percent = storage
+            .available_spare_threshold_percent
+            .or(smart.available_spare_threshold_percent);
+        storage.percentage_used = storage.percentage_used.or(smart.percentage_used);
+        storage.data_units_read = storage.data_units_read.or(smart.data_units_read);
+        storage.data_units_written = storage.data_units_written.or(smart.data_units_written);
+        storage.media_errors = storage.media_errors.or(smart.media_errors);
+        storage.error_log_entries = storage.error_log_entries.or(smart.error_log_entries);
     }
 
     device.with_source(SourceEvidence {
