@@ -113,6 +113,7 @@ pub struct GpuInfo {
 pub struct MonitorInfo {
     pub connector: Option<String>,
     pub resolution: Option<String>,
+    pub max_resolution: Option<String>,
     pub size_mm: Option<(u32, u32)>,
     pub production_date: Option<String>,
     pub manufacturer: Option<String>,

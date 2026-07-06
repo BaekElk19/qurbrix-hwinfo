@@ -642,6 +642,29 @@ async fn monitor_probe_uses_sysfs_edid_when_xrandr_verbose_is_missing() {
 }
 
 #[tokio::test]
+async fn monitor_probe_reports_xrandr_max_resolution() {
+    let runner = FakeSourceRunner::new().with_command(
+        "xrandr",
+        ["--query"],
+        "HDMI-1 connected primary 1920x1080+0+0\n\
+           2560x1440     59.95 +\n\
+           1920x1080     60.00*\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.resolution.as_deref(), Some("1920x1080"));
+            assert_eq!(monitor.max_resolution.as_deref(), Some("2560x1440"));
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn monitor_probe_uses_sysfs_edid_when_xrandr_query_is_missing() {
     let path = PathBuf::from("/sys/class/drm/card0-HDMI-A-1/edid");
     let runner = FakeSourceRunner::new()

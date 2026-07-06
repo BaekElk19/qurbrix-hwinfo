@@ -1870,6 +1870,7 @@ impl Probe for MonitorProbe {
                     (
                         mon.connector,
                         mon.resolution,
+                        mon.max_resolution,
                         result.source.clone(),
                         SourceKind::Command,
                         false,
@@ -1884,6 +1885,7 @@ impl Probe for MonitorProbe {
                     (
                         connector.clone(),
                         None,
+                        None,
                         result.source.clone(),
                         SourceKind::Command,
                         true,
@@ -1896,11 +1898,19 @@ impl Probe for MonitorProbe {
         let devices = monitors
             .into_iter()
             .filter_map(
-                |(connector, resolution, mut source, mut source_kind, require_edid)| {
+                |(
+                    connector,
+                    resolution,
+                    max_resolution,
+                    mut source,
+                    mut source_kind,
+                    require_edid,
+                )| {
                     let id = device_id::other("monitor", &connector);
                     let mut info = MonitorInfo {
                         connector: Some(connector.clone()),
                         resolution,
+                        max_resolution,
                         ..Default::default()
                     };
                     let valid_edid_source = edids.get(&connector).and_then(|candidates| {

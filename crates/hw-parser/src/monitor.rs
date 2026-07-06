@@ -6,6 +6,7 @@ pub struct XrandrMonitorRecord {
     pub connected: bool,
     pub primary: bool,
     pub resolution: Option<String>,
+    pub max_resolution: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,29 +16,37 @@ pub struct XrandrVerboseMonitorRecord {
 }
 
 pub fn parse_xrandr_query(input: &str) -> Vec<XrandrMonitorRecord> {
-    input
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            let connector = parts.next()?;
-            let state = parts.next()?;
-            if state != "connected" && state != "disconnected" {
-                return None;
-            }
+    let mut records = Vec::new();
+    for line in input.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(first) = parts.next() else {
+            continue;
+        };
+        let state = parts.next();
+        if matches!(state, Some("connected" | "disconnected")) {
             let rest: Vec<&str> = parts.collect();
             let primary = rest.contains(&"primary");
             let resolution = rest
                 .iter()
                 .find(|part| part.contains('x') && part.contains('+'))
                 .map(|value| value.split('+').next().unwrap_or(value).to_string());
-            Some(XrandrMonitorRecord {
-                connector: connector.to_string(),
-                connected: state == "connected",
+            records.push(XrandrMonitorRecord {
+                connector: first.to_string(),
+                connected: state == Some("connected"),
                 primary,
                 resolution,
-            })
-        })
-        .collect()
+                max_resolution: None,
+            });
+            continue;
+        }
+
+        if let Some(record) = records.last_mut() {
+            if record.connected && record.max_resolution.is_none() {
+                record.max_resolution = parse_mode_resolution(first);
+            }
+        }
+    }
+    records
 }
 
 pub fn parse_xrandr_verbose(input: &str) -> Vec<XrandrVerboseMonitorRecord> {
@@ -116,4 +125,13 @@ fn hex_to_bytes(hex: &str) -> Vec<u8> {
                 .and_then(|value| u8::from_str_radix(value, 16).ok())
         })
         .collect()
+}
+
+fn parse_mode_resolution(value: &str) -> Option<String> {
+    let (width, height) = value.split_once('x')?;
+    (!width.is_empty()
+        && !height.is_empty()
+        && width.chars().all(|c| c.is_ascii_digit())
+        && height.chars().all(|c| c.is_ascii_digit()))
+    .then(|| value.to_string())
 }
