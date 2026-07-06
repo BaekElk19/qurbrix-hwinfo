@@ -64,6 +64,12 @@ pub struct MotherboardInfo {
     pub chassis_power_cords: Option<String>,
     pub chassis_contained_elements: Option<String>,
     pub chassis_sku_number: Option<String>,
+    pub memory_array_location: Option<String>,
+    pub memory_array_use: Option<String>,
+    pub memory_array_error_correction_type: Option<String>,
+    pub memory_array_maximum_capacity: Option<String>,
+    pub memory_array_error_information_handle: Option<String>,
+    pub memory_array_number_of_devices: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

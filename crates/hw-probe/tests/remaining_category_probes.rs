@@ -293,6 +293,64 @@ async fn bios_probe_preserves_chassis_information_fields() {
 }
 
 #[tokio::test]
+async fn bios_probe_preserves_physical_memory_array_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "dmidecode",
+            ["-t", "0,1,2,3"],
+            "BIOS Information\n\
+                 \tVendor: LENOVO\n\
+                 \tVersion: N2IET98W\n\
+                 Base Board Information\n\
+                 \tManufacturer: LENOVO\n\
+                 \tProduct Name: 20XX\n\
+                 \tSerial Number: BOARD123\n",
+        )
+        .with_command(
+            "dmidecode",
+            ["-t", "16"],
+            "Physical Memory Array\n\
+                 \tLocation: System Board Or Motherboard\n\
+                 \tUse: System Memory\n\
+                 \tError Correction Type: None\n\
+                 \tMaximum Capacity: 64 GB\n\
+                 \tError Information Handle: Not Provided\n\
+                 \tNumber Of Devices: 2\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    let board = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Motherboard)
+        .expect("expected motherboard device");
+    assert!(board.sources.iter().any(|source| {
+        source.kind == SourceKind::Command && source.source == "dmidecode -t 16"
+    }));
+    match &board.properties {
+        DeviceProperties::Motherboard(info) => {
+            assert_eq!(
+                info.memory_array_location.as_deref(),
+                Some("System Board Or Motherboard")
+            );
+            assert_eq!(info.memory_array_use.as_deref(), Some("System Memory"));
+            assert_eq!(
+                info.memory_array_error_correction_type.as_deref(),
+                Some("None")
+            );
+            assert_eq!(info.memory_array_maximum_capacity.as_deref(), Some("64 GB"));
+            assert_eq!(
+                info.memory_array_error_information_handle.as_deref(),
+                Some("Not Provided")
+            );
+            assert_eq!(info.memory_array_number_of_devices.as_deref(), Some("2"));
+        }
+        other => panic!("expected motherboard properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn bios_probe_does_not_emit_generic_devices_for_empty_dmi_output() {
     let runner = FakeSourceRunner::new().with_command("dmidecode", ["-t", "0,1,2,3"], "");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));

@@ -37,6 +37,12 @@ pub struct DmiBiosBoardRecord {
     pub chassis_power_cords: Option<String>,
     pub chassis_contained_elements: Option<String>,
     pub chassis_sku_number: Option<String>,
+    pub memory_array_location: Option<String>,
+    pub memory_array_use: Option<String>,
+    pub memory_array_error_correction_type: Option<String>,
+    pub memory_array_maximum_capacity: Option<String>,
+    pub memory_array_error_information_handle: Option<String>,
+    pub memory_array_number_of_devices: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -185,6 +191,7 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
         if trimmed == "BIOS Information"
             || trimmed == "Base Board Information"
             || trimmed == "Chassis Information"
+            || trimmed == "Physical Memory Array"
         {
             section = trimmed;
             continue;
@@ -232,6 +239,20 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
                 record.chassis_contained_elements = Some(value)
             }
             ("Chassis Information", "SKU Number") => record.chassis_sku_number = Some(value),
+            ("Physical Memory Array", "Location") => record.memory_array_location = Some(value),
+            ("Physical Memory Array", "Use") => record.memory_array_use = Some(value),
+            ("Physical Memory Array", "Error Correction Type") => {
+                record.memory_array_error_correction_type = Some(value)
+            }
+            ("Physical Memory Array", "Maximum Capacity") => {
+                record.memory_array_maximum_capacity = Some(value)
+            }
+            ("Physical Memory Array", "Error Information Handle") => {
+                record.memory_array_error_information_handle = Some(value)
+            }
+            ("Physical Memory Array", "Number Of Devices") => {
+                record.memory_array_number_of_devices = Some(value)
+            }
             _ => {}
         }
     }

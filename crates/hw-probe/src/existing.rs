@@ -1667,11 +1667,11 @@ impl Probe for BiosProbe {
             if let Some(dmi) = read_sysfs_dmi(ctx).await {
                 let runtime = read_bios_runtime_info(ctx).await;
                 fallback.devices =
-                    bios_board_devices(dmi, "/sys/class/dmi/id", SourceKind::Sysfs, runtime);
+                    bios_board_devices(dmi, "/sys/class/dmi/id", SourceKind::Sysfs, runtime, None);
             }
             return fallback;
         }
-        let dmi = parse_dmidecode_bios_board(&result.stdout);
+        let mut dmi = parse_dmidecode_bios_board(&result.stdout);
         if dmi == Default::default() {
             return ProbeResult {
                 devices: Vec::new(),
@@ -1683,13 +1683,68 @@ impl Probe for BiosProbe {
                 consumed: Vec::new(),
             };
         }
+        let memory_array_source = enrich_dmi_memory_array(ctx, &mut dmi).await;
         let runtime = read_bios_runtime_info(ctx).await;
         ProbeResult::with_devices(bios_board_devices(
             dmi,
             &result.source,
             SourceKind::Command,
             runtime,
+            memory_array_source,
         ))
+    }
+}
+
+async fn enrich_dmi_memory_array(
+    ctx: &ProbeContext<'_>,
+    dmi: &mut DmiBiosBoardRecord,
+) -> Option<SourceEvidence> {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("dmidecode", ["-t", "16"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return None;
+    }
+
+    let memory_array = parse_dmidecode_bios_board(&result.stdout);
+    let mut contributed = false;
+    contributed |= merge_optional_string(
+        &mut dmi.memory_array_location,
+        memory_array.memory_array_location,
+    );
+    contributed |= merge_optional_string(&mut dmi.memory_array_use, memory_array.memory_array_use);
+    contributed |= merge_optional_string(
+        &mut dmi.memory_array_error_correction_type,
+        memory_array.memory_array_error_correction_type,
+    );
+    contributed |= merge_optional_string(
+        &mut dmi.memory_array_maximum_capacity,
+        memory_array.memory_array_maximum_capacity,
+    );
+    contributed |= merge_optional_string(
+        &mut dmi.memory_array_error_information_handle,
+        memory_array.memory_array_error_information_handle,
+    );
+    contributed |= merge_optional_string(
+        &mut dmi.memory_array_number_of_devices,
+        memory_array.memory_array_number_of_devices,
+    );
+
+    contributed.then_some(SourceEvidence {
+        source: result.source,
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    })
+}
+
+fn merge_optional_string(target: &mut Option<String>, candidate: Option<String>) -> bool {
+    if target.is_none() && candidate.is_some() {
+        *target = candidate;
+        true
+    } else {
+        false
     }
 }
 
@@ -1773,6 +1828,12 @@ async fn read_sysfs_dmi(ctx: &ProbeContext<'_>) -> Option<DmiBiosBoardRecord> {
         chassis_power_cords: None,
         chassis_contained_elements: None,
         chassis_sku_number: None,
+        memory_array_location: None,
+        memory_array_use: None,
+        memory_array_error_correction_type: None,
+        memory_array_maximum_capacity: None,
+        memory_array_error_information_handle: None,
+        memory_array_number_of_devices: None,
     };
 
     if dmi == Default::default() {
@@ -1844,6 +1905,7 @@ fn bios_board_devices(
     source: &str,
     source_kind: SourceKind,
     runtime: BiosRuntimeInfo,
+    memory_array_source: Option<SourceEvidence>,
 ) -> Vec<Device> {
     let mut bios = Device::new(
         "bios:0",
@@ -1904,6 +1966,12 @@ fn bios_board_devices(
             chassis_power_cords: dmi.chassis_power_cords,
             chassis_contained_elements: dmi.chassis_contained_elements,
             chassis_sku_number: dmi.chassis_sku_number,
+            memory_array_location: dmi.memory_array_location,
+            memory_array_use: dmi.memory_array_use,
+            memory_array_error_correction_type: dmi.memory_array_error_correction_type,
+            memory_array_maximum_capacity: dmi.memory_array_maximum_capacity,
+            memory_array_error_information_handle: dmi.memory_array_error_information_handle,
+            memory_array_number_of_devices: dmi.memory_array_number_of_devices,
         })),
     )
     .with_source(SourceEvidence {
@@ -1912,6 +1980,11 @@ fn bios_board_devices(
         status: SourceStatus::Success,
         summary: None,
     });
+    let board = if let Some(source) = memory_array_source {
+        board.with_source(source)
+    } else {
+        board
+    };
     vec![bios, board]
 }
 
