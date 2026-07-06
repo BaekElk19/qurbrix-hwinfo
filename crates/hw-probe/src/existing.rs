@@ -13,9 +13,10 @@ use hw_parser::{
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
     parse_gpu_lspci, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
-    parse_lscpu, parse_lshw_memory, parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware,
-    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps,
-    parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord,
+    parse_lscpu, parse_lshw_memory, parse_lshw_network, parse_lshw_processor, parse_proc_cpuinfo,
+    parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
+    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord,
+    DmiMemoryRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -290,6 +291,7 @@ impl Probe for NetworkProbe {
         };
         let mut warnings = Vec::new();
         let addresses = network_ip_addresses(ctx, self.name(), &mut warnings).await;
+        let lshw = network_lshw_records(ctx).await;
         let mut devices = Vec::new();
         for net in records {
             if is_ignored_network_interface(&net.ifname) {
@@ -307,7 +309,7 @@ impl Probe for NetworkProbe {
                 DeviceKind::Network,
                 net.ifname.clone(),
                 DeviceProperties::Network(NetworkInfo {
-                    interface: Some(net.ifname),
+                    interface: Some(net.ifname.clone()),
                     network_type: enrichment.network_type(),
                     mac: net.address,
                     operstate: net.operstate,
@@ -333,6 +335,11 @@ impl Probe for NetworkProbe {
                 });
             }
             device = apply_network_enrichment(device, enrichment);
+            device = apply_network_lshw_enrichment(
+                device,
+                lshw.by_interface.get(&net.ifname),
+                &lshw.source,
+            );
             devices.push(device);
         }
         ProbeResult {
@@ -353,6 +360,12 @@ struct NetworkIpAddressInfo {
 struct NetworkIpAddresses {
     source: String,
     by_interface: HashMap<String, NetworkIpAddressInfo>,
+}
+
+#[derive(Default)]
+struct NetworkLshwRecords {
+    source: String,
+    by_interface: HashMap<String, LshwNetworkRecord>,
 }
 
 async fn network_ip_addresses(
@@ -407,6 +420,28 @@ async fn network_ip_addresses(
     }
 }
 
+async fn network_lshw_records(ctx: &ProbeContext<'_>) -> NetworkLshwRecords {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("lshw", ["-class", "network"]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return NetworkLshwRecords::default();
+    }
+
+    let by_interface = parse_lshw_network(&result.stdout)
+        .into_iter()
+        .filter_map(|record| Some((record.logical_name.clone()?, record)))
+        .collect();
+    NetworkLshwRecords {
+        source: result.source,
+        by_interface,
+    }
+}
+
 struct NetworkSysfsEnrichment {
     source: String,
     speed_mbps: Option<u32>,
@@ -433,6 +468,7 @@ impl NetworkSysfsEnrichment {
 
 async fn network_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let paths = ctx.runner.glob("/sys/class/net/*").await.paths;
+    let lshw = network_lshw_records(ctx).await;
     let mut devices = Vec::new();
 
     for path in paths {
@@ -466,7 +502,10 @@ async fn network_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
             status: SourceStatus::Success,
             summary: None,
         });
-        devices.push(apply_network_enrichment(device, enrichment));
+        let device = apply_network_enrichment(device, enrichment);
+        let device =
+            apply_network_lshw_enrichment(device, lshw.by_interface.get(ifname), &lshw.source);
+        devices.push(device);
     }
 
     devices
@@ -545,6 +584,79 @@ fn apply_network_enrichment(mut device: Device, mut enrichment: NetworkSysfsEnri
         });
     }
     device
+}
+
+fn apply_network_lshw_enrichment(
+    mut device: Device,
+    record: Option<&LshwNetworkRecord>,
+    source: &str,
+) -> Device {
+    let Some(record) = record else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if device.vendor.is_none() && record.vendor.is_some() {
+        device.vendor = record.vendor.clone();
+        contributed = true;
+    }
+    if device.model.is_none() && record.product.is_some() {
+        device.model = record.product.clone();
+        contributed = true;
+    }
+    if device.bus.is_none() {
+        if let Some(bus) = record.bus_info.as_deref().and_then(lshw_network_pci_bus) {
+            device = device.with_bus(bus);
+            contributed = true;
+        }
+    }
+    if record.driver.is_some() || record.driver_version.is_some() {
+        let mut driver = device.driver.take().unwrap_or(DriverInfo {
+            name: None,
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        let original = driver.clone();
+        driver.name = driver.name.or_else(|| record.driver.clone());
+        driver.version = driver.version.or_else(|| record.driver_version.clone());
+        contributed |= driver != original;
+        device.driver = Some(driver);
+    }
+    if let DeviceProperties::Network(network) = &mut device.properties {
+        if network.speed_mbps.is_none() && record.capacity_mbps.is_some() {
+            network.speed_mbps = record.capacity_mbps;
+            contributed = true;
+        }
+        if network.firmware.is_none() && record.firmware.is_some() {
+            network.firmware = record.firmware.clone();
+            contributed = true;
+        }
+    }
+    if contributed
+        && !source.is_empty()
+        && !device.sources.iter().any(|entry| entry.source == source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: source.to_string(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn lshw_network_pci_bus(value: &str) -> Option<BusInfo> {
+    Some(BusInfo::Pci {
+        address: value.strip_prefix("pci@")?.to_string(),
+        vendor_id: None,
+        device_id: None,
+        subsystem_vendor_id: None,
+        subsystem_device_id: None,
+        class: None,
+    })
 }
 
 fn parse_uevent_value(input: &str, key: &str) -> Option<String> {

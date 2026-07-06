@@ -536,6 +536,78 @@ async fn network_probe_preserves_pci_identity_and_modules_from_sysfs() {
 }
 
 #[tokio::test]
+async fn network_probe_enriches_human_readable_lshw_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "ip",
+            ["-j", "link"],
+            r#"[{"ifname":"enp0s31f6","address":"aa:bb:cc:dd:ee:ff","operstate":"UP","mtu":1500}]"#,
+        )
+        .with_command("ip", ["-j", "addr"], "[]")
+        .with_command(
+            "lshw",
+            ["-class", "network"],
+            "  *-network\n\
+                  description: Ethernet interface\n\
+                  product: Ethernet Connection (16) I219-LM\n\
+                  vendor: Intel Corporation\n\
+                  bus info: pci@0000:00:1f.6\n\
+                  logical name: enp0s31f6\n\
+                  serial: aa:bb:cc:dd:ee:ff\n\
+                  capacity: 1Gbit/s\n\
+                  configuration: broadcast=yes driver=e1000e driverversion=6.8.0 firmware=0.8-4\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = NetworkProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.vendor.as_deref(), Some("Intel Corporation"));
+    assert_eq!(
+        device.model.as_deref(),
+        Some("Ethernet Connection (16) I219-LM")
+    );
+    assert_eq!(
+        device.bus,
+        Some(BusInfo::Pci {
+            address: "0000:00:1f.6".to_string(),
+            vendor_id: None,
+            device_id: None,
+            subsystem_vendor_id: None,
+            subsystem_device_id: None,
+            class: None,
+        })
+    );
+    assert!(
+        device
+            .sources
+            .iter()
+            .any(|source| source.kind == SourceKind::Command
+                && source.source == "lshw -class network")
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("e1000e")
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.version.as_deref()),
+        Some("6.8.0")
+    );
+    match &device.properties {
+        DeviceProperties::Network(network) => {
+            assert_eq!(network.speed_mbps, Some(1000));
+            assert_eq!(network.firmware.as_deref(), Some("0.8-4"));
+        }
+        other => panic!("expected network properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn network_probe_filters_loopback_and_common_virtual_interfaces() {
     let runner = FakeSourceRunner::new().with_command(
         "ip",

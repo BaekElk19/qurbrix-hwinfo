@@ -127,6 +127,7 @@ pub struct NetworkInfo {
     pub operstate: Option<String>,
     pub speed_mbps: Option<u32>,
     pub duplex: Option<String>,
+    pub firmware: Option<String>,
     pub ipv4: Vec<String>,
     pub ipv6: Vec<String>,
 }
