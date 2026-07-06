@@ -25,6 +25,10 @@ fn parse_lscpu_reads_extended_cpu_fields() {
     assert_eq!(cpu.stepping.as_deref(), Some("1"));
     assert!(cpu.flags.contains(&"fpu".to_string()));
     assert_eq!(cpu.virtualization.as_deref(), Some("VT-x"));
+    assert_eq!(cpu.l1d_cache.as_deref(), Some("192 KiB (4 instances)"));
+    assert_eq!(cpu.l1i_cache.as_deref(), Some("128 KiB (4 instances)"));
+    assert_eq!(cpu.l2_cache.as_deref(), Some("5 MiB (4 instances)"));
+    assert_eq!(cpu.l3_cache.as_deref(), Some("12 MiB (1 instance)"));
 }
 
 #[test]

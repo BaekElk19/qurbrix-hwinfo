@@ -194,6 +194,10 @@ impl Probe for CpuProbe {
                 stepping: merged.stepping,
                 bogomips: merged.bogomips,
                 virtualization: merged.virtualization,
+                l1d_cache: merged.l1d_cache,
+                l1i_cache: merged.l1i_cache,
+                l2_cache: merged.l2_cache,
+                l3_cache: merged.l3_cache,
                 flags: merged.flags,
             }),
         );
@@ -523,6 +527,10 @@ fn merge_cpu_record_fallback(
         primary.flags = fallback.flags;
     }
     primary.virtualization = primary.virtualization.or(fallback.virtualization);
+    primary.l1d_cache = primary.l1d_cache.or(fallback.l1d_cache);
+    primary.l1i_cache = primary.l1i_cache.or(fallback.l1i_cache);
+    primary.l2_cache = primary.l2_cache.or(fallback.l2_cache);
+    primary.l3_cache = primary.l3_cache.or(fallback.l3_cache);
 
     Some(primary)
 }

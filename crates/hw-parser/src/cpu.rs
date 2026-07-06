@@ -17,6 +17,10 @@ pub struct CpuRecord {
     pub bogomips: Option<String>,
     pub flags: Vec<String>,
     pub virtualization: Option<String>,
+    pub l1d_cache: Option<String>,
+    pub l1i_cache: Option<String>,
+    pub l2_cache: Option<String>,
+    pub l3_cache: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -54,6 +58,10 @@ pub struct MergedCpu {
     pub stepping: Option<String>,
     pub bogomips: Option<String>,
     pub virtualization: Option<String>,
+    pub l1d_cache: Option<String>,
+    pub l1i_cache: Option<String>,
+    pub l2_cache: Option<String>,
+    pub l3_cache: Option<String>,
     pub flags: Vec<String>,
 }
 
@@ -82,6 +90,10 @@ pub fn parse_lscpu(input: &str) -> CpuRecord {
             "BogoMIPS" => record.bogomips = clean_value(value),
             "Flags" => record.flags = value.split_whitespace().map(str::to_string).collect(),
             "Virtualization" => record.virtualization = clean_value(value),
+            "L1d cache" => record.l1d_cache = clean_value(value),
+            "L1i cache" => record.l1i_cache = clean_value(value),
+            "L2 cache" => record.l2_cache = clean_value(value),
+            "L3 cache" => record.l3_cache = clean_value(value),
             _ => {}
         }
     }
@@ -285,6 +297,10 @@ pub fn merge_cpu_records(
         virtualization: lscpu
             .as_ref()
             .and_then(|record| record.virtualization.clone()),
+        l1d_cache: lscpu.as_ref().and_then(|record| record.l1d_cache.clone()),
+        l1i_cache: lscpu.as_ref().and_then(|record| record.l1i_cache.clone()),
+        l2_cache: lscpu.as_ref().and_then(|record| record.l2_cache.clone()),
+        l3_cache: lscpu.as_ref().and_then(|record| record.l3_cache.clone()),
         flags: lscpu
             .as_ref()
             .map(|record| record.flags.clone())

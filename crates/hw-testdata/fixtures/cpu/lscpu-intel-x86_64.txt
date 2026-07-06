@@ -13,4 +13,8 @@ BogoMIPS:                5990.40
 Virtualization:          VT-x
 Core(s) per socket:      4
 Socket(s):               1
+L1d cache:               192 KiB (4 instances)
+L1i cache:               128 KiB (4 instances)
+L2 cache:                5 MiB (4 instances)
+L3 cache:                12 MiB (1 instance)
 Flags:                   fpu vme de pse tsc msr pae mce cx8 apic sep

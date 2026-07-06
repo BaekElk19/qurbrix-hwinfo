@@ -100,6 +100,10 @@ pub struct CpuInfo {
     pub stepping: Option<String>,
     pub bogomips: Option<String>,
     pub virtualization: Option<String>,
+    pub l1d_cache: Option<String>,
+    pub l1i_cache: Option<String>,
+    pub l2_cache: Option<String>,
+    pub l3_cache: Option<String>,
     pub flags: Vec<String>,
 }
 
