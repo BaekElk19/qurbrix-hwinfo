@@ -42,7 +42,7 @@
 | 类别 | 当前来源/实现 | 当前状态 | 证据 |
 | --- | --- | --- | --- |
 | Orchestration | 顺序执行 probe，汇总 devices/warnings/consumed | 结构清晰，类别覆盖广 | `qurbrix-hwinfo/crates/hw-collect/src/collector.rs:21-63` |
-| CPU | `lscpu`、`lshw -class processor`、`dmidecode -t 4`、`/proc/cpuinfo`、`/proc/hardware` | 多源扫描；已补 `Hardware`/`Processor`/LoongArch `cpu model` fallback、Kirin fallback、DMI fallback、locale 强制、主要 vendor alias、扩展 CPU 字段和 Intel/AMD/海光/兆芯/申威/LoongArch 等基础 CPU fixtures；仍缺更广泛真机 fixture | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs`；`qurbrix-hwinfo/crates/hw-parser/src/cpu.rs` |
+| CPU | `lscpu`、`lshw -class processor`、`dmidecode -t 4`、`/proc/cpuinfo`、`/proc/hardware` | 多源扫描；已补 `Hardware`/`Processor`/LoongArch `cpu model` fallback、Kirin fallback、DMI fallback、locale 强制、主要 vendor alias、扩展 CPU 字段和 Intel/AMD/海光/兆芯/飞腾/鲲鹏/麒麟/申威/LoongArch 等基础 CPU fixtures；ARM64 泛型 `Processor` 不再抢占后续 `Hardware` 具体型号；仍缺更广泛真机 fixture | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs`；`qurbrix-hwinfo/crates/hw-parser/src/cpu.rs` |
 | CPU model | `CpuInfo` 有 name/vendor/arch/core/thread/socket/frequency/family/model/stepping/bogomips/virtualization/flags | model 已可承载并由 parser/probe 填充主要 CPU 字段 | `qurbrix-hwinfo/crates/hw-model/src/properties.rs:54-70` |
 | PCI | `lspci -nn -k` | 能解析 class/vendor/device/driver/modules | `qurbrix-hwinfo/crates/hw-probe/src/pci.rs:22-83` |
 | USB | `lsusb` + optional `lsusb -v` + `/sys/bus/usb/devices/*` enrichment/fallback | 能解析基础 USB 字段；`lsusb` 成功时可按 bus/dev 从 sysfs 补 class/subclass/protocol、manufacturer/serial/speed/max power，并从 `lsusb -v` 补首个 interface descriptor；无 `lsusb` 时可从 sysfs 读取 bus/dev、VID/PID、device class/subclass/protocol、manufacturer/product/serial/speed/max power；仍缺多 interface 结构化建模和跨类别 consumed dedup | `qurbrix-hwinfo/crates/hw-probe/src/usb.rs` |
@@ -54,7 +54,7 @@
 | Network | `ip -j link` + `ip -j addr` + `/sys/class/net/*` enrichment/fallback + optional `lshw -class network` | 正常路径取 interface/MAC/operstate/IPv4/IPv6，并从 sysfs 补 speed/duplex、wireless/ethernet capability、`network_type`、uevent driver、driver modules 和 PCI bus ID；fallback 路径也补 sysfs 字段；可从 lshw 补 product/vendor/capacity-derived speed/driver version/firmware；过滤 loopback/常见虚拟网卡；仍缺 NM DBus enrichment | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Error handling | command/read/glob 抽象，区分 Missing/PermissionDenied/Timeout/Failed | 优于多数脚本式参考实现，建议保留 | `qurbrix-hwinfo/crates/hw-source/src/runner.rs:22-59` |
 | Dedup | 仅按 `Device.id` 合并 sources/warnings/capabilities | 有基础去重；缺少基于 bus/class/vendor/serial 的语义合并 | `qurbrix-hwinfo/crates/hw-collect/src/merge.rs:4-20` |
-| Tests/fixtures | 有 PCI/USB/蓝牙/打印机/电源/音频/输入/摄像头和 CPU fixtures | CPU 已有 Intel、AMD、海光、兆芯、申威、LoongArch、Phytium/Kunpeng/Kirin 类覆盖；仍缺更多国产平台真机样本 | `qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-amd-x86_64.txt`；`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-hygon.txt`；`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-zhaoxin.txt`；`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-sunway.txt` |
+| Tests/fixtures | 有 PCI/USB/蓝牙/打印机/电源/音频/输入/摄像头和 CPU fixtures | CPU 已有 Intel、AMD、海光、兆芯、飞腾、鲲鹏、麒麟、申威、LoongArch 类覆盖；仍缺更多国产平台真机样本和多源冲突样本 | `qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-intel-x86_64.txt`；`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-phytium-arm64.txt`；`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-kunpeng-arm64.txt`；`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-hisilicon-kirin.txt` |
 
 判断：`qurbrix-hwinfo` 不是单纯空壳，已经是“通用硬件扫描 + 结构化 model + 统一 source runner”。但特殊硬件兼容还处于早期，主要采集原始字段，语义归一化、fallback、国产 CPU/GPU/SoC 规则不足。
 
@@ -152,7 +152,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 
 | 类别 | Reference 行为 | qurbrix-hwinfo 当前状态 | 差距 | 严重程度 | 是否建议实现 | 证据 |
 | --- | --- | --- | --- | --- | --- | --- |
-| CPU | 多源合并、DMI fallback、国产 vendor/arch 处理 | 已实现多源合并、`/proc/cpuinfo` fallback（含 LoongArch `cpu model`）、`/proc/hardware` Kirin fallback 和 locale 强制 | 真机样本覆盖仍不足 | P1/P2 | 是 | Deepin `.../DeviceGenerator.cpp:173-259`；qurbrix `crates/hw-probe/src/existing.rs` |
+| CPU | 多源合并、DMI fallback、国产 vendor/arch 处理 | 已实现多源合并、`/proc/cpuinfo` fallback（含 LoongArch `cpu model`，并让后续 `Hardware` 覆盖 ARM64 泛型 `Processor`）、`/proc/hardware` Kirin fallback 和 locale 强制 | 更广泛真机样本、多源冲突样本和更多 LoongArch/SW64 变体仍不足 | P1/P2 | 是 | Deepin `.../DeviceGenerator.cpp:173-259`；qurbrix `crates/hw-probe/src/existing.rs` |
 | 主板/BIOS/DMI | 多个 dmidecode type | `SystemProbe` 已读取 runtime、`dmidecode -t 1` 和 sysfs DMI 产品字段；BIOS/board/chassis 使用 dmidecode `0,1,2,3` + `/sys/class/dmi/id` fallback，Physical Memory Array 使用 `dmidecode -t 16` 补 location/use/error-correction/maximum-capacity/error-handle/device-count，BIOS Language Information 使用可选 `dmidecode -t 13` 补 language description format/installable languages/currently installed language，并从 `/sys/firmware/efi` 补 firmware type / Secure Boot state | 当前六类范围内暂无明确 Deepin/Kylin 主板/BIOS/DMI 字段缺口 | P3 | 已实现 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 内存 | dmidecode type 17 等 | dmidecode memory，dmidecode 失败时用 `lshw -class memory` 产出 DIMM fallback，再用 `decode-dimms` 产出 SPD/eeprom DIMM vendor/serial/part/type/speed/size fallback，再用 raw DDR4 SPD EEPROM 产出 size/常见 vendor ID/type/speed/serial/part/slot fallback，再用 EDAC sysfs 产出 DIMM label/type/size fallback，最后用 `/proc/meminfo` 产出总量 fallback | 缺 DDR5 raw SPD、完整厂商 ID 表和更细时序字段 | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 硬盘/分区/控制器 | lsblk/sg/lshw/厂商修正 | lsblk disk，失败时 fallback 到 `/sys/block/*` 并保留 vendor/model/serial/WWN/firmware/size/rotational/driver 和可用 PCI controller identity；NVMe namespace 可从 controller sysfs uevent 补 PCI bus identity；SATA/SCSI disk 可用 canonical sysfs device path 提取最近 PCI ancestor，可有限向父级 uevent 回溯补 PCI controller identity，或在 parent uevent 不可用时用唯一 storage-class PCI controller 或唯一 media-type-matching PCI storage controller 安全补 controller identity；可选 `lshw -class disk`、`hwinfo --disk` 和 `hdparm -i` 补人类可读 disk vendor/model/serial/firmware/driver 或 ATA identity；可选 `lshw -class storage` 或 `lspci -nn -k` 按 PCI 地址补 controller vendor/model/driver；可选 smartctl 补 SMART health/temperature 和 NVMe 健康计数并处理非零状态 JSON | 缺 sysfs 无法暴露可读 PCI ancestor 时的同类多控制器归属 | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
@@ -173,14 +173,14 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 
 | 测试样本 | 覆盖风险 | 当前是否已有 | 建议 fixture 文件名 | 预期断言 |
 | --- | --- | --- | --- | --- |
-| Intel x86_64 `/proc/cpuinfo` | vendor/model/flags/frequency 基线 | 否 | `crates/hw-testdata/fixtures/cpu/proc-cpuinfo-intel-x86_64.txt` | vendor `Intel`，arch fallback 不破坏 lscpu |
+| Intel x86_64 `/proc/cpuinfo` | vendor/model/flags/frequency 基线 | 是 | `crates/hw-testdata/fixtures/cpu/proc-cpuinfo-intel-x86_64.txt` | vendor `Intel`，arch fallback 不破坏 lscpu |
 | AMD x86_64 `/proc/cpuinfo` | `AuthenticAMD` alias | 是 | `.../proc-cpuinfo-amd-x86_64.txt` | vendor `AMD` |
 | Hygon `/proc/cpuinfo` | 国产 x86 vendor | 是 | `.../proc-cpuinfo-hygon.txt` | vendor `Hygon` |
 | Zhaoxin `/proc/cpuinfo` | 兆芯 vendor_id/model 差异 | 是 | `.../proc-cpuinfo-zhaoxin.txt` | vendor `Zhaoxin` |
 | Loongson LoongArch `/proc/cpuinfo` | `cpu model`/Hardware/arch 差异 | 是 | `crates/hw-testdata/fixtures/cpu/proc-cpuinfo-loongarch.txt` | name `Loongson-3A5000`，vendor 可由 merge 推断为 `Loongson` |
-| Phytium ARM64 `/proc/cpuinfo` | ARM64 Hardware fallback | 否 | `.../proc-cpuinfo-phytium-arm64.txt` | name 来自 Hardware/Processor，vendor `Phytium` |
-| Kunpeng ARM64 `/proc/cpuinfo` | Huawei/Kunpeng alias | 否 | `.../proc-cpuinfo-kunpeng-arm64.txt` | vendor `Huawei` 或 `Kunpeng` normalization 按设计固定 |
-| HiSilicon ARM64 `/proc/cpuinfo` | Kirin/HiSilicon SoC | 否 | `.../proc-cpuinfo-hisilicon-kirin.txt` | vendor `HiSilicon`，name 不为空 |
+| Phytium ARM64 `/proc/cpuinfo` | ARM64 Hardware fallback | 是 | `.../proc-cpuinfo-phytium-arm64.txt` | name 来自 Hardware，vendor `Phytium` |
+| Kunpeng ARM64 `/proc/cpuinfo` | Huawei/Kunpeng alias | 是 | `.../proc-cpuinfo-kunpeng-arm64.txt` | vendor `HiSilicon`，architecture `aarch64` |
+| HiSilicon ARM64 `/proc/cpuinfo` | Kirin/HiSilicon SoC | 是 | `.../proc-cpuinfo-hisilicon-kirin.txt` | vendor `HiSilicon`，name 不为空 |
 | `model name` 为空但 `Hardware` 存在 | ARM SoC 常见 | 已有 inline parser/probe 测试 | `crates/hw-parser/tests/cpu_sources.rs`、`crates/hw-probe/tests/existing_category_probes.rs` | CPU name 不退化为 `CPU` |
 | `vendor_id` 不存在 | 非 x86 常见 | 部分 | `.../proc-cpuinfo-sunway.txt` | vendor 从 model/hardware alias 推断或保持 None |
 | lscpu 与 `/proc/cpuinfo` 不一致 | 多源优先级 | 否 | `.../lscpu-proc-disagree/` | 明确 primary/fallback 策略 |
@@ -190,7 +190,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | sysfs 字段为空 | robust parser | 否 | `.../sysfs-empty-fields/` | 空字段不生成伪 vendor/product |
 | QEMU/VMware/VirtualBox | 虚拟设备标注/过滤 | 否 | `.../virtualization/qemu-vmware-virtualbox.txt` | 标注 virtual 或过滤策略稳定 |
 
-当前 fixtures 已包含 PCI/USB/蓝牙/打印机/电源/音频/输入/摄像头和 CPU 基础样本；CPU 已覆盖 Intel lscpu、AMD procfs、海光 procfs、兆芯 procfs、申威 procfs、LoongArch procfs/lscpu 等路径，仍需更多国产平台真机输出。证据：`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-amd-x86_64.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-hygon.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-zhaoxin.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-sunway.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-loongarch.txt`。
+当前 fixtures 已包含 PCI/USB/蓝牙/打印机/电源/音频/输入/摄像头和 CPU 基础样本；CPU 已覆盖 Intel lscpu/procfs、AMD procfs、海光 procfs、兆芯 procfs、飞腾 ARM64 procfs、鲲鹏 ARM64 procfs、麒麟 ARM64 procfs、申威 procfs、LoongArch procfs/lscpu 等路径，仍需更多国产平台真机输出、多源冲突输出和 SW64 变体。证据：`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-intel-x86_64.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-phytium-arm64.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-kunpeng-arm64.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-hisilicon-kirin.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-sunway.txt`，`qurbrix-hwinfo/crates/hw-testdata/fixtures/cpu/proc-cpuinfo-loongarch.txt`。
 
 ## 11. Recommended Implementation Plan
 

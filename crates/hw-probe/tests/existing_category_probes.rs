@@ -443,9 +443,13 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
 #[tokio::test]
 async fn cpu_probe_normalizes_vendor_from_proc_cpuinfo_samples() {
     for (path, expected_vendor) in [
+        ("cpu/proc-cpuinfo-intel-x86_64.txt", "Intel"),
         ("cpu/proc-cpuinfo-amd-x86_64.txt", "AMD"),
         ("cpu/proc-cpuinfo-hygon.txt", "Hygon"),
         ("cpu/proc-cpuinfo-zhaoxin.txt", "Zhaoxin"),
+        ("cpu/proc-cpuinfo-phytium-arm64.txt", "Phytium"),
+        ("cpu/proc-cpuinfo-kunpeng-arm64.txt", "HiSilicon"),
+        ("cpu/proc-cpuinfo-hisilicon-kirin.txt", "HiSilicon"),
         ("cpu/proc-cpuinfo-sunway.txt", "Sunway"),
     ] {
         let runner = FakeSourceRunner::new().with_file("/proc/cpuinfo", hw_testdata::fixture(path));

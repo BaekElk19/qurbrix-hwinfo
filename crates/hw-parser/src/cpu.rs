@@ -102,7 +102,13 @@ pub fn parse_proc_cpuinfo(input: &str) -> CpuRecord {
             "model name" | "cpu model" => {
                 assign_if_empty(&mut record.model_name, clean_value(value))
             }
-            "Hardware" => assign_if_empty(&mut record.model_name, clean_value(value)),
+            "Hardware" => {
+                if let Some(value) = clean_value(value) {
+                    if should_use_hardware_model(record.model_name.as_deref()) {
+                        record.model_name = Some(value);
+                    }
+                }
+            }
             "Processor" => {
                 assign_if_empty(&mut record.model_name, clean_value(value));
                 assign_if_empty(&mut record.architecture, architecture_from_processor(value));
@@ -408,6 +414,13 @@ fn architecture_from_processor(value: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+fn should_use_hardware_model(current: Option<&str>) -> bool {
+    current.is_none_or(|value| {
+        let value = value.trim().to_ascii_lowercase();
+        value.is_empty() || value.contains(" processor rev ")
+    })
 }
 
 fn clean_value(value: &str) -> Option<String> {

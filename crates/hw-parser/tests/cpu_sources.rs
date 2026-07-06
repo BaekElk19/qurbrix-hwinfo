@@ -74,31 +74,69 @@ fn parse_proc_cpuinfo_reads_loongarch_cpu_model() {
 
 #[test]
 fn parse_proc_cpuinfo_covers_domestic_and_x86_vendor_samples() {
-    for (path, expected_name, expected_vendor, expected_threads) in [
+    for (path, expected_name, expected_vendor, expected_threads, expected_architecture) in [
+        (
+            "cpu/proc-cpuinfo-intel-x86_64.txt",
+            "Intel(R) Core(TM) i7-1185G7 @ 3.00GHz",
+            "Intel",
+            2,
+            None,
+        ),
         (
             "cpu/proc-cpuinfo-amd-x86_64.txt",
             "AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics",
             "AMD",
             2,
+            None,
         ),
         (
             "cpu/proc-cpuinfo-hygon.txt",
             "Hygon C86 7285 32-core Processor",
             "Hygon",
             2,
+            None,
         ),
         (
             "cpu/proc-cpuinfo-zhaoxin.txt",
             "ZHAOXIN KaiXian KX-U6780A@2.7GHz",
             "Zhaoxin",
             2,
+            None,
         ),
-        ("cpu/proc-cpuinfo-sunway.txt", "Sunway SW1621", "Sunway", 2),
+        (
+            "cpu/proc-cpuinfo-phytium-arm64.txt",
+            "Phytium D2000/8",
+            "Phytium",
+            2,
+            Some("aarch64"),
+        ),
+        (
+            "cpu/proc-cpuinfo-kunpeng-arm64.txt",
+            "Kunpeng 920",
+            "HiSilicon",
+            2,
+            Some("aarch64"),
+        ),
+        (
+            "cpu/proc-cpuinfo-hisilicon-kirin.txt",
+            "HUAWEI Kirin 9006C",
+            "HiSilicon",
+            2,
+            Some("aarch64"),
+        ),
+        (
+            "cpu/proc-cpuinfo-sunway.txt",
+            "Sunway SW1621",
+            "Sunway",
+            2,
+            None,
+        ),
     ] {
         let cpu = parse_proc_cpuinfo(&fixture(path));
 
         assert_eq!(cpu.model_name.as_deref(), Some(expected_name), "{path}");
         assert_eq!(cpu.threads, Some(expected_threads), "{path}");
+        assert_eq!(cpu.architecture.as_deref(), expected_architecture, "{path}");
         assert_eq!(
             cpu.model_name
                 .as_deref()

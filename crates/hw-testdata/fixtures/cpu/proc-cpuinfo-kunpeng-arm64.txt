@@ -1,0 +1,22 @@
+Processor	: AArch64 Processor rev 1 (aarch64)
+processor	: 0
+BogoMIPS	: 200.00
+Features	: fp asimd evtstrm crc32 cpuid
+CPU implementer	: 0x48
+CPU architecture: 8
+CPU variant	: 0x0
+CPU part	: 0xd01
+CPU revision	: 0
+cpu MHz		: 2600.000
+
+processor	: 1
+BogoMIPS	: 200.00
+Features	: fp asimd evtstrm crc32 cpuid
+CPU implementer	: 0x48
+CPU architecture: 8
+CPU variant	: 0x0
+CPU part	: 0xd01
+CPU revision	: 0
+cpu MHz		: 2600.000
+
+Hardware	: Kunpeng 920
