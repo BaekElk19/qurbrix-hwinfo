@@ -392,11 +392,13 @@ async fn bluetooth_probe_uses_sysfs_when_hciconfig_is_missing() {
             vec![PathBuf::from("/sys/class/bluetooth/hci0/rfkill0")],
         )
         .with_file("/sys/class/bluetooth/hci0/rfkill0/name", "hci0\n")
-        .with_file("/sys/class/bluetooth/hci0/rfkill0/state", "1\n");
+        .with_file("/sys/class/bluetooth/hci0/rfkill0/state", "1\n")
+        .with_file("/sys/class/bluetooth/hci0/address", "AA:BB:CC:DD:EE:FF\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = BluetoothProbe.probe(&ctx).await;
 
     assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "bluetooth:AA:BB:CC:DD:EE:FF");
     assert_eq!(result.devices[0].kind, DeviceKind::Bluetooth);
     assert_eq!(result.devices[0].name, "hci0");
     assert_eq!(result.devices[0].sources.len(), 1);
@@ -410,6 +412,7 @@ async fn bluetooth_probe_uses_sysfs_when_hciconfig_is_missing() {
     let DeviceProperties::Bluetooth(info) = &result.devices[0].properties else {
         panic!("expected bluetooth properties");
     };
+    assert_eq!(info.address.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
     assert_eq!(info.controller_name.as_deref(), Some("hci0"));
     assert_eq!(info.powered, Some(true));
     assert_eq!(info.discoverable, None);

@@ -118,15 +118,17 @@ async fn probe_sysfs_bluetooth(ctx: &ProbeContext<'_>) -> Vec<Device> {
                 .and_then(|value| parse_rfkill_unblocked(&value)),
             None => None,
         };
+        let address = read_sysfs_value(ctx, &path, "address").await;
         let controller_name = rfkill_name.unwrap_or(hci_name.clone());
+        let id_value = address.as_deref().unwrap_or(&hci_name);
 
         devices.push(
             Device::new(
-                device_id::other("bluetooth", &hci_name),
+                device_id::other("bluetooth", id_value),
                 DeviceKind::Bluetooth,
                 controller_name.clone(),
                 DeviceProperties::Bluetooth(BluetoothInfo {
-                    address: None,
+                    address,
                     controller_name: Some(controller_name),
                     powered,
                     discoverable: None,
