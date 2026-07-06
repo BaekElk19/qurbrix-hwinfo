@@ -7,7 +7,9 @@ use hw_model::{
     device_id, AudioInfo, BusInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
     SourceEvidence, SourceKind, SourceStatus,
 };
-use hw_parser::{parse_lshw_multimedia, parse_proc_asound_cards, LshwMultimediaRecord};
+use hw_parser::{
+    parse_lshw_multimedia, parse_pactl_card_profiles, parse_proc_asound_cards, LshwMultimediaRecord,
+};
 use hw_source::CommandSpec;
 use std::{collections::HashMap, path::Path};
 
@@ -31,9 +33,11 @@ impl Probe for AudioProbe {
             return fallback;
         }
         let lshw = audio_lshw_records(ctx).await;
+        let profiles = audio_profile_records(ctx).await;
         let mut devices = Vec::new();
         for card in parse_proc_asound_cards(&result.stdout) {
             let enrichment = audio_enrichment(ctx, card.index).await;
+            let card_profiles = profiles.for_card(card.index);
             let device = Device::new(
                 device_id::other("audio:card", &card.index.to_string()),
                 DeviceKind::Audio,
@@ -45,6 +49,7 @@ impl Probe for AudioProbe {
                     card_name: card.name,
                     codec: enrichment.codec.clone(),
                     subsystem: enrichment.subsystem.clone(),
+                    profiles: card_profiles.clone(),
                     ..Default::default()
                 }),
             )
@@ -55,6 +60,7 @@ impl Probe for AudioProbe {
                 summary: None,
             });
             let device = apply_audio_enrichment(device, enrichment);
+            let device = apply_audio_profile_source(device, &profiles, &card_profiles);
             devices.push(apply_audio_lshw_enrichment(device, &lshw));
         }
         ProbeResult::with_devices(devices)
@@ -65,6 +71,18 @@ impl Probe for AudioProbe {
 struct AudioLshwRecords {
     source: String,
     by_pci_address: HashMap<String, LshwMultimediaRecord>,
+}
+
+#[derive(Default)]
+struct AudioProfileRecords {
+    source: String,
+    by_card_index: HashMap<u32, Vec<String>>,
+}
+
+impl AudioProfileRecords {
+    fn for_card(&self, index: u32) -> Vec<String> {
+        self.by_card_index.get(&index).cloned().unwrap_or_default()
+    }
 }
 
 struct AudioEnrichment {
@@ -81,6 +99,7 @@ struct AudioEnrichment {
 
 async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let lshw = audio_lshw_records(ctx).await;
+    let profiles = audio_profile_records(ctx).await;
     let mut devices = Vec::new();
     let mut cards = ctx
         .runner
@@ -103,6 +122,7 @@ async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
             .await
             .unwrap_or_else(|| format!("Audio card {index}"));
         let enrichment = audio_enrichment(ctx, index).await;
+        let card_profiles = profiles.for_card(index);
         let device = Device::new(
             device_id::other("audio:card", &index.to_string()),
             DeviceKind::Audio,
@@ -112,6 +132,7 @@ async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
                 card_name: Some(card_name),
                 codec: enrichment.codec.clone(),
                 subsystem: enrichment.subsystem.clone(),
+                profiles: card_profiles.clone(),
                 ..Default::default()
             }),
         )
@@ -122,6 +143,7 @@ async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
             summary: None,
         });
         let device = apply_audio_enrichment(device, enrichment);
+        let device = apply_audio_profile_source(device, &profiles, &card_profiles);
         devices.push(apply_audio_lshw_enrichment(device, &lshw));
     }
 
@@ -147,6 +169,26 @@ async fn audio_lshw_records(ctx: &ProbeContext<'_>) -> AudioLshwRecords {
     AudioLshwRecords {
         source: result.source,
         by_pci_address,
+    }
+}
+
+async fn audio_profile_records(ctx: &ProbeContext<'_>) -> AudioProfileRecords {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("pactl", ["list", "cards"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return AudioProfileRecords::default();
+    }
+
+    let by_card_index = parse_pactl_card_profiles(&result.stdout)
+        .into_iter()
+        .filter_map(|record| Some((record.card_index?, record.profiles)))
+        .filter(|(_, profiles)| !profiles.is_empty())
+        .collect();
+    AudioProfileRecords {
+        source: result.source,
+        by_card_index,
     }
 }
 
@@ -251,6 +293,29 @@ fn apply_audio_enrichment(mut device: Device, enrichment: AudioEnrichment) -> De
         });
     }
 
+    device
+}
+
+fn apply_audio_profile_source(
+    mut device: Device,
+    profiles: &AudioProfileRecords,
+    card_profiles: &[String],
+) -> Device {
+    if card_profiles.is_empty()
+        || profiles.source.is_empty()
+        || device
+            .sources
+            .iter()
+            .any(|source| source.source == profiles.source)
+    {
+        return device;
+    }
+    device = device.with_source(SourceEvidence {
+        source: profiles.source.clone(),
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    });
     device
 }
 

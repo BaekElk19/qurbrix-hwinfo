@@ -42,6 +42,28 @@ fn parses_lshw_multimedia_audio_devices() {
 }
 
 #[test]
+fn parses_pactl_card_profiles() {
+    let records = parse_pactl_card_profiles(
+        "Card #0\n\
+         \tName: alsa_card.pci-0000_00_1f.3\n\
+         \tProperties:\n\
+         \t\talsa.card = \"0\"\n\
+         \tProfiles:\n\
+         \t\toutput:analog-stereo: Analog Stereo Output (sinks: 1, sources: 0, priority: 6500, available: yes)\n\
+         \t\toutput:hdmi-stereo: Digital Stereo (HDMI) Output (sinks: 1, sources: 0, priority: 5900, available: no)\n\
+         \t\toff: Off (sinks: 0, sources: 0, priority: 0, available: yes)\n\
+         \tActive Profile: output:analog-stereo\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].card_index, Some(0));
+    assert_eq!(
+        records[0].profiles,
+        vec!["output:analog-stereo", "output:hdmi-stereo", "off"]
+    );
+}
+
+#[test]
 fn parses_upower_battery() {
     let devices = parse_upower_dump(&hw_testdata::fixture("power/upower-dump.txt"));
     assert_eq!(devices.len(), 1);

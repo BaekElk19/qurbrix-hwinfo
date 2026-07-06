@@ -141,6 +141,38 @@ async fn audio_probe_enriches_human_readable_lshw_fields() {
 }
 
 #[tokio::test]
+async fn audio_probe_reads_pactl_card_profiles() {
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/asound/cards",
+            " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xa1230000 irq 145\n",
+        )
+        .with_command(
+            "pactl",
+            ["list", "cards"],
+            "Card #0\n\
+             \tName: alsa_card.pci-0000_00_1f.3\n\
+             \tProperties:\n\
+             \t\talsa.card = \"0\"\n\
+             \tProfiles:\n\
+             \t\toutput:analog-stereo: Analog Stereo Output (sinks: 1, sources: 0, priority: 6500, available: yes)\n\
+             \t\toff: Off (sinks: 0, sources: 0, priority: 0, available: yes)\n\
+             \tActive Profile: output:analog-stereo\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = AudioProbe.probe(&ctx).await;
+
+    let DeviceProperties::Audio(info) = &result.devices[0].properties else {
+        panic!("expected audio properties");
+    };
+    assert_eq!(info.profiles, vec!["output:analog-stereo", "off"]);
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "pactl list cards"));
+}
+
+#[tokio::test]
 async fn audio_probe_uses_sysfs_when_proc_asound_cards_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(

@@ -17,6 +17,12 @@ pub struct LshwMultimediaRecord {
     pub driver: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PactlCardProfileRecord {
+    pub card_index: Option<u32>,
+    pub profiles: Vec<String>,
+}
+
 pub fn parse_proc_asound_cards(input: &str) -> Vec<AsoundCardRecord> {
     let re = Regex::new(r"^\s*(\d+)\s+\[(.*?)\s*\]:\s*(.*?)\s+-\s+(.*)$").unwrap();
     let mut cards = Vec::new();
@@ -68,6 +74,58 @@ pub fn parse_lshw_multimedia(input: &str) -> Vec<LshwMultimediaRecord> {
 
     push_lshw_multimedia_record(&mut records, current.take());
     records
+}
+
+pub fn parse_pactl_card_profiles(input: &str) -> Vec<PactlCardProfileRecord> {
+    let mut records = Vec::new();
+    let mut current: Option<PactlCardProfileRecord> = None;
+    let mut in_profiles = false;
+
+    for line in input.lines().chain(std::iter::once("Card #")) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Card #") {
+            push_pactl_card_profile_record(&mut records, current.take());
+            current = Some(PactlCardProfileRecord::default());
+            in_profiles = false;
+            continue;
+        }
+
+        let Some(record) = current.as_mut() else {
+            continue;
+        };
+        if let Some(value) = trimmed.strip_prefix("alsa.card = ") {
+            record.card_index = value.trim_matches('"').parse().ok();
+            continue;
+        }
+        if trimmed == "Profiles:" {
+            in_profiles = true;
+            continue;
+        }
+        if in_profiles {
+            if trimmed.ends_with(':') || trimmed.starts_with("Active Profile:") {
+                in_profiles = false;
+                continue;
+            }
+            if let Some((profile, _)) = trimmed.split_once(": ") {
+                if !profile.is_empty() && !record.profiles.iter().any(|item| item == profile) {
+                    record.profiles.push(profile.to_string());
+                }
+            }
+        }
+    }
+
+    records
+}
+
+fn push_pactl_card_profile_record(
+    records: &mut Vec<PactlCardProfileRecord>,
+    record: Option<PactlCardProfileRecord>,
+) {
+    if let Some(record) = record {
+        if record.card_index.is_some() || !record.profiles.is_empty() {
+            records.push(record);
+        }
+    }
 }
 
 fn push_lshw_multimedia_record(
