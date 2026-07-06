@@ -24,7 +24,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 - Memory probing falls back to `/proc/meminfo` total memory when `dmidecode -t memory` cannot run.
 - Battery probing falls back to `/sys/class/power_supply/BAT*` when `upower --dump` cannot run and normalizes the common `LGC` battery vendor alias to `LG Chem`.
 - Network probing uses `ip -j link` plus optional `ip -j addr`, enriches interfaces from `/sys/class/net/*` with speed, duplex, wireless marking, and kernel driver, and falls back to sysfs interfaces when `ip -j link` cannot run.
-- Storage probing requests WWN/firmware revision from `lsblk`, enriches kernel driver data from `/sys/block/*/device/uevent`, and falls back to `/sys/block/*` when `lsblk` cannot run.
+- Storage probing requests WWN/firmware revision from `lsblk`, enriches kernel driver data from `/sys/block/*/device/uevent`, optionally enriches SMART health and temperature from `smartctl -a -j`, and falls back to `/sys/block/*` when `lsblk` cannot run.
 - USB probing enriches `lsusb` records from `/sys/bus/usb/devices/*` when bus/device numbers match, and falls back to sysfs devices when `lsusb` cannot run.
 - Bluetooth probing falls back to `/sys/class/bluetooth/hci*` when `hciconfig -a` cannot run, preserving controller address and rfkill power state when available, and warns when successful `hciconfig` output contains no parsable controllers.
 - Camera probing falls back to `/sys/class/video4linux/video*` when `v4l2-ctl --list-devices` cannot run and enriches cameras with video4linux sysfs driver and USB identity data when available.
@@ -51,6 +51,7 @@ Confirmed defects fixed during this audit:
 - Network probing now preserves IPv4/IPv6 addresses from `ip -j addr` when available; `/sys/class/net` preserves interface name, MAC, operstate, speed, duplex, wireless capability, and kernel driver, including when `ip -j link` cannot run.
 - Successful `lsblk` storage probing now preserves WWN and firmware revision and uses WWN for stable storage IDs when available.
 - `/sys/block` storage enrichment now preserves kernel driver data when available; fallback also preserves storage node, vendor, model, serial identity, WWN, firmware revision, size, and rotational media type when `lsblk` cannot run.
+- Storage probing now preserves SMART health and temperature from `smartctl -a -j` when available, including valid JSON emitted with a non-zero smartctl status.
 - `/sys/bus/usb/devices` enrichment now preserves USB class/subclass/protocol, manufacturer, serial, and speed on matched `lsusb` records; fallback preserves bus/device numbers, VID/PID, device class/subclass/protocol, manufacturer, product, serial, and speed when `lsusb` cannot run.
 - `/sys/class/bluetooth` fallback now preserves basic Bluetooth controller presence, controller address, and rfkill unblock/block state when `hciconfig -a` cannot run.
 - Empty successful `hciconfig -a` output now produces a `source_empty` warning instead of silently returning no Bluetooth devices.
@@ -76,7 +77,7 @@ Confirmed defects fixed during this audit:
 | GPU | `lspci -nn -k` display/VGA/3D records, driver/modules, text and numeric vendor normalization; falls back to display-class `/sys/bus/pci/devices/*` records with kernel driver data when lspci cannot run. | PCI GPU parsing and domestic GPU aliases from Kylin; driver extraction from lspci; Linux sysfs PCI display-class fallback with lightweight driver preservation. | No `lshw -C display`, `glxinfo -B`, `/sys/class/drm/card*/device`, dmesg/nvidia memory enrichment; sysfs fallback lacks human-readable device names and kernel modules. | P2/P3 |
 | Memory | `dmidecode -t memory`, DIMM size/vendor/type/speed/slot/serial/part, filters `No Module Installed`; falls back to `/proc/meminfo` aggregate total when DMI is unavailable/permission denied. | Main DMI memory path from both references plus procfs total-memory fallback. | No `lshw_memory` or sysfs DIMM-level fallback when DMI is unavailable/permission denied. | P2 |
 | BIOS / motherboard / DMI | `dmidecode -t 0,1,2,3`, with `/sys/class/dmi/id` fallback for BIOS vendor/version/date and baseboard manufacturer/product/serial when dmidecode cannot run; empty dmidecode output still produces `source_empty` rather than generic devices. | Core DMI BIOS/baseboard parsing, sysfs DMI fallback, and Deepin-style skip-empty behavior. | Chassis/system/language/memory-array data not modeled. | P2 |
-| Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV`, disk-only filtering, parse failure warning, WWN-backed stable IDs, firmware revision; enriches kernel driver from `/sys/block/*/device/uevent`; falls back to `/sys/block/*` for node/vendor/model/serial/WWN/firmware/size/rotational media type and driver when `lsblk` cannot run. | Basic lsblk disk enumeration plus Linux sysfs disk fallback with WWN/firmware and lightweight driver preservation. | No lshw/hwinfo/hdparm/smartctl fusion; no SMART/temp/controller enrichment. | P2 |
+| Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV`, disk-only filtering, parse failure warning, WWN-backed stable IDs, firmware revision; enriches kernel driver from `/sys/block/*/device/uevent`; optionally reads `smartctl -a -j <device>` for SMART health and temperature, including non-zero smartctl JSON; falls back to `/sys/block/*` for node/vendor/model/serial/WWN/firmware/size/rotational media type and driver when `lsblk` cannot run. | Basic lsblk disk enumeration, Linux sysfs disk fallback with WWN/firmware and lightweight driver preservation, plus smartctl SMART/temp enrichment with non-zero-status JSON handling. | No lshw/hwinfo/hdparm fusion; no controller enrichment. | P2 |
 | Network | `ip -j link`, interface/MAC/operstate, optional `ip -j addr` IPv4/IPv6 enrichment; filters loopback/common virtual interfaces; malformed JSON produces warning; enriches interfaces from `/sys/class/net/*` with speed, duplex, wireless capability, and `DRIVER=` from uevent; falls back to sysfs interfaces when `ip` cannot run. | Basic network interface enumeration, IP address enrichment, Kylin-style avoidance of non-physical interfaces, Linux sysfs fallback, and lightweight sysfs driver/wireless enrichment. | No lshw/lspci/NM DBus fallback; no explicit ethernet/wireless type field beyond `wireless` capability. | P1/P2 |
 | Audio | `/proc/asound/cards`, card index/name; enriches from `/proc/asound/card*/codec#*` for codec and `/sys/class/sound/card*/device` for driver/subsystem IDs; falls back to `/sys/class/sound/card*` for ALSA card index/name plus available enrichment when proc asound cards is unavailable. | Deepin/Kylin use `/proc/asound` and multimedia sources; base source, Linux sysfs card fallback, lightweight codec, driver, and subsystem enrichment absorbed. | No lshw/hwinfo/PCI fusion; no vendor normalization; limited profile data. | P2 |
 | Bluetooth | `hciconfig -a`, optional `bluetoothctl paired-devices`; paired source failures warn; empty controller parses emit `source_empty`; falls back to `/sys/class/bluetooth/hci*` plus controller address and rfkill name/state when `hciconfig` cannot run. | Deepin `hciconfig` path and lightweight paired-device enrichment, plus Linux sysfs controller address/rfkill fallback and skip-empty warning behavior. | No lshw/hwinfo/BlueZ DBus fallback; sysfs fallback cannot recover paired devices. | P1/P2 |
@@ -96,6 +97,7 @@ Absorbed and preserved:
 - CPU treats `lscpu`, `lshw`, and `dmidecode` as optional and emits warnings for failed sources while still producing a CPU when any useful source exists.
 - Monitor treats `xrandr --verbose` and sysfs EDID as optional and continues after bad EDID with `edid_parse_failed` warnings.
 - USB preserves the missing/failed `lsusb` warning while still emitting devices from `/sys/bus/usb/devices/*` when usable sysfs device directories exist.
+- Storage treats `smartctl -a -j` as optional enrichment and preserves SMART data from parseable stdout even when smartctl exits non-zero.
 - Audio preserves the missing/failed `/proc/asound/cards` warning while still emitting ALSA card devices from `/sys/class/sound/card*` when present, with sysfs driver/subsystem enrichment where available.
 - Bluetooth preserves the missing/failed `hciconfig -a` warning while still emitting controllers from `/sys/class/bluetooth/hci*` when usable sysfs controller directories exist, and emits `source_empty` when successful `hciconfig` output parses no controllers.
 - Input preserves the missing/failed `/proc/bus/input/devices` warning while still emitting basic event devices from `/sys/class/input/event*` when present, and emits `source_empty` plus sysfs fallback when proc input parsing yields no devices.
@@ -108,7 +110,7 @@ Absorbed and preserved:
 
 Still weak:
 
-- Input, printer, and CD-ROM still have limited fallback/enrichment coverage compared with the reference projects; audio still lacks lshw/hwinfo/PCI fusion; camera still lacks lshw/hwinfo and vendor/serial enrichment.
+- Input, printer, and CD-ROM still have limited fallback/enrichment coverage compared with the reference projects; audio still lacks lshw/hwinfo/PCI fusion; camera still lacks lshw/hwinfo and speed/profile enrichment.
 
 ## Deferred Items
 
@@ -116,7 +118,7 @@ These are not fully implemented yet and should remain tracked:
 
 - P1: continue adding warning-on-empty-parse for additional parsers where command success does not mean usable data.
 - P1b: decide whether parsed CPU family/model/stepping/bogomips/virtualization should be exposed in `CpuInfo` or kept parser-internal.
-- P2: add network type/DBus/lshw/lspci, storage SMART/temp/controller, USB verbose descriptors, camera lshw/hwinfo enrichment, audio lshw/hwinfo/PCI fusion, and Bluetooth lshw/DBus enrichments.
+- P2: add network type/DBus/lshw/lspci, storage controller/lshw/hdparm enrichment, USB verbose descriptors, camera lshw/hwinfo enrichment, audio lshw/hwinfo/PCI fusion, and Bluetooth lshw/DBus enrichments.
 - P3: optional heavy display/GPU sources such as `glxinfo`, `hwinfo`, and vendor-specific tools.
 
 ## Evidence Pointers

@@ -11,8 +11,8 @@ use hw_parser::{
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
     parse_gpu_lspci, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
     parse_lscpu, parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware,
-    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_speed_mtps, parse_xrandr_query,
-    parse_xrandr_verbose, DmiBiosBoardRecord,
+    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps,
+    parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -579,7 +579,8 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         device.vendor = vendor;
         device.model = model;
         device.serial = serial;
-        devices.push(apply_storage_driver(ctx, device, name).await);
+        let device = apply_storage_driver(ctx, device, name).await;
+        devices.push(apply_storage_smartctl(ctx, device).await);
     }
 
     devices
@@ -615,6 +616,49 @@ async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str
         });
     }
     device
+}
+
+async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> Device {
+    let Some(node) = (match &device.properties {
+        DeviceProperties::Storage(storage) => storage.device_node.clone(),
+        _ => None,
+    }) else {
+        return device;
+    };
+
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("smartctl", ["-a".to_string(), "-j".to_string(), node]),
+            ctx.timeout,
+        )
+        .await;
+    let source_status = if result.is_success() {
+        SourceStatus::Success
+    } else {
+        SourceStatus::Failed
+    };
+    if !result.is_success() && result.stdout.trim().is_empty() {
+        return device;
+    }
+
+    let Ok(smart) = parse_smartctl_json(&result.stdout) else {
+        return device;
+    };
+    if smart.smart_status.is_none() && smart.temperature_celsius.is_none() {
+        return device;
+    }
+    if let DeviceProperties::Storage(storage) = &mut device.properties {
+        storage.smart_status = storage.smart_status.take().or(smart.smart_status);
+        storage.temperature_celsius = storage.temperature_celsius.or(smart.temperature_celsius);
+    }
+
+    device.with_source(SourceEvidence {
+        source: result.source,
+        kind: SourceKind::Command,
+        status: source_status,
+        summary: None,
+    })
 }
 
 fn is_ignored_block_device(name: &str) -> bool {
@@ -715,7 +759,8 @@ impl Probe for StorageProbe {
             });
             device.model = dev.model;
             device.serial = dev.serial;
-            devices.push(apply_storage_driver(ctx, device, &name).await);
+            let device = apply_storage_driver(ctx, device, &name).await;
+            devices.push(apply_storage_smartctl(ctx, device).await);
         }
         ProbeResult::with_devices(devices)
     }

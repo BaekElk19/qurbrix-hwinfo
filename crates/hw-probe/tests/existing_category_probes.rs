@@ -596,6 +596,64 @@ async fn storage_probe_preserves_wwn_and_firmware_from_lsblk_success_path() {
 }
 
 #[tokio::test]
+async fn storage_probe_reads_smart_health_and_temperature() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_command(
+            "smartctl",
+            ["-a", "-j", "/dev/sda"],
+            r#"{"smart_status":{"passed":true},"temperature":{"current":37}}"#,
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.smart_status.as_deref(), Some("passed"));
+    assert_eq!(storage.temperature_celsius, Some(37.0));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command
+            && source.source == "smartctl -a -j /dev/sda"));
+}
+
+#[tokio::test]
+async fn storage_probe_reads_smart_health_from_nonzero_smartctl_json() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_command_status(
+            "smartctl",
+            ["-a", "-j", "/dev/sda"],
+            r#"{"smart_status":{"passed":false},"temperature":{"current":44}}"#,
+            8,
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.smart_status.as_deref(), Some("failed"));
+    assert_eq!(storage.temperature_celsius, Some(44.0));
+    let smart_source = result.devices[0]
+        .sources
+        .iter()
+        .find(|source| source.source == "smartctl -a -j /dev/sda")
+        .expect("expected smartctl source evidence");
+    assert_eq!(smart_source.status, SourceStatus::Failed);
+}
+
+#[tokio::test]
 async fn storage_probe_reads_driver_from_sysfs_for_lsblk_disk() {
     let runner = FakeSourceRunner::new()
         .with_command(

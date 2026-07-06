@@ -1,4 +1,4 @@
-use hw_parser::{parse_lspci_nn_k, parse_lsusb};
+use hw_parser::{parse_lspci_nn_k, parse_lsusb, parse_smartctl_json};
 
 #[test]
 fn parses_lspci_driver_and_modules() {
@@ -44,4 +44,18 @@ fn parsers_ignore_empty_and_malformed_lines() {
     assert!(parse_lspci_nn_k("not pci\n\tKernel driver in use: nope").is_empty());
     assert!(parse_lsusb("").is_empty());
     assert!(parse_lsusb("Bus xxx Device: malformed").is_empty());
+}
+
+#[test]
+fn parses_smartctl_health_and_temperature() {
+    let info = parse_smartctl_json(
+        r#"{
+          "smart_status": {"passed": true},
+          "temperature": {"current": 37}
+        }"#,
+    )
+    .expect("expected smartctl JSON to parse");
+
+    assert_eq!(info.smart_status.as_deref(), Some("passed"));
+    assert_eq!(info.temperature_celsius, Some(37.0));
 }

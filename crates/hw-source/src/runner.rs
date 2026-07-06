@@ -151,6 +151,27 @@ impl FakeSourceRunner {
         self
     }
 
+    pub fn with_command_status(
+        mut self,
+        program: impl Into<String>,
+        args: impl IntoIterator<Item = impl Into<String>>,
+        stdout: impl Into<String>,
+        exit_status: i32,
+    ) -> Self {
+        let spec = CommandSpec::new(program, args);
+        self.commands.insert(
+            spec.clone(),
+            SourceResult {
+                source: spec.display_name(),
+                stdout: stdout.into(),
+                stderr: String::new(),
+                exit_status: Some(exit_status),
+                error_kind: (exit_status != 0).then_some(SourceErrorKind::Failed),
+            },
+        );
+        self
+    }
+
     pub fn with_file(mut self, path: impl Into<PathBuf>, contents: impl Into<String>) -> Self {
         let path = path.into();
         self.files.insert(

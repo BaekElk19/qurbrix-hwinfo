@@ -24,6 +24,27 @@ async fn fake_runner_returns_registered_command_output() {
 }
 
 #[tokio::test]
+async fn fake_runner_returns_registered_command_with_status() {
+    let runner = FakeSourceRunner::new().with_command_status(
+        "smartctl",
+        ["-a", "-j", "/dev/sda"],
+        r#"{"smart_status":{"passed":false}}"#,
+        8,
+    );
+
+    let result = runner
+        .run_command(
+            &CommandSpec::new("smartctl", ["-a", "-j", "/dev/sda"]),
+            Duration::from_secs(1),
+        )
+        .await;
+
+    assert_eq!(result.exit_status, Some(8));
+    assert_eq!(result.error_kind, Some(SourceErrorKind::Failed));
+    assert!(result.stdout.contains("smart_status"));
+}
+
+#[tokio::test]
 async fn fake_runner_reports_missing_file() {
     let runner = FakeSourceRunner::new();
     let result = runner.read_file(Path::new("/sys/missing")).await;
