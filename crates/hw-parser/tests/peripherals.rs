@@ -129,6 +129,29 @@ fn parses_bluetooth_and_video() {
 }
 
 #[test]
+fn parses_lshw_bluetooth_communication_records() {
+    let records = parse_lshw_communication(
+        "  *-communication\n\
+              description: Bluetooth wireless interface\n\
+              product: Bluetooth 9460/9560 Jefferson Peak (JfP)\n\
+              vendor: Intel Corporation\n\
+              logical name: hci0\n\
+              bus info: usb@1:4\n\
+              configuration: driver=btusb maxpower=100mA speed=12Mbit/s\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].logical_name.as_deref(), Some("hci0"));
+    assert_eq!(
+        records[0].product.as_deref(),
+        Some("Bluetooth 9460/9560 Jefferson Peak (JfP)")
+    );
+    assert_eq!(records[0].vendor.as_deref(), Some("Intel Corporation"));
+    assert_eq!(records[0].bus_info.as_deref(), Some("usb@1:4"));
+    assert_eq!(records[0].driver.as_deref(), Some("btusb"));
+}
+
+#[test]
 fn parses_v4l2_format_capabilities() {
     let capabilities = parse_v4l2_list_formats_ext(
         "ioctl: VIDIOC_ENUM_FMT\n\

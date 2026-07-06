@@ -565,6 +565,46 @@ async fn bluetooth_probe_warns_when_hciconfig_parses_no_controllers() {
 }
 
 #[tokio::test]
+async fn bluetooth_probe_enriches_from_lshw_communication_identity() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "hciconfig",
+            ["-a"],
+            "hci0:   Type: Primary  Bus: USB\n        BD Address: AA:BB:CC:DD:EE:FF\n        UP RUNNING PSCAN\n",
+        )
+        .with_command("bluetoothctl", ["paired-devices"], "")
+        .with_command(
+            "lshw",
+            ["-class", "communication"],
+            "  *-communication\n\
+                  description: Bluetooth wireless interface\n\
+                  product: Bluetooth 9460/9560 Jefferson Peak (JfP)\n\
+                  vendor: Intel Corporation\n\
+                  logical name: hci0\n\
+                  configuration: driver=btusb latency=0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BluetoothProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.vendor.as_deref(), Some("Intel Corporation"));
+    assert_eq!(
+        device.model.as_deref(),
+        Some("Bluetooth 9460/9560 Jefferson Peak (JfP)")
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("btusb")
+    );
+    assert!(device.sources.iter().any(|source| {
+        source.kind == SourceKind::Command && source.source == "lshw -class communication"
+    }));
+}
+
+#[tokio::test]
 async fn bluetooth_probe_uses_sysfs_when_hciconfig_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(

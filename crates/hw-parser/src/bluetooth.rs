@@ -15,6 +15,15 @@ pub struct BluetoothPairedDeviceRecord {
     pub name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LshwCommunicationRecord {
+    pub logical_name: Option<String>,
+    pub product: Option<String>,
+    pub vendor: Option<String>,
+    pub bus_info: Option<String>,
+    pub driver: Option<String>,
+}
+
 pub fn parse_hciconfig(input: &str) -> Vec<BluetoothControllerRecord> {
     let address_re = Regex::new(r"BD Address:\s*([0-9A-Fa-f:]{17})").unwrap();
     let name_re = Regex::new(r"Name:\s*'(.+)'").unwrap();
@@ -65,4 +74,76 @@ pub fn parse_bluetoothctl_paired_devices(input: &str) -> Vec<BluetoothPairedDevi
             })
         })
         .collect()
+}
+
+pub fn parse_lshw_communication(input: &str) -> Vec<LshwCommunicationRecord> {
+    let mut records = Vec::new();
+    let mut current: Option<LshwCommunicationRecord> = None;
+
+    for line in input.lines().chain(std::iter::once("")) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("*-communication") {
+            push_lshw_communication_record(&mut records, current.take());
+            current = Some(LshwCommunicationRecord::default());
+            continue;
+        }
+        if trimmed.starts_with("*-") {
+            push_lshw_communication_record(&mut records, current.take());
+            continue;
+        }
+
+        let Some(record) = current.as_mut() else {
+            continue;
+        };
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "logical name" => record.logical_name = clean_lshw_communication_value(value),
+            "product" => record.product = clean_lshw_communication_value(value),
+            "vendor" => record.vendor = clean_lshw_communication_value(value),
+            "bus info" => record.bus_info = clean_lshw_communication_value(value),
+            "configuration" => parse_lshw_communication_configuration(record, value),
+            _ => {}
+        }
+    }
+
+    push_lshw_communication_record(&mut records, current.take());
+    records
+}
+
+fn push_lshw_communication_record(
+    records: &mut Vec<LshwCommunicationRecord>,
+    record: Option<LshwCommunicationRecord>,
+) {
+    if let Some(record) = record {
+        if record.logical_name.is_some()
+            || record.product.is_some()
+            || record.vendor.is_some()
+            || record.bus_info.is_some()
+        {
+            records.push(record);
+        }
+    }
+}
+
+fn parse_lshw_communication_configuration(record: &mut LshwCommunicationRecord, value: &str) {
+    for part in value.split_whitespace() {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        if key == "driver" {
+            record.driver = clean_lshw_communication_value(value);
+        }
+    }
+}
+
+fn clean_lshw_communication_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("n/a") || value == "(none)" {
+        None
+    } else {
+        Some(value.to_string())
+    }
 }

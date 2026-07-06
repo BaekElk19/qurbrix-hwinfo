@@ -1,12 +1,15 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, BluetoothInfo, Device, DeviceKind, DeviceProperties, ScanWarning, SourceEvidence,
-    SourceKind, SourceStatus,
+    device_id, BluetoothInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
+    ScanWarning, SourceEvidence, SourceKind, SourceStatus,
 };
-use hw_parser::{parse_bluetoothctl_paired_devices, parse_hciconfig};
+use hw_parser::{
+    parse_bluetoothctl_paired_devices, parse_hciconfig, parse_lshw_communication,
+    LshwCommunicationRecord,
+};
 use hw_source::CommandSpec;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 pub struct BluetoothProbe;
 
@@ -30,6 +33,7 @@ impl Probe for BluetoothProbe {
             fallback.devices = probe_sysfs_bluetooth(ctx).await;
             return fallback;
         }
+        let lshw = bluetooth_lshw_records(ctx).await;
         let paired = ctx
             .runner
             .run_command(
@@ -62,7 +66,8 @@ impl Probe for BluetoothProbe {
             .enumerate()
             .map(|(idx, ctrl)| {
                 let id_value = ctrl.address.clone().unwrap_or_else(|| idx.to_string());
-                Device::new(
+                let logical_name = format!("hci{idx}");
+                let device = Device::new(
                     device_id::other("bluetooth", &id_value),
                     DeviceKind::Bluetooth,
                     ctrl.name
@@ -82,7 +87,8 @@ impl Probe for BluetoothProbe {
                     kind: SourceKind::Command,
                     status: SourceStatus::Success,
                     summary: None,
-                })
+                });
+                apply_bluetooth_lshw_enrichment(device, &lshw, &logical_name)
             })
             .collect();
         ProbeResult {
@@ -91,6 +97,79 @@ impl Probe for BluetoothProbe {
             consumed: Vec::new(),
         }
     }
+}
+
+#[derive(Default)]
+struct BluetoothLshwRecords {
+    source: String,
+    by_logical_name: HashMap<String, LshwCommunicationRecord>,
+}
+
+async fn bluetooth_lshw_records(ctx: &ProbeContext<'_>) -> BluetoothLshwRecords {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("lshw", ["-class", "communication"]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return BluetoothLshwRecords::default();
+    }
+
+    let by_logical_name = parse_lshw_communication(&result.stdout)
+        .into_iter()
+        .filter_map(|record| Some((record.logical_name.clone()?, record)))
+        .collect();
+    BluetoothLshwRecords {
+        source: result.source,
+        by_logical_name,
+    }
+}
+
+fn apply_bluetooth_lshw_enrichment(
+    mut device: Device,
+    lshw: &BluetoothLshwRecords,
+    logical_name: &str,
+) -> Device {
+    let Some(record) = lshw.by_logical_name.get(logical_name) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if device.vendor.is_none() && record.vendor.is_some() {
+        device.vendor = record.vendor.clone();
+        contributed = true;
+    }
+    if device.model.is_none() && record.product.is_some() {
+        device.model = record.product.clone();
+        contributed = true;
+    }
+    if device.driver.is_none() && record.driver.is_some() {
+        device = device.with_driver(DriverInfo {
+            name: record.driver.clone(),
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        contributed = true;
+    }
+    if contributed
+        && !lshw.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == lshw.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: lshw.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
 }
 
 async fn probe_sysfs_bluetooth(ctx: &ProbeContext<'_>) -> Vec<Device> {
