@@ -285,7 +285,13 @@ async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
             "/sys/bus/pci/devices/0000:00:02.0/subsystem_device",
             "0x087c\n",
         )
-        .with_file("/sys/bus/pci/devices/0000:00:02.0/uevent", "DRIVER=i915\n");
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/uevent", "DRIVER=i915\n")
+        .with_glob(
+            "/sys/bus/pci/devices/0000:00:02.0/driver/module/drivers/*",
+            vec![PathBuf::from(
+                "/sys/bus/pci/devices/0000:00:02.0/driver/module/drivers/pci:i915",
+            )],
+        );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = GpuProbe.probe(&ctx).await;
 
@@ -322,6 +328,13 @@ async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
             .as_ref()
             .map(|driver| driver.status),
         Some(DriverStatus::InUse)
+    );
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .map(|driver| driver.modules.as_slice()),
+        Some(&["i915".to_string()][..])
     );
     assert_eq!(result.devices[0].sources[0].kind, SourceKind::Sysfs);
     assert_eq!(

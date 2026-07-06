@@ -11,6 +11,7 @@ pub(crate) struct SysfsPciRecord {
     pub subsystem_vendor_id: Option<String>,
     pub subsystem_device_id: Option<String>,
     pub driver: Option<String>,
+    pub modules: Vec<String>,
 }
 
 pub(crate) async fn read_sysfs_pci_records(ctx: &ProbeContext<'_>) -> Vec<SysfsPciRecord> {
@@ -35,6 +36,7 @@ pub(crate) async fn read_sysfs_pci_records(ctx: &ProbeContext<'_>) -> Vec<SysfsP
             subsystem_vendor_id: read_pci_id(ctx, &path.join("subsystem_vendor")).await,
             subsystem_device_id: read_pci_id(ctx, &path.join("subsystem_device")).await,
             driver: read_uevent_value(ctx, &path.join("uevent"), "DRIVER").await,
+            modules: read_kernel_modules(ctx, &path).await,
         });
     }
 
@@ -55,6 +57,31 @@ fn is_pci_address(value: &str) -> bool {
 
 fn is_hex_len(value: &str, len: usize) -> bool {
     value.len() == len && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+async fn read_kernel_modules(ctx: &ProbeContext<'_>, path: &Path) -> Vec<String> {
+    let pattern = format!("{}/driver/module/drivers/*", path.display());
+    let mut modules: Vec<_> = ctx
+        .runner
+        .glob(&pattern)
+        .await
+        .paths
+        .into_iter()
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| {
+                    name.rsplit_once(':')
+                        .map(|(_, module)| module)
+                        .or(Some(name))
+                })
+                .filter(|module| !module.trim().is_empty())
+                .map(str::to_string)
+        })
+        .collect();
+    modules.sort();
+    modules.dedup();
+    modules
 }
 
 async fn read_pci_id(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {

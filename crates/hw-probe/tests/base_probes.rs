@@ -49,6 +49,12 @@ async fn pci_probe_uses_sysfs_when_lspci_is_missing() {
         .with_file(
             "/sys/bus/pci/devices/0000:00:1f.3/uevent",
             "DRIVER=snd_hda_intel\n",
+        )
+        .with_glob(
+            "/sys/bus/pci/devices/0000:00:1f.3/driver/module/drivers/*",
+            vec![PathBuf::from(
+                "/sys/bus/pci/devices/0000:00:1f.3/driver/module/drivers/pci:snd_hda_intel",
+            )],
         );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = PciProbe.probe(&ctx).await;
@@ -91,6 +97,13 @@ async fn pci_probe_uses_sysfs_when_lspci_is_missing() {
     assert_eq!(
         device.driver.as_ref().map(|driver| driver.status),
         Some(DriverStatus::InUse)
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .map(|driver| driver.modules.as_slice()),
+        Some(&["snd_hda_intel".to_string()][..])
     );
     assert_eq!(device.sources.len(), 1);
     assert_eq!(

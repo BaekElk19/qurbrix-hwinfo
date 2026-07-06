@@ -1161,6 +1161,7 @@ async fn gpu_devices_from_sysfs_pci(
             id: device_id::pci(&record.address),
         });
         let driver = record.driver.clone();
+        let modules = record.modules.clone();
         let mut device = Device::new(
             device_id::other("gpu:pci", &record.address),
             DeviceKind::Gpu,
@@ -1190,7 +1191,7 @@ async fn gpu_devices_from_sysfs_pci(
             device = device.with_driver(DriverInfo {
                 name: driver,
                 version: None,
-                modules: Vec::new(),
+                modules,
                 provider: None,
                 status: DriverStatus::InUse,
             });

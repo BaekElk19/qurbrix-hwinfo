@@ -90,6 +90,7 @@ async fn probe_sysfs_pci_devices(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let mut devices = Vec::new();
     for record in read_sysfs_pci_records(ctx).await {
         let driver = record.driver.clone();
+        let modules = record.modules.clone();
         let mut device = Device::new(
             device_id::pci(&record.address),
             DeviceKind::Pci,
@@ -124,7 +125,7 @@ async fn probe_sysfs_pci_devices(ctx: &ProbeContext<'_>) -> Vec<Device> {
             device = device.with_driver(DriverInfo {
                 name: driver,
                 version: None,
-                modules: Vec::new(),
+                modules,
                 provider: None,
                 status: DriverStatus::InUse,
             });
