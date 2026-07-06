@@ -183,6 +183,36 @@ fn parses_bluetooth_and_video() {
 }
 
 #[test]
+fn parses_lshw_video_camera_records() {
+    let records = parse_lshw_video(
+        "  *-multimedia\n\
+              description: Video\n\
+              product: Integrated Camera\n\
+              vendor: Chicony Electronics Co., Ltd\n\
+              logical name: /dev/video0\n\
+              bus info: usb@1:4\n\
+              configuration: driver=uvcvideo maxpower=500mA speed=480Mbit/s\n\
+         \n\
+         *-multimedia\n\
+              description: Audio device\n\
+              product: HDA Intel PCH\n\
+              vendor: Intel Corporation\n\
+              bus info: pci@0000:00:1f.3\n\
+              configuration: driver=snd_hda_intel\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].logical_name.as_deref(), Some("/dev/video0"));
+    assert_eq!(records[0].product.as_deref(), Some("Integrated Camera"));
+    assert_eq!(
+        records[0].vendor.as_deref(),
+        Some("Chicony Electronics Co., Ltd")
+    );
+    assert_eq!(records[0].bus_info.as_deref(), Some("usb@1:4"));
+    assert_eq!(records[0].driver.as_deref(), Some("uvcvideo"));
+}
+
+#[test]
 fn parses_lshw_bluetooth_communication_records() {
     let records = parse_lshw_communication(
         "  *-communication\n\

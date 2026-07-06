@@ -507,6 +507,48 @@ async fn camera_probe_reads_usb_identity_from_sysfs_for_v4l2_node() {
 }
 
 #[tokio::test]
+async fn camera_probe_enriches_human_readable_lshw_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "v4l2-ctl",
+            ["--list-devices"],
+            "Integrated Camera:\n\t/dev/video0\n",
+        )
+        .with_command(
+            "lshw",
+            ["-class", "multimedia"],
+            "  *-multimedia\n\
+                  description: Video\n\
+                  product: ThinkPad Integrated Camera\n\
+                  vendor: Chicony Electronics Co., Ltd\n\
+                  logical name: /dev/video0\n\
+                  bus info: usb@1:4\n\
+                  configuration: driver=uvcvideo maxpower=500mA speed=480Mbit/s\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CameraProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(
+        device.vendor.as_deref(),
+        Some("Chicony Electronics Co., Ltd")
+    );
+    assert_eq!(device.model.as_deref(), Some("ThinkPad Integrated Camera"));
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("uvcvideo")
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command
+            && source.source == "lshw -class multimedia"));
+}
+
+#[tokio::test]
 async fn camera_probe_reads_v4l2_format_capabilities() {
     let runner = FakeSourceRunner::new()
         .with_command(

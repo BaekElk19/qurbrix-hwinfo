@@ -4,9 +4,11 @@ use hw_model::{
     device_id, BusInfo, CameraInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
     SourceEvidence, SourceKind, SourceStatus,
 };
-use hw_parser::{parse_v4l2_list_devices, parse_v4l2_list_formats_ext};
+use hw_parser::{
+    parse_lshw_video, parse_v4l2_list_devices, parse_v4l2_list_formats_ext, LshwVideoRecord,
+};
 use hw_source::CommandSpec;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 pub struct CameraProbe;
 
@@ -34,6 +36,7 @@ impl Probe for CameraProbe {
             return fallback;
         }
         let mut devices = Vec::new();
+        let lshw = camera_lshw_records(ctx).await;
         for cam in parse_v4l2_list_devices(&result.stdout) {
             let Some(node) = cam.nodes.into_iter().next() else {
                 continue;
@@ -54,14 +57,22 @@ impl Probe for CameraProbe {
                 summary: None,
             });
             let device = apply_camera_sysfs_enrichment(ctx, device, &node).await;
+            let device = apply_camera_lshw_enrichment(device, &lshw, &node);
             devices.push(apply_camera_format_enrichment(ctx, device, &node).await);
         }
         ProbeResult::with_devices(devices)
     }
 }
 
+#[derive(Default)]
+struct CameraLshwRecords {
+    source: String,
+    by_video_node: HashMap<String, LshwVideoRecord>,
+}
+
 async fn probe_sysfs_cameras(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let mut devices = Vec::new();
+    let lshw = camera_lshw_records(ctx).await;
     let mut paths = ctx.runner.glob("/sys/class/video4linux/video*").await.paths;
     paths.sort();
 
@@ -90,10 +101,33 @@ async fn probe_sysfs_cameras(ctx: &ProbeContext<'_>) -> Vec<Device> {
             summary: None,
         });
         let device = apply_camera_sysfs_enrichment(ctx, device, &video_node).await;
+        let device = apply_camera_lshw_enrichment(device, &lshw, &video_node);
         devices.push(apply_camera_format_enrichment(ctx, device, &video_node).await);
     }
 
     devices
+}
+
+async fn camera_lshw_records(ctx: &ProbeContext<'_>) -> CameraLshwRecords {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("lshw", ["-class", "multimedia"]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return CameraLshwRecords::default();
+    }
+
+    let by_video_node = parse_lshw_video(&result.stdout)
+        .into_iter()
+        .filter_map(|record| Some((record.logical_name.clone()?, record)))
+        .collect();
+    CameraLshwRecords {
+        source: result.source,
+        by_video_node,
+    }
 }
 
 async fn apply_camera_format_enrichment(
@@ -134,6 +168,54 @@ async fn apply_camera_format_enrichment(
     {
         device = device.with_source(SourceEvidence {
             source: result.source,
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn apply_camera_lshw_enrichment(
+    mut device: Device,
+    lshw: &CameraLshwRecords,
+    video_node: &str,
+) -> Device {
+    let Some(record) = lshw.by_video_node.get(video_node) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if device.vendor.is_none() && record.vendor.is_some() {
+        device.vendor = record.vendor.clone();
+        contributed = true;
+    }
+    if device.model.is_none() && record.product.is_some() {
+        device.model = record.product.clone();
+        contributed = true;
+    }
+    if record.driver.is_some() {
+        let mut driver = device.driver.take().unwrap_or(DriverInfo {
+            name: None,
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        let original = driver.clone();
+        driver.name = driver.name.or_else(|| record.driver.clone());
+        contributed |= driver != original;
+        device.driver = Some(driver);
+    }
+    if contributed
+        && !lshw.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == lshw.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: lshw.source.clone(),
             kind: SourceKind::Command,
             status: SourceStatus::Success,
             summary: None,
