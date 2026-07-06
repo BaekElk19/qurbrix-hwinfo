@@ -171,6 +171,39 @@ fn parses_lshw_memory_banks() {
 }
 
 #[test]
+fn parses_dmidecode_memory_manufacturer_id_fallback() {
+    let records = parse_dmidecode_memory(
+        "Memory Device\n\
+         \tSize: 16 GB\n\
+         \tLocator: ChannelA-DIMM0\n\
+         \tManufacturer: Not Specified\n\
+         \tManufacturer ID: 80ce00000000\n\
+         \tSerial Number: ABCD1234\n\
+         \tType: DDR5\n\
+         \tSpeed: 4800 MT/s\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].manufacturer.as_deref(), Some("80CE00000000"));
+}
+
+#[test]
+fn parses_dmidecode_memory_bank_locator_fallback() {
+    let records = parse_dmidecode_memory(
+        "Memory Device\n\
+         \tSize: 16 GB\n\
+         \tLocator: Not Specified\n\
+         \tBank Locator: BANK 0\n\
+         \tManufacturer: Samsung\n\
+         \tType: DDR4\n\
+         \tSpeed: 3200 MT/s\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].locator.as_deref(), Some("BANK 0"));
+}
+
+#[test]
 fn parses_spd_decode_dimms_records() {
     let records = parse_spd_decode_dimms(
         "Decoding EEPROM: /sys/bus/i2c/drivers/eeprom/0-0050\n\

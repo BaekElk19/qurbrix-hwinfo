@@ -88,8 +88,19 @@ pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
         let value = value.trim();
         match key {
             "Size" => record.size = Some(value.to_string()),
-            "Locator" => record.locator = Some(value.to_string()),
-            "Manufacturer" => record.manufacturer = Some(value.to_string()),
+            "Locator" => record.locator = clean_memory_value(value),
+            "Bank Locator" => {
+                if record.locator.is_none() {
+                    record.locator = clean_memory_value(value);
+                }
+            }
+            "Manufacturer" => record.manufacturer = clean_memory_value(value),
+            "Manufacturer ID" | "Module Manufacturer ID" => {
+                if record.manufacturer.is_none() {
+                    record.manufacturer =
+                        clean_memory_value(value).map(|value| value.to_uppercase());
+                }
+            }
             "Serial Number" => record.serial = Some(value.to_string()),
             "Part Number" => record.part_number = Some(value.to_string()),
             "Type" => record.memory_type = Some(value.to_string()),
