@@ -65,6 +65,21 @@ async fn fake_runner_returns_registered_binary_file() {
 }
 
 #[tokio::test]
+async fn fake_runner_returns_registered_canonical_path() {
+    let runner = FakeSourceRunner::new().with_canonical_path(
+        "/sys/block/sda/device",
+        "/sys/devices/pci0000:00/0000:00:17.0",
+    );
+
+    let result = runner
+        .canonicalize_path(Path::new("/sys/block/sda/device"))
+        .await;
+
+    assert!(result.is_success());
+    assert_eq!(result.stdout, "/sys/devices/pci0000:00/0000:00:17.0");
+}
+
+#[tokio::test]
 async fn real_runner_reports_missing_command() {
     let runner = hw_source::RealSourceRunner;
     let result = runner
@@ -77,6 +92,22 @@ async fn real_runner_reports_missing_command() {
     assert_eq!(result.error_kind, Some(SourceErrorKind::Missing));
     assert_eq!(result.exit_status, None);
     assert!(result.stderr.contains("No such file") || !result.stderr.is_empty());
+}
+
+#[tokio::test]
+async fn real_runner_canonicalizes_existing_path() {
+    let root = std::env::temp_dir().join(format!("qurbrix-hw-canon-{}", std::process::id()));
+    let nested = root.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+
+    let runner = hw_source::RealSourceRunner;
+    let result = runner.canonicalize_path(&nested).await;
+
+    std::fs::remove_dir(&nested).unwrap();
+    std::fs::remove_dir(&root).unwrap();
+    assert!(result.is_success());
+    assert!(Path::new(&result.stdout).is_absolute());
+    assert!(result.stdout.ends_with("nested"));
 }
 
 #[tokio::test]

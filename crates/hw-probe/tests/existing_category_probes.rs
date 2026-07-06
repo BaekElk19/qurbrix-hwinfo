@@ -158,6 +158,10 @@ impl SourceRunner for PermissionDeniedDmidecodeRunner {
         self.base.read_file_bytes(path).await
     }
 
+    async fn canonicalize_path(&self, path: &Path) -> SourceResult {
+        self.base.canonicalize_path(path).await
+    }
+
     async fn glob(&self, pattern: &str) -> GlobResult {
         self.base.glob(pattern).await
     }
@@ -1114,6 +1118,62 @@ async fn storage_probe_uses_unique_matching_sysfs_storage_controller() {
         .iter()
         .any(|source| source.kind == SourceKind::Sysfs
             && source.source == "/sys/bus/pci/devices/0000:00:17.0/uevent"));
+}
+
+#[tokio::test]
+async fn storage_probe_uses_sysfs_device_path_pci_ancestor_for_same_media_controllers() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
+        .with_canonical_path(
+            "/sys/block/sda/device",
+            "/sys/devices/pci0000:00/0000:00:1c.0/0000:03:00.0/ata1/host0/target0:0:0/0:0:0:0",
+        )
+        .with_glob(
+            "/sys/bus/pci/devices/*",
+            vec![
+                PathBuf::from("/sys/bus/pci/devices/0000:03:00.0"),
+                PathBuf::from("/sys/bus/pci/devices/0000:00:1f.2"),
+            ],
+        )
+        .with_file(
+            "/sys/bus/pci/devices/0000:03:00.0/uevent",
+            "DRIVER=ahci\nPCI_CLASS=10601\nPCI_ID=8086:A352\nPCI_SLOT_NAME=0000:03:00.0\n",
+        )
+        .with_file("/sys/bus/pci/devices/0000:03:00.0/vendor", "0x8086\n")
+        .with_file("/sys/bus/pci/devices/0000:03:00.0/device", "0xa352\n")
+        .with_file("/sys/bus/pci/devices/0000:03:00.0/class", "0x010601\n")
+        .with_file(
+            "/sys/bus/pci/devices/0000:00:1f.2/uevent",
+            "DRIVER=ahci\nPCI_CLASS=10601\nPCI_ID=8086:2922\nPCI_SLOT_NAME=0000:00:1f.2\n",
+        )
+        .with_file("/sys/bus/pci/devices/0000:00:1f.2/vendor", "0x8086\n")
+        .with_file("/sys/bus/pci/devices/0000:00:1f.2/device", "0x2922\n")
+        .with_file("/sys/bus/pci/devices/0000:00:1f.2/class", "0x010601\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(
+        device.bus,
+        Some(BusInfo::Pci {
+            address: "0000:03:00.0".to_string(),
+            vendor_id: Some("8086".to_string()),
+            device_id: Some("a352".to_string()),
+            subsystem_vendor_id: None,
+            subsystem_device_id: None,
+            class: Some("010601".to_string()),
+        })
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Sysfs
+            && source.source == "/sys/bus/pci/devices/0000:03:00.0/uevent"));
 }
 
 #[tokio::test]

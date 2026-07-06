@@ -1,5 +1,5 @@
 use crate::{
-    sysfs_pci::{pci_bus_from_uevent, read_kernel_modules, read_sysfs_pci_records},
+    sysfs_pci::{is_pci_address, pci_bus_from_uevent, read_kernel_modules, read_sysfs_pci_records},
     Probe, ProbeContext, ProbeResult,
 };
 use async_trait::async_trait;
@@ -1233,12 +1233,84 @@ async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str
     }
 
     if device.bus.is_none() {
+        device = apply_storage_canonical_pci_identity(ctx, device, &sysfs_path).await;
+    }
+    if device.bus.is_none() {
         device = apply_storage_parent_pci_identity(ctx, device, &sysfs_path).await;
     }
     if device.bus.is_none() {
         device = apply_unique_storage_controller_pci_identity(ctx, device).await;
     }
     device
+}
+
+async fn apply_storage_canonical_pci_identity(
+    ctx: &ProbeContext<'_>,
+    mut device: Device,
+    sysfs_path: &Path,
+) -> Device {
+    let device_path = sysfs_path.join("device");
+    let result = ctx.runner.canonicalize_path(&device_path).await;
+    if !result.is_success() {
+        return device;
+    }
+    let Some(address) = pci_address_from_path(Path::new(result.stdout.trim())) else {
+        return device;
+    };
+
+    let uevent_path = Path::new("/sys/bus/pci/devices")
+        .join(&address)
+        .join("uevent");
+    if let Some(uevent) = read_optional_trimmed(ctx, &uevent_path).await {
+        if let Some(bus) = pci_bus_from_uevent(&uevent) {
+            device = device.with_bus(bus);
+            let source = uevent_path.display().to_string();
+            if !device
+                .sources
+                .iter()
+                .any(|evidence| evidence.source == source)
+            {
+                device = device.with_source(SourceEvidence {
+                    source,
+                    kind: SourceKind::Sysfs,
+                    status: SourceStatus::Success,
+                    summary: None,
+                });
+            }
+            return device;
+        }
+    }
+
+    let source = result.source;
+    device = device.with_bus(BusInfo::Pci {
+        address,
+        vendor_id: None,
+        device_id: None,
+        subsystem_vendor_id: None,
+        subsystem_device_id: None,
+        class: None,
+    });
+    if !device
+        .sources
+        .iter()
+        .any(|evidence| evidence.source == source)
+    {
+        device = device.with_source(SourceEvidence {
+            source,
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn pci_address_from_path(path: &Path) -> Option<String> {
+    path.components()
+        .rev()
+        .filter_map(|component| component.as_os_str().to_str())
+        .find(|component| is_pci_address(component))
+        .map(str::to_string)
 }
 
 async fn apply_storage_parent_pci_identity(

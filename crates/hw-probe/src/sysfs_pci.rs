@@ -44,7 +44,7 @@ pub(crate) async fn read_sysfs_pci_records(ctx: &ProbeContext<'_>) -> Vec<SysfsP
     records
 }
 
-fn is_pci_address(value: &str) -> bool {
+pub(crate) fn is_pci_address(value: &str) -> bool {
     let mut parts = value.split([':', '.']);
     matches!(
         (parts.next(), parts.next(), parts.next(), parts.next(), parts.next()),

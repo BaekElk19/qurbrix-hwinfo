@@ -12,6 +12,7 @@ pub trait SourceRunner: Send + Sync {
     async fn run_command(&self, command: &CommandSpec, timeout: Duration) -> SourceResult;
     async fn read_file(&self, path: &Path) -> SourceResult;
     async fn read_file_bytes(&self, path: &Path) -> SourceBytesResult;
+    async fn canonicalize_path(&self, path: &Path) -> SourceResult;
     async fn glob(&self, pattern: &str) -> GlobResult;
 }
 
@@ -78,6 +79,20 @@ impl SourceRunner for RealSourceRunner {
         }
     }
 
+    async fn canonicalize_path(&self, path: &Path) -> SourceResult {
+        let source = path.display().to_string();
+        match fs::canonicalize(path).await {
+            Ok(path) => SourceResult::success(source, path.display().to_string()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                SourceResult::error(source, SourceErrorKind::Missing, err.to_string())
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                SourceResult::error(source, SourceErrorKind::PermissionDenied, err.to_string())
+            }
+            Err(err) => SourceResult::error(source, SourceErrorKind::Failed, err.to_string()),
+        }
+    }
+
     async fn glob(&self, pattern: &str) -> GlobResult {
         let mut paths = Vec::new();
 
@@ -129,6 +144,7 @@ pub struct FakeSourceRunner {
     commands: HashMap<CommandSpec, SourceResult>,
     files: HashMap<PathBuf, SourceResult>,
     file_bytes: HashMap<PathBuf, SourceBytesResult>,
+    canonical_paths: HashMap<PathBuf, SourceResult>,
     globs: HashMap<String, Vec<PathBuf>>,
 }
 
@@ -190,6 +206,20 @@ impl FakeSourceRunner {
         self
     }
 
+    pub fn with_canonical_path(
+        mut self,
+        path: impl Into<PathBuf>,
+        canonical: impl Into<PathBuf>,
+    ) -> Self {
+        let path = path.into();
+        let canonical = canonical.into();
+        self.canonical_paths.insert(
+            path.clone(),
+            SourceResult::success(path.display().to_string(), canonical.display().to_string()),
+        );
+        self
+    }
+
     pub fn with_glob(mut self, pattern: impl Into<String>, paths: Vec<PathBuf>) -> Self {
         self.globs.insert(pattern.into(), paths);
         self
@@ -224,6 +254,16 @@ impl SourceRunner for FakeSourceRunner {
                 path.display().to_string(),
                 SourceErrorKind::Missing,
                 "fake file not registered",
+            )
+        })
+    }
+
+    async fn canonicalize_path(&self, path: &Path) -> SourceResult {
+        self.canonical_paths.get(path).cloned().unwrap_or_else(|| {
+            SourceResult::error(
+                path.display().to_string(),
+                SourceErrorKind::Missing,
+                "fake canonical path not registered",
             )
         })
     }
