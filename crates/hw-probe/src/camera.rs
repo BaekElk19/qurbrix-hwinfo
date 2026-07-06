@@ -1,7 +1,7 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, CameraInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
+    device_id, BusInfo, CameraInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
     SourceEvidence, SourceKind, SourceStatus,
 };
 use hw_parser::parse_v4l2_list_devices;
@@ -53,7 +53,7 @@ impl Probe for CameraProbe {
                 status: SourceStatus::Success,
                 summary: None,
             });
-            devices.push(apply_camera_driver(ctx, device, &node).await);
+            devices.push(apply_camera_sysfs_enrichment(ctx, device, &node).await);
         }
         ProbeResult::with_devices(devices)
     }
@@ -88,13 +88,17 @@ async fn probe_sysfs_cameras(ctx: &ProbeContext<'_>) -> Vec<Device> {
             status: SourceStatus::Success,
             summary: None,
         });
-        devices.push(apply_camera_driver(ctx, device, &video_node).await);
+        devices.push(apply_camera_sysfs_enrichment(ctx, device, &video_node).await);
     }
 
     devices
 }
 
-async fn apply_camera_driver(ctx: &ProbeContext<'_>, device: Device, video_node: &str) -> Device {
+async fn apply_camera_sysfs_enrichment(
+    ctx: &ProbeContext<'_>,
+    mut device: Device,
+    video_node: &str,
+) -> Device {
     let Some(node_name) = Path::new(video_node)
         .file_name()
         .and_then(|name| name.to_str())
@@ -102,25 +106,40 @@ async fn apply_camera_driver(ctx: &ProbeContext<'_>, device: Device, video_node:
         return device;
     };
     let sysfs_path = Path::new("/sys/class/video4linux").join(node_name);
-    let Some(driver) = read_sysfs_value(ctx, &sysfs_path.join("device"), "uevent")
+    let driver = read_sysfs_value(ctx, &sysfs_path.join("device"), "uevent")
         .await
-        .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"))
-    else {
-        return device;
-    };
+        .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"));
+    let usb = read_camera_usb_identity(ctx, &sysfs_path).await;
+    let sysfs_contributed = driver.is_some() || usb.has_data();
 
-    let mut device = device.with_driver(DriverInfo {
-        name: Some(driver),
-        version: None,
-        modules: Vec::new(),
-        provider: None,
-        status: DriverStatus::InUse,
-    });
+    if let Some(driver) = driver {
+        device = device.with_driver(DriverInfo {
+            name: Some(driver),
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+    }
+    if usb.has_data() {
+        device.vendor = device.vendor.take().or(usb.manufacturer.clone());
+        device.model = device.model.take().or(usb.product.clone());
+        device.serial = device.serial.take().or(usb.serial.clone());
+        device.bus = Some(BusInfo::Usb {
+            bus: usb.bus,
+            device: usb.device,
+            vendor_id: usb.vendor_id,
+            product_id: usb.product_id,
+            interface: usb.interface,
+            class: usb.class,
+        });
+    }
     let source = sysfs_path.display().to_string();
-    if !device
-        .sources
-        .iter()
-        .any(|evidence| evidence.source == source)
+    if sysfs_contributed
+        && !device
+            .sources
+            .iter()
+            .any(|evidence| evidence.source == source)
     {
         device = device.with_source(SourceEvidence {
             source,
@@ -130,6 +149,54 @@ async fn apply_camera_driver(ctx: &ProbeContext<'_>, device: Device, video_node:
         });
     }
     device
+}
+
+#[derive(Default)]
+struct CameraUsbIdentity {
+    vendor_id: Option<String>,
+    product_id: Option<String>,
+    manufacturer: Option<String>,
+    product: Option<String>,
+    serial: Option<String>,
+    bus: Option<String>,
+    device: Option<String>,
+    interface: Option<String>,
+    class: Option<String>,
+}
+
+impl CameraUsbIdentity {
+    fn has_data(&self) -> bool {
+        self.vendor_id.is_some()
+            || self.product_id.is_some()
+            || self.manufacturer.is_some()
+            || self.product.is_some()
+            || self.serial.is_some()
+            || self.bus.is_some()
+            || self.device.is_some()
+            || self.interface.is_some()
+            || self.class.is_some()
+    }
+}
+
+async fn read_camera_usb_identity(ctx: &ProbeContext<'_>, sysfs_path: &Path) -> CameraUsbIdentity {
+    let usb_path = sysfs_path.join("device/..");
+    CameraUsbIdentity {
+        vendor_id: read_sysfs_value(ctx, &usb_path, "idVendor")
+            .await
+            .map(|value| value.to_ascii_lowercase()),
+        product_id: read_sysfs_value(ctx, &usb_path, "idProduct")
+            .await
+            .map(|value| value.to_ascii_lowercase()),
+        manufacturer: read_sysfs_value(ctx, &usb_path, "manufacturer").await,
+        product: read_sysfs_value(ctx, &usb_path, "product").await,
+        serial: read_sysfs_value(ctx, &usb_path, "serial").await,
+        bus: read_sysfs_value(ctx, &usb_path, "busnum").await,
+        device: read_sysfs_value(ctx, &usb_path, "devnum").await,
+        interface: read_sysfs_value(ctx, &sysfs_path.join("device"), "bInterfaceNumber").await,
+        class: read_sysfs_value(ctx, &sysfs_path.join("device"), "bInterfaceClass")
+            .await
+            .map(|value| value.to_ascii_lowercase()),
+    }
 }
 
 fn parse_uevent_value(input: &str, key: &str) -> Option<String> {

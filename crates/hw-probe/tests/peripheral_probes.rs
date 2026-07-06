@@ -1,4 +1,6 @@
-use hw_model::{DeviceKind, DeviceProperties, DriverStatus, InputKind, SourceKind, SourceStatus};
+use hw_model::{
+    BusInfo, DeviceKind, DeviceProperties, DriverStatus, InputKind, SourceKind, SourceStatus,
+};
 use hw_probe::{
     AudioProbe, BatteryProbe, BluetoothProbe, CameraProbe, CdromProbe, InputProbe, PrinterProbe,
     Probe, ProbeContext,
@@ -272,6 +274,66 @@ async fn camera_probe_reads_driver_from_sysfs_for_v4l2_node() {
         Some(DriverStatus::InUse)
     );
     assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.source == "/sys/class/video4linux/video0"
+            && source.kind == SourceKind::Sysfs));
+}
+
+#[tokio::test]
+async fn camera_probe_reads_usb_identity_from_sysfs_for_v4l2_node() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "v4l2-ctl",
+            ["--list-devices"],
+            "Integrated Camera:\n\t/dev/video0\n",
+        )
+        .with_file("/sys/class/video4linux/video0/device/../idVendor", "0bda\n")
+        .with_file(
+            "/sys/class/video4linux/video0/device/../idProduct",
+            "5689\n",
+        )
+        .with_file(
+            "/sys/class/video4linux/video0/device/../manufacturer",
+            "Realtek Semiconductor Corp.\n",
+        )
+        .with_file(
+            "/sys/class/video4linux/video0/device/../product",
+            "Integrated Camera\n",
+        )
+        .with_file("/sys/class/video4linux/video0/device/../serial", "ABC123\n")
+        .with_file("/sys/class/video4linux/video0/device/../busnum", "001\n")
+        .with_file("/sys/class/video4linux/video0/device/../devnum", "004\n")
+        .with_file(
+            "/sys/class/video4linux/video0/device/bInterfaceNumber",
+            "00\n",
+        )
+        .with_file(
+            "/sys/class/video4linux/video0/device/bInterfaceClass",
+            "0e\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CameraProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(
+        device.vendor.as_deref(),
+        Some("Realtek Semiconductor Corp.")
+    );
+    assert_eq!(device.model.as_deref(), Some("Integrated Camera"));
+    assert_eq!(device.serial.as_deref(), Some("ABC123"));
+    assert_eq!(
+        device.bus,
+        Some(BusInfo::Usb {
+            bus: Some("001".to_string()),
+            device: Some("004".to_string()),
+            vendor_id: Some("0bda".to_string()),
+            product_id: Some("5689".to_string()),
+            interface: Some("00".to_string()),
+            class: Some("0e".to_string()),
+        })
+    );
+    assert!(device
         .sources
         .iter()
         .any(|source| source.source == "/sys/class/video4linux/video0"
