@@ -99,7 +99,9 @@ pub fn parse_proc_cpuinfo(input: &str) -> CpuRecord {
         let key = key.trim();
         let value = value.trim();
         match key {
-            "model name" => assign_if_empty(&mut record.model_name, clean_value(value)),
+            "model name" | "cpu model" => {
+                assign_if_empty(&mut record.model_name, clean_value(value))
+            }
             "Hardware" => assign_if_empty(&mut record.model_name, clean_value(value)),
             "Processor" => {
                 assign_if_empty(&mut record.model_name, clean_value(value));

@@ -1,0 +1,11 @@
+system type		: generic-loongson-machine
+machine			: loongson,generic
+processor		: 0
+cpu model		: Loongson-3A5000
+BogoMIPS		: 4800.00
+Features		: cpucfg lam ual fpu
+
+processor		: 1
+cpu model		: Loongson-3A5000
+BogoMIPS		: 4800.00
+Features		: cpucfg lam ual fpu

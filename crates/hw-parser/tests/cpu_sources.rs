@@ -63,6 +63,16 @@ fn parse_proc_cpuinfo_uses_hardware_and_processor_fallbacks() {
 }
 
 #[test]
+fn parse_proc_cpuinfo_reads_loongarch_cpu_model() {
+    let cpu = parse_proc_cpuinfo(&fixture("cpu/proc-cpuinfo-loongarch.txt"));
+
+    assert_eq!(cpu.model_name.as_deref(), Some("Loongson-3A5000"));
+    assert_eq!(cpu.threads, Some(2));
+    assert_eq!(cpu.bogomips.as_deref(), Some("4800.00"));
+    assert_eq!(cpu.flags, vec!["cpucfg", "lam", "ual", "fpu"]);
+}
+
+#[test]
 fn parse_proc_hardware_recognizes_kirin_soc_names() {
     for (input, expected) in [
         ("Hardware\t: HUAWEI Kirin 990\n", "HUAWEI Kirin 990"),
