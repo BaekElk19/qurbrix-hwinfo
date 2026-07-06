@@ -457,6 +457,28 @@ async fn network_probe_reads_ip_addresses_from_ip_addr() {
 }
 
 #[tokio::test]
+async fn network_probe_marks_ethernet_capability_from_sysfs() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "ip",
+            ["-j", "link"],
+            r#"[{"ifname":"eth0","address":"aa:bb:cc:dd:ee:ff","operstate":"UP","mtu":1500}]"#,
+        )
+        .with_command("ip", ["-j", "addr"], "[]")
+        .with_file("/sys/class/net/eth0/speed", "1000\n")
+        .with_file("/sys/class/net/eth0/duplex", "full\n")
+        .with_file("/sys/class/net/eth0/device/uevent", "DRIVER=e1000e\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = NetworkProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices[0].capabilities, vec!["ethernet"]);
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Sysfs && source.source == "/sys/class/net/eth0"));
+}
+
+#[tokio::test]
 async fn network_probe_filters_loopback_and_common_virtual_interfaces() {
     let runner = FakeSourceRunner::new().with_command(
         "ip",

@@ -403,6 +403,7 @@ struct NetworkSysfsEnrichment {
     speed_mbps: Option<u32>,
     duplex: Option<String>,
     wireless: bool,
+    ethernet: bool,
     driver: Option<String>,
     contributed: bool,
 }
@@ -462,12 +463,14 @@ async fn network_sysfs_enrichment(ctx: &ProbeContext<'_>, ifname: &str) -> Netwo
     let driver = read_optional_trimmed(ctx, &path.join("device/uevent"))
         .await
         .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"));
+    let ethernet = !wireless && (driver.is_some() || speed_mbps.is_some() || duplex.is_some());
 
     NetworkSysfsEnrichment {
         source: path.display().to_string(),
         speed_mbps,
         duplex,
         wireless,
+        ethernet,
         driver,
         contributed: false,
     }
@@ -476,6 +479,9 @@ async fn network_sysfs_enrichment(ctx: &ProbeContext<'_>, ifname: &str) -> Netwo
 fn apply_network_enrichment(mut device: Device, mut enrichment: NetworkSysfsEnrichment) -> Device {
     if enrichment.wireless {
         device.capabilities.push("wireless".to_string());
+        enrichment.contributed = true;
+    } else if enrichment.ethernet {
+        device.capabilities.push("ethernet".to_string());
         enrichment.contributed = true;
     }
     if enrichment.driver.is_some() {
