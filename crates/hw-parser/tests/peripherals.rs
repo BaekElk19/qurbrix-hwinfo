@@ -227,6 +227,17 @@ fn parses_raw_ddr5_spd_identity_fields() {
     assert_eq!(record.speed, None);
 }
 
+#[test]
+fn preserves_unknown_raw_spd_manufacturer_id() {
+    let mut bytes = ddr5_spd_eeprom();
+    bytes[512] = 0x12;
+    bytes[513] = 0x34;
+
+    let record = parse_spd_eeprom(&bytes).expect("DDR5 SPD identity record");
+
+    assert_eq!(record.manufacturer.as_deref(), Some("JEP106 0x1234"));
+}
+
 fn ddr5_spd_eeprom() -> Vec<u8> {
     let mut bytes = vec![0; 1024];
     bytes[2] = 0x12;

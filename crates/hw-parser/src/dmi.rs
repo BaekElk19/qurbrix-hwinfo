@@ -475,12 +475,15 @@ fn spd_hex_string(bytes: &[u8]) -> Option<String> {
 
 fn spd_manufacturer_name(bytes: &[u8]) -> Option<String> {
     let id = u16::from_be_bytes(bytes.try_into().ok()?);
+    if id == 0 || id == 0xffff {
+        return None;
+    }
     let name = match id {
         0x80ce | 0xce00 => "Samsung",
         0x80ad | 0xad00 => "SK Hynix",
         0x802c | 0x2c00 => "Micron",
         0x859b | 0x9b00 => "Crucial",
-        _ => return None,
+        _ => return Some(format!("JEP106 0x{id:04X}")),
     };
     Some(name.to_string())
 }
