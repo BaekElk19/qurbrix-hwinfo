@@ -16,10 +16,11 @@ use hw_parser::{
     parse_hdparm_identify, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
     parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
-    parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes,
-    parse_smartctl_json, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
-    DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord,
-    HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
+    parse_nvidia_smi_memory_csv, parse_proc_cpuinfo, parse_proc_hardware,
+    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps,
+    parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord,
+    DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord,
+    LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -2209,6 +2210,7 @@ impl Probe for GpuProbe {
         let lshw = gpu_lshw_display_records(ctx).await;
         let drm = gpu_drm_records(ctx).await;
         let dmesg = gpu_dmesg_records(ctx).await;
+        let nvidia_smi = gpu_nvidia_smi_records(ctx).await;
         let glxinfo = gpu_glxinfo_record(ctx).await;
         let proc_gpuinfo = gpu_proc_gpuinfo_record(ctx).await;
         let result = ctx
@@ -2223,6 +2225,7 @@ impl Probe for GpuProbe {
                 &lshw,
                 &drm,
                 &dmesg,
+                &nvidia_smi,
                 &proc_gpuinfo,
             )
             .await;
@@ -2236,6 +2239,7 @@ impl Probe for GpuProbe {
             .filter(|gpu| is_jingjia_vendor_id(gpu.vendor_id.as_deref()))
             .count();
         for gpu in gpus {
+            let address = gpu.address.clone();
             let pci_id = device_id::pci(&gpu.address);
             let vendor = gpu
                 .vendor
@@ -2300,7 +2304,9 @@ impl Probe for GpuProbe {
                         ),
                         &drm,
                     ),
-                    sysfs_gpu_info.as_ref(),
+                    sysfs_gpu_info
+                        .as_ref()
+                        .or_else(|| gpu_nvidia_smi_record(&nvidia_smi, &address)),
                 ),
                 &proc_gpuinfo,
                 jingjia_gpu_count == 1,
@@ -2326,6 +2332,11 @@ struct GpuDrmRecords {
 struct GpuDmesgRecords {
     source: String,
     by_pci_address: HashMap<String, DmesgGpuVramRecord>,
+}
+
+#[derive(Default)]
+struct GpuNvidiaSmiRecords {
+    by_pci_address: HashMap<String, GpuMemoryRecord>,
 }
 
 #[derive(Default)]
@@ -2676,6 +2687,47 @@ fn apply_gpu_dmesg_enrichment(mut device: Device, dmesg: &GpuDmesgRecords) -> De
     device
 }
 
+async fn gpu_nvidia_smi_records(ctx: &ProbeContext<'_>) -> GpuNvidiaSmiRecords {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new(
+                "nvidia-smi",
+                [
+                    "--query-gpu=pci.bus_id,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+            ),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return GpuNvidiaSmiRecords::default();
+    }
+
+    let by_pci_address = parse_nvidia_smi_memory_csv(&result.stdout)
+        .into_iter()
+        .map(|record| {
+            (
+                record.pci_address,
+                GpuMemoryRecord {
+                    memory_bytes: record.memory_bytes,
+                    source: result.source.clone(),
+                    kind: SourceKind::Command,
+                },
+            )
+        })
+        .collect();
+    GpuNvidiaSmiRecords { by_pci_address }
+}
+
+fn gpu_nvidia_smi_record<'a>(
+    records: &'a GpuNvidiaSmiRecords,
+    address: &str,
+) -> Option<&'a GpuMemoryRecord> {
+    records.by_pci_address.get(address)
+}
+
 async fn gpu_drm_records(ctx: &ProbeContext<'_>) -> GpuDrmRecords {
     let mut records = GpuDrmRecords::default();
     let mut paths = ctx
@@ -2776,6 +2828,7 @@ async fn gpu_devices_from_sysfs_pci(
     lshw: &GpuLshwDisplayRecords,
     drm: &GpuDrmRecords,
     dmesg: &GpuDmesgRecords,
+    nvidia_smi: &GpuNvidiaSmiRecords,
     proc_gpuinfo: &Option<GpuMemoryRecord>,
 ) -> Vec<Device> {
     let mut devices = Vec::new();
@@ -2795,6 +2848,7 @@ async fn gpu_devices_from_sysfs_pci(
         .count();
 
     for record in records {
+        let address = record.address.clone();
         let vendor = record
             .vendor_id
             .as_deref()
@@ -2847,7 +2901,9 @@ async fn gpu_devices_from_sysfs_pci(
                     apply_gpu_lshw_enrichment(apply_gpu_dmesg_enrichment(device, dmesg), lshw),
                     drm,
                 ),
-                sysfs_gpu_info.as_ref(),
+                sysfs_gpu_info
+                    .as_ref()
+                    .or_else(|| gpu_nvidia_smi_record(nvidia_smi, &address)),
             ),
             proc_gpuinfo,
             jingjia_gpu_count == 1,

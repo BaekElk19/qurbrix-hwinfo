@@ -22,6 +22,12 @@ pub struct GlxinfoBasicRecord {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NvidiaSmiMemoryRecord {
+    pub pci_address: String,
+    pub memory_bytes: u64,
+}
+
 pub fn parse_gpu_lspci(input: &str) -> Vec<PciRecord> {
     parse_lspci_nn_k(input)
         .into_iter()
@@ -69,6 +75,25 @@ pub fn parse_dmesg_gpu_vram(input: &str) -> Vec<DmesgGpuVramRecord> {
             let memory_bytes = parse_vram_mb(line)?.checked_mul(1024 * 1024)?;
             Some(DmesgGpuVramRecord {
                 pci_address: pci_address.to_string(),
+                memory_bytes,
+            })
+        })
+        .collect()
+}
+
+pub fn parse_nvidia_smi_memory_csv(input: &str) -> Vec<NvidiaSmiMemoryRecord> {
+    input
+        .lines()
+        .filter_map(|line| {
+            let (address, memory) = line.split_once(',')?;
+            let pci_address = normalize_nvidia_pci_address(address)?;
+            let memory_mib = memory
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())?;
+            let memory_bytes = memory_mib.checked_mul(1024 * 1024)?;
+            Some(NvidiaSmiMemoryRecord {
+                pci_address,
                 memory_bytes,
             })
         })
@@ -126,6 +151,42 @@ fn is_pci_address(value: &str) -> bool {
             .chars()
             .enumerate()
             .all(|(index, ch)| matches!(index, 4 | 7 | 10) || ch.is_ascii_hexdigit())
+}
+
+fn normalize_nvidia_pci_address(value: &str) -> Option<String> {
+    let value = value.trim();
+    let mut parts = value.split(':');
+    let domain = parts.next()?;
+    let bus = parts.next()?;
+    let slot_function = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let (slot, function) = slot_function.split_once('.')?;
+    if domain.is_empty()
+        || domain.len() > 8
+        || !domain.chars().all(|ch| ch.is_ascii_hexdigit())
+        || bus.len() != 2
+        || !bus.chars().all(|ch| ch.is_ascii_hexdigit())
+        || slot.len() != 2
+        || !slot.chars().all(|ch| ch.is_ascii_hexdigit())
+        || function.len() != 1
+        || !function.chars().all(|ch| ch.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    let domain = if domain.len() > 4 {
+        &domain[domain.len() - 4..]
+    } else {
+        domain
+    };
+    Some(format!(
+        "{:0>4}:{}:{}.{}",
+        domain.to_ascii_lowercase(),
+        bus.to_ascii_lowercase(),
+        slot.to_ascii_lowercase(),
+        function.to_ascii_lowercase()
+    ))
 }
 
 fn parse_vram_mb(line: &str) -> Option<u64> {
