@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
 pub enum DeviceProperties {
     System(SystemDeviceInfo),
-    Motherboard(MotherboardInfo),
+    Motherboard(Box<MotherboardInfo>),
     Bios(BiosInfo),
     Cpu(CpuInfo),
     Memory(MemoryInfo),
@@ -42,6 +42,20 @@ pub struct MotherboardInfo {
     pub asset_tag: Option<String>,
     pub location_in_chassis: Option<String>,
     pub chassis_handle: Option<String>,
+    pub chassis_manufacturer: Option<String>,
+    pub chassis_type: Option<String>,
+    pub chassis_version: Option<String>,
+    pub chassis_serial: Option<String>,
+    pub chassis_asset_tag: Option<String>,
+    pub chassis_boot_up_state: Option<String>,
+    pub chassis_power_supply_state: Option<String>,
+    pub chassis_thermal_state: Option<String>,
+    pub chassis_security_status: Option<String>,
+    pub chassis_oem_information: Option<String>,
+    pub chassis_height: Option<String>,
+    pub chassis_power_cords: Option<String>,
+    pub chassis_contained_elements: Option<String>,
+    pub chassis_sku_number: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

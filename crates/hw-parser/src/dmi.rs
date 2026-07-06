@@ -23,6 +23,20 @@ pub struct DmiBiosBoardRecord {
     pub board_asset_tag: Option<String>,
     pub board_location_in_chassis: Option<String>,
     pub board_chassis_handle: Option<String>,
+    pub chassis_manufacturer: Option<String>,
+    pub chassis_type: Option<String>,
+    pub chassis_version: Option<String>,
+    pub chassis_serial: Option<String>,
+    pub chassis_asset_tag: Option<String>,
+    pub chassis_boot_up_state: Option<String>,
+    pub chassis_power_supply_state: Option<String>,
+    pub chassis_thermal_state: Option<String>,
+    pub chassis_security_status: Option<String>,
+    pub chassis_oem_information: Option<String>,
+    pub chassis_height: Option<String>,
+    pub chassis_power_cords: Option<String>,
+    pub chassis_contained_elements: Option<String>,
+    pub chassis_sku_number: Option<String>,
 }
 
 pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
@@ -109,7 +123,10 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
     let mut section = "";
     for line in input.lines() {
         let trimmed = line.trim();
-        if trimmed == "BIOS Information" || trimmed == "Base Board Information" {
+        if trimmed == "BIOS Information"
+            || trimmed == "Base Board Information"
+            || trimmed == "Chassis Information"
+        {
             section = trimmed;
             continue;
         }
@@ -132,6 +149,30 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
             ("Base Board Information", "Chassis Handle") => {
                 record.board_chassis_handle = Some(value)
             }
+            ("Chassis Information", "Manufacturer") => record.chassis_manufacturer = Some(value),
+            ("Chassis Information", "Type") => record.chassis_type = Some(value),
+            ("Chassis Information", "Version") => record.chassis_version = Some(value),
+            ("Chassis Information", "Serial Number") => record.chassis_serial = Some(value),
+            ("Chassis Information", "Asset Tag") => record.chassis_asset_tag = Some(value),
+            ("Chassis Information", "Boot-up State") => record.chassis_boot_up_state = Some(value),
+            ("Chassis Information", "Power Supply State") => {
+                record.chassis_power_supply_state = Some(value)
+            }
+            ("Chassis Information", "Thermal State") => record.chassis_thermal_state = Some(value),
+            ("Chassis Information", "Security Status") => {
+                record.chassis_security_status = Some(value)
+            }
+            ("Chassis Information", "OEM Information") => {
+                record.chassis_oem_information = Some(value)
+            }
+            ("Chassis Information", "Height") => record.chassis_height = Some(value),
+            ("Chassis Information", "Number Of Power Cords") => {
+                record.chassis_power_cords = Some(value)
+            }
+            ("Chassis Information", "Contained Elements") => {
+                record.chassis_contained_elements = Some(value)
+            }
+            ("Chassis Information", "SKU Number") => record.chassis_sku_number = Some(value),
             _ => {}
         }
     }

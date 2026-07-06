@@ -1504,6 +1504,22 @@ async fn read_sysfs_dmi(ctx: &ProbeContext<'_>) -> Option<DmiBiosBoardRecord> {
         board_asset_tag: read_sysfs_dmi_value(ctx, "board_asset_tag").await,
         board_location_in_chassis: None,
         board_chassis_handle: None,
+        chassis_manufacturer: read_sysfs_dmi_value(ctx, "chassis_vendor").await,
+        chassis_type: read_sysfs_dmi_value(ctx, "chassis_type")
+            .await
+            .map(normalize_sysfs_chassis_type),
+        chassis_version: read_sysfs_dmi_value(ctx, "chassis_version").await,
+        chassis_serial: read_sysfs_dmi_value(ctx, "chassis_serial").await,
+        chassis_asset_tag: read_sysfs_dmi_value(ctx, "chassis_asset_tag").await,
+        chassis_boot_up_state: None,
+        chassis_power_supply_state: None,
+        chassis_thermal_state: None,
+        chassis_security_status: None,
+        chassis_oem_information: None,
+        chassis_height: None,
+        chassis_power_cords: None,
+        chassis_contained_elements: None,
+        chassis_sku_number: None,
     };
 
     if dmi == Default::default() {
@@ -1526,6 +1542,48 @@ async fn read_sysfs_dmi_value(ctx: &ProbeContext<'_>, name: &str) -> Option<Stri
 fn clean_sysfs_dmi_value(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty() && !value.eq_ignore_ascii_case("Not Specified")).then(|| value.to_string())
+}
+
+fn normalize_sysfs_chassis_type(value: String) -> String {
+    match value.trim().parse::<u8>().ok() {
+        Some(1) => "Other".to_string(),
+        Some(2) => "Unknown".to_string(),
+        Some(3) => "Desktop".to_string(),
+        Some(4) => "Low Profile Desktop".to_string(),
+        Some(5) => "Pizza Box".to_string(),
+        Some(6) => "Mini Tower".to_string(),
+        Some(7) => "Tower".to_string(),
+        Some(8) => "Portable".to_string(),
+        Some(9) => "Laptop".to_string(),
+        Some(10) => "Notebook".to_string(),
+        Some(11) => "Hand Held".to_string(),
+        Some(12) => "Docking Station".to_string(),
+        Some(13) => "All In One".to_string(),
+        Some(14) => "Sub Notebook".to_string(),
+        Some(15) => "Space-saving".to_string(),
+        Some(16) => "Lunch Box".to_string(),
+        Some(17) => "Main Server Chassis".to_string(),
+        Some(18) => "Expansion Chassis".to_string(),
+        Some(19) => "Sub Chassis".to_string(),
+        Some(20) => "Bus Expansion Chassis".to_string(),
+        Some(21) => "Peripheral Chassis".to_string(),
+        Some(22) => "RAID Chassis".to_string(),
+        Some(23) => "Rack Mount Chassis".to_string(),
+        Some(24) => "Sealed-case PC".to_string(),
+        Some(25) => "Multi-system".to_string(),
+        Some(26) => "Compact PCI".to_string(),
+        Some(27) => "Advanced TCA".to_string(),
+        Some(28) => "Blade".to_string(),
+        Some(29) => "Blade Enclosure".to_string(),
+        Some(30) => "Tablet".to_string(),
+        Some(31) => "Convertible".to_string(),
+        Some(32) => "Detachable".to_string(),
+        Some(33) => "IoT Gateway".to_string(),
+        Some(34) => "Embedded PC".to_string(),
+        Some(35) => "Mini PC".to_string(),
+        Some(36) => "Stick PC".to_string(),
+        _ => value,
+    }
 }
 
 fn bios_board_devices(
@@ -1571,7 +1629,7 @@ fn bios_board_devices(
         dmi.board_product_name
             .clone()
             .unwrap_or_else(|| "Motherboard".to_string()),
-        DeviceProperties::Motherboard(MotherboardInfo {
+        DeviceProperties::Motherboard(Box::new(MotherboardInfo {
             manufacturer: dmi.board_manufacturer,
             product_name: dmi.board_product_name,
             version: dmi.board_version,
@@ -1579,7 +1637,21 @@ fn bios_board_devices(
             asset_tag: dmi.board_asset_tag,
             location_in_chassis: dmi.board_location_in_chassis,
             chassis_handle: dmi.board_chassis_handle,
-        }),
+            chassis_manufacturer: dmi.chassis_manufacturer,
+            chassis_type: dmi.chassis_type,
+            chassis_version: dmi.chassis_version,
+            chassis_serial: dmi.chassis_serial,
+            chassis_asset_tag: dmi.chassis_asset_tag,
+            chassis_boot_up_state: dmi.chassis_boot_up_state,
+            chassis_power_supply_state: dmi.chassis_power_supply_state,
+            chassis_thermal_state: dmi.chassis_thermal_state,
+            chassis_security_status: dmi.chassis_security_status,
+            chassis_oem_information: dmi.chassis_oem_information,
+            chassis_height: dmi.chassis_height,
+            chassis_power_cords: dmi.chassis_power_cords,
+            chassis_contained_elements: dmi.chassis_contained_elements,
+            chassis_sku_number: dmi.chassis_sku_number,
+        })),
     )
     .with_source(SourceEvidence {
         source: source.to_string(),

@@ -236,6 +236,63 @@ async fn bios_probe_preserves_baseboard_extended_fields() {
 }
 
 #[tokio::test]
+async fn bios_probe_preserves_chassis_information_fields() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "0,1,2,3"],
+        "BIOS Information\n\
+             \tVendor: LENOVO\n\
+             \tVersion: N2IET98W\n\
+             Base Board Information\n\
+             \tManufacturer: LENOVO\n\
+             \tProduct Name: 20XX\n\
+             \tSerial Number: BOARD123\n\
+             Chassis Information\n\
+             \tManufacturer: LENOVO\n\
+             \tType: Notebook\n\
+             \tVersion: ThinkPad\n\
+             \tSerial Number: CHASSIS123\n\
+             \tAsset Tag: ASSET456\n\
+             \tBoot-up State: Safe\n\
+             \tPower Supply State: Safe\n\
+             \tThermal State: Safe\n\
+             \tSecurity Status: None\n\
+             \tOEM Information: 0x00000000\n\
+             \tHeight: Unspecified\n\
+             \tNumber Of Power Cords: 1\n\
+             \tContained Elements: 0\n\
+             \tSKU Number: SKU123\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    let board = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Motherboard)
+        .expect("expected motherboard device");
+    match &board.properties {
+        DeviceProperties::Motherboard(info) => {
+            assert_eq!(info.chassis_manufacturer.as_deref(), Some("LENOVO"));
+            assert_eq!(info.chassis_type.as_deref(), Some("Notebook"));
+            assert_eq!(info.chassis_version.as_deref(), Some("ThinkPad"));
+            assert_eq!(info.chassis_serial.as_deref(), Some("CHASSIS123"));
+            assert_eq!(info.chassis_asset_tag.as_deref(), Some("ASSET456"));
+            assert_eq!(info.chassis_boot_up_state.as_deref(), Some("Safe"));
+            assert_eq!(info.chassis_power_supply_state.as_deref(), Some("Safe"));
+            assert_eq!(info.chassis_thermal_state.as_deref(), Some("Safe"));
+            assert_eq!(info.chassis_security_status.as_deref(), Some("None"));
+            assert_eq!(info.chassis_oem_information.as_deref(), Some("0x00000000"));
+            assert_eq!(info.chassis_height.as_deref(), Some("Unspecified"));
+            assert_eq!(info.chassis_power_cords.as_deref(), Some("1"));
+            assert_eq!(info.chassis_contained_elements.as_deref(), Some("0"));
+            assert_eq!(info.chassis_sku_number.as_deref(), Some("SKU123"));
+        }
+        other => panic!("expected motherboard properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn bios_probe_does_not_emit_generic_devices_for_empty_dmi_output() {
     let runner = FakeSourceRunner::new().with_command("dmidecode", ["-t", "0,1,2,3"], "");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
@@ -256,7 +313,12 @@ async fn bios_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
         .with_file("/sys/class/dmi/id/board_name", "20XX\n")
         .with_file("/sys/class/dmi/id/board_version", "SDK0T76530 WIN\n")
         .with_file("/sys/class/dmi/id/board_serial", "BOARD123\n")
-        .with_file("/sys/class/dmi/id/board_asset_tag", "ASSET456\n");
+        .with_file("/sys/class/dmi/id/board_asset_tag", "ASSET456\n")
+        .with_file("/sys/class/dmi/id/chassis_vendor", "LENOVO\n")
+        .with_file("/sys/class/dmi/id/chassis_type", "10\n")
+        .with_file("/sys/class/dmi/id/chassis_version", "ThinkPad\n")
+        .with_file("/sys/class/dmi/id/chassis_serial", "CHASSIS123\n")
+        .with_file("/sys/class/dmi/id/chassis_asset_tag", "CHASSET456\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = BiosProbe.probe(&ctx).await;
 
@@ -302,6 +364,11 @@ async fn bios_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
             assert_eq!(info.version.as_deref(), Some("SDK0T76530 WIN"));
             assert_eq!(info.serial.as_deref(), Some("BOARD123"));
             assert_eq!(info.asset_tag.as_deref(), Some("ASSET456"));
+            assert_eq!(info.chassis_manufacturer.as_deref(), Some("LENOVO"));
+            assert_eq!(info.chassis_type.as_deref(), Some("Notebook"));
+            assert_eq!(info.chassis_version.as_deref(), Some("ThinkPad"));
+            assert_eq!(info.chassis_serial.as_deref(), Some("CHASSIS123"));
+            assert_eq!(info.chassis_asset_tag.as_deref(), Some("CHASSET456"));
         }
         other => panic!("expected motherboard properties, got {other:?}"),
     }
