@@ -1666,8 +1666,14 @@ impl Probe for BiosProbe {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
             if let Some(dmi) = read_sysfs_dmi(ctx).await {
                 let runtime = read_bios_runtime_info(ctx).await;
-                fallback.devices =
-                    bios_board_devices(dmi, "/sys/class/dmi/id", SourceKind::Sysfs, runtime, None);
+                fallback.devices = bios_board_devices(
+                    dmi,
+                    "/sys/class/dmi/id",
+                    SourceKind::Sysfs,
+                    runtime,
+                    None,
+                    None,
+                );
             }
             return fallback;
         }
@@ -1683,6 +1689,7 @@ impl Probe for BiosProbe {
                 consumed: Vec::new(),
             };
         }
+        let bios_language_source = enrich_dmi_bios_language(ctx, &mut dmi).await;
         let memory_array_source = enrich_dmi_memory_array(ctx, &mut dmi).await;
         let runtime = read_bios_runtime_info(ctx).await;
         ProbeResult::with_devices(bios_board_devices(
@@ -1690,9 +1697,46 @@ impl Probe for BiosProbe {
             &result.source,
             SourceKind::Command,
             runtime,
+            bios_language_source,
             memory_array_source,
         ))
     }
+}
+
+async fn enrich_dmi_bios_language(
+    ctx: &ProbeContext<'_>,
+    dmi: &mut DmiBiosBoardRecord,
+) -> Option<SourceEvidence> {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("dmidecode", ["-t", "13"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return None;
+    }
+
+    let language = parse_dmidecode_bios_board(&result.stdout);
+    let mut contributed = false;
+    contributed |= merge_optional_string(
+        &mut dmi.bios_language_description_format,
+        language.bios_language_description_format,
+    );
+    if dmi.bios_installable_languages.is_empty() && !language.bios_installable_languages.is_empty()
+    {
+        dmi.bios_installable_languages = language.bios_installable_languages;
+        contributed = true;
+    }
+    contributed |= merge_optional_string(
+        &mut dmi.bios_currently_installed_language,
+        language.bios_currently_installed_language,
+    );
+
+    contributed.then_some(SourceEvidence {
+        source: result.source,
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    })
 }
 
 async fn enrich_dmi_memory_array(
@@ -1828,6 +1872,9 @@ async fn read_sysfs_dmi(ctx: &ProbeContext<'_>) -> Option<DmiBiosBoardRecord> {
         chassis_power_cords: None,
         chassis_contained_elements: None,
         chassis_sku_number: None,
+        bios_language_description_format: None,
+        bios_installable_languages: Vec::new(),
+        bios_currently_installed_language: None,
         memory_array_location: None,
         memory_array_use: None,
         memory_array_error_correction_type: None,
@@ -1905,6 +1952,7 @@ fn bios_board_devices(
     source: &str,
     source_kind: SourceKind,
     runtime: BiosRuntimeInfo,
+    bios_language_source: Option<SourceEvidence>,
     memory_array_source: Option<SourceEvidence>,
 ) -> Vec<Device> {
     let mut bios = Device::new(
@@ -1919,6 +1967,9 @@ fn bios_board_devices(
             release_date: dmi.bios_release_date,
             firmware_type: runtime.firmware_type,
             secure_boot: runtime.secure_boot,
+            language_description_format: dmi.bios_language_description_format,
+            installable_languages: dmi.bios_installable_languages,
+            currently_installed_language: dmi.bios_currently_installed_language,
         }),
     )
     .with_source(SourceEvidence {
@@ -1934,6 +1985,9 @@ fn bios_board_devices(
             status: SourceStatus::Success,
             summary: None,
         });
+    }
+    if let Some(source) = bios_language_source {
+        bios = bios.with_source(source);
     }
     let board = Device::new(
         dmi.board_serial

@@ -79,6 +79,9 @@ pub struct BiosInfo {
     pub release_date: Option<String>,
     pub firmware_type: Option<String>,
     pub secure_boot: Option<String>,
+    pub language_description_format: Option<String>,
+    pub installable_languages: Vec<String>,
+    pub currently_installed_language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

@@ -351,6 +351,50 @@ async fn bios_probe_preserves_physical_memory_array_fields() {
 }
 
 #[tokio::test]
+async fn bios_probe_preserves_bios_language_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "dmidecode",
+            ["-t", "0,1,2,3"],
+            "BIOS Information\n\
+                 \tVendor: LENOVO\n\
+                 \tVersion: N2IET98W\n\
+                 \tRelease Date: 01/01/2026\n",
+        )
+        .with_command(
+            "dmidecode",
+            ["-t", "13"],
+            "BIOS Language Information\n\
+                 \tLanguage Description Format: Long\n\
+                 \tInstallable Languages: 1\n\
+                 \t\ten|US|iso8859-1\n\
+                 \tCurrently Installed Language: en|US|iso8859-1\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    let bios = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Bios)
+        .expect("expected bios device");
+    assert!(bios.sources.iter().any(|source| {
+        source.kind == SourceKind::Command && source.source == "dmidecode -t 13"
+    }));
+    match &bios.properties {
+        DeviceProperties::Bios(info) => {
+            assert_eq!(info.language_description_format.as_deref(), Some("Long"));
+            assert_eq!(info.installable_languages, ["en|US|iso8859-1"]);
+            assert_eq!(
+                info.currently_installed_language.as_deref(),
+                Some("en|US|iso8859-1")
+            );
+        }
+        other => panic!("expected bios properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn bios_probe_does_not_emit_generic_devices_for_empty_dmi_output() {
     let runner = FakeSourceRunner::new().with_command("dmidecode", ["-t", "0,1,2,3"], "");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));

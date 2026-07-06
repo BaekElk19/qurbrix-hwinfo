@@ -16,6 +16,9 @@ pub struct DmiBiosBoardRecord {
     pub bios_vendor: Option<String>,
     pub bios_version: Option<String>,
     pub bios_release_date: Option<String>,
+    pub bios_language_description_format: Option<String>,
+    pub bios_installable_languages: Vec<String>,
+    pub bios_currently_installed_language: Option<String>,
     pub board_manufacturer: Option<String>,
     pub board_product_name: Option<String>,
     pub board_version: Option<String>,
@@ -186,24 +189,46 @@ pub fn parse_dmidecode_system(input: &str) -> DmiSystemRecord {
 pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
     let mut record = DmiBiosBoardRecord::default();
     let mut section = "";
+    let mut collecting_installable_languages = false;
     for line in input.lines() {
         let trimmed = line.trim();
         if trimmed == "BIOS Information"
+            || trimmed == "BIOS Language Information"
             || trimmed == "Base Board Information"
             || trimmed == "Chassis Information"
             || trimmed == "Physical Memory Array"
         {
             section = trimmed;
+            collecting_installable_languages = false;
+            continue;
+        }
+        if section == "BIOS Language Information"
+            && collecting_installable_languages
+            && line.starts_with(char::is_whitespace)
+            && !trimmed.is_empty()
+            && !trimmed.contains(':')
+        {
+            record.bios_installable_languages.push(trimmed.to_string());
             continue;
         }
         let Some((key, value)) = trimmed.split_once(':') else {
             continue;
         };
         let value = value.trim().to_string();
+        collecting_installable_languages = false;
         match (section, key) {
             ("BIOS Information", "Vendor") => record.bios_vendor = Some(value),
             ("BIOS Information", "Version") => record.bios_version = Some(value),
             ("BIOS Information", "Release Date") => record.bios_release_date = Some(value),
+            ("BIOS Language Information", "Language Description Format") => {
+                record.bios_language_description_format = Some(value)
+            }
+            ("BIOS Language Information", "Installable Languages") => {
+                collecting_installable_languages = true
+            }
+            ("BIOS Language Information", "Currently Installed Language") => {
+                record.bios_currently_installed_language = Some(value)
+            }
             ("Base Board Information", "Manufacturer") => record.board_manufacturer = Some(value),
             ("Base Board Information", "Product Name") => record.board_product_name = Some(value),
             ("Base Board Information", "Version") => record.board_version = Some(value),
