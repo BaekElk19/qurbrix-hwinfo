@@ -123,6 +123,8 @@ pub struct MonitorInfo {
     pub manufactured_year: Option<u16>,
     pub manufactured_week: Option<u8>,
     pub size_cm: Option<(u8, u8)>,
+    pub diagonal_inches: Option<f32>,
+    pub gamma: Option<f32>,
     pub preferred_width: Option<u16>,
     pub preferred_height: Option<u16>,
     pub preferred_refresh_hz: Option<u16>,

@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EdidRecord {
     pub manufacturer: Option<String>,
     pub product_code: Option<u16>,
@@ -7,6 +7,7 @@ pub struct EdidRecord {
     pub week: Option<u8>,
     pub year: Option<u16>,
     pub size_cm: Option<(u8, u8)>,
+    pub gamma: Option<f32>,
     pub preferred_mode: Option<PreferredMode>,
 }
 
@@ -59,6 +60,7 @@ pub fn parse_edid(bytes: &[u8]) -> Result<EdidRecord, EdidError> {
         week: Some(block[16]),
         year: Some(1990 + block[17] as u16),
         size_cm: (block[21] != 0 && block[22] != 0).then_some((block[21], block[22])),
+        gamma: parse_gamma(block[23]),
         preferred_mode: parse_preferred_mode(&block[54..72]),
     })
 }
@@ -96,6 +98,10 @@ fn parse_preferred_mode(desc: &[u8]) -> Option<PreferredMode> {
         height,
         refresh_hz: refresh_hz(pixel_clock, width + h_blank, height + v_blank),
     })
+}
+
+fn parse_gamma(value: u8) -> Option<f32> {
+    (value != 0xff).then_some((value as f32 + 100.0) / 100.0)
 }
 
 fn refresh_hz(pixel_clock: u16, h_total: u16, v_total: u16) -> u16 {

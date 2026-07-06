@@ -2010,9 +2010,16 @@ fn apply_edid(info: &mut MonitorInfo, edid: hw_parser::EdidRecord) {
     info.manufactured_year = edid.year;
     info.manufactured_week = edid.week;
     info.size_cm = edid.size_cm;
+    info.diagonal_inches = edid.size_cm.map(diagonal_inches);
+    info.gamma = edid.gamma;
     info.preferred_width = edid.preferred_mode.as_ref().map(|mode| mode.width);
     info.preferred_height = edid.preferred_mode.as_ref().map(|mode| mode.height);
     info.preferred_refresh_hz = edid.preferred_mode.as_ref().map(|mode| mode.refresh_hz);
+}
+
+fn diagonal_inches((width_cm, height_cm): (u8, u8)) -> f32 {
+    let diagonal_cm = ((width_cm as f32).powi(2) + (height_cm as f32).powi(2)).sqrt();
+    (diagonal_cm / 2.54 * 10.0).round() / 10.0
 }
 
 fn normalize_sysfs_connector(path: &Path) -> Option<String> {

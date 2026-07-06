@@ -11,6 +11,7 @@ fn sample_edid() -> Vec<u8> {
     edid[17] = 32; // 2022
     edid[21] = 52;
     edid[22] = 32;
+    edid[23] = 120;
     write_dtd(&mut edid, 54, 14850, 1920, 312, 1080, 45);
     edid[72] = 0x00;
     edid[73] = 0x00;
@@ -54,6 +55,7 @@ fn parse_edid_extracts_identity_and_timing() {
     assert_eq!(edid.week, Some(12));
     assert_eq!(edid.year, Some(2022));
     assert_eq!(edid.size_cm, Some((52, 32)));
+    assert_eq!(edid.gamma, Some(2.2));
     assert_eq!(edid.name.as_deref(), Some("AOC TEST"));
     let mode = edid.preferred_mode.unwrap();
     assert_eq!(mode.width, 1920);

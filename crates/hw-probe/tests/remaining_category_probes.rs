@@ -790,6 +790,22 @@ async fn monitor_probe_prefers_xrandr_verbose_edid_over_sysfs_edid() {
 }
 
 #[tokio::test]
+async fn monitor_probe_reports_edid_gamma_and_diagonal_inches() {
+    let path = PathBuf::from("/sys/class/drm/card0-HDMI-A-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_command("xrandr", ["--query"], "HDMI-1 connected 1920x1080+0+0\n")
+        .with_glob("/sys/class/drm/*/edid", vec![path.clone()])
+        .with_file_bytes(path, monitor_test_edid("AOC SYSFS"));
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+    let properties = format!("{:?}", result.devices[0].properties);
+
+    assert!(properties.contains("gamma: Some(2.2)"));
+    assert!(properties.contains("diagonal_inches: Some(24.0)"));
+}
+
+#[tokio::test]
 async fn monitor_probe_falls_back_to_sysfs_when_xrandr_verbose_edid_is_invalid() {
     let path = PathBuf::from("/sys/class/drm/card0-HDMI-A-1/edid");
     let runner = FakeSourceRunner::new()
@@ -867,6 +883,7 @@ fn monitor_test_edid(name: &str) -> Vec<u8> {
     edid[17] = 32;
     edid[21] = 52;
     edid[22] = 32;
+    edid[23] = 120;
     edid[72] = 0;
     edid[73] = 0;
     edid[74] = 0;
