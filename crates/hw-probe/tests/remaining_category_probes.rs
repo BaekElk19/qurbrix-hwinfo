@@ -240,6 +240,7 @@ async fn memory_probe_uses_raw_spd_eeprom_when_command_sources_are_missing() {
     match &result.devices[0].properties {
         DeviceProperties::Memory(memory) => {
             assert_eq!(memory.size_bytes, Some(8 * 1024 * 1024 * 1024));
+            assert_eq!(memory.vendor.as_deref(), Some("Samsung"));
             assert_eq!(memory.memory_type.as_deref(), Some("DDR4 SDRAM"));
             assert_eq!(memory.speed_mtps, Some(3200));
             assert_eq!(memory.locator.as_deref(), Some("0-0050"));
@@ -280,6 +281,8 @@ fn ddr4_spd_eeprom() -> Vec<u8> {
     bytes[18] = 0x05;
     bytes[125] = 0x00;
     bytes[126] = 0x00;
+    bytes[320] = 0x80;
+    bytes[321] = 0xce;
     bytes[323] = 0x12;
     bytes[324] = 0x34;
     bytes[325] = 0x56;

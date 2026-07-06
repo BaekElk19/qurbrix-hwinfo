@@ -195,13 +195,18 @@ pub fn parse_spd_eeprom(bytes: &[u8]) -> Option<DmiMemoryRecord> {
 fn parse_ddr4_spd_eeprom(bytes: &[u8]) -> Option<DmiMemoryRecord> {
     let size = ddr4_spd_size(bytes).map(|size_mib| format!("{size_mib} MB"));
     let speed = ddr4_spd_speed(bytes).map(|speed_mtps| format!("{speed_mtps} MT/s"));
+    let manufacturer = bytes.get(320..322).and_then(spd_manufacturer_name);
     let serial = bytes.get(323..327).and_then(spd_hex_string);
     let part_number = spd_ascii_string(bytes.get(329..349).unwrap_or_default());
-    let has_spd_data =
-        size.is_some() || speed.is_some() || serial.is_some() || part_number.is_some();
+    let has_spd_data = size.is_some()
+        || speed.is_some()
+        || manufacturer.is_some()
+        || serial.is_some()
+        || part_number.is_some();
 
     let record = DmiMemoryRecord {
         size,
+        manufacturer,
         serial,
         part_number,
         memory_type: Some("DDR4 SDRAM".to_string()),
@@ -449,6 +454,17 @@ fn spd_hex_string(bytes: &[u8]) -> Option<String> {
         .map(|byte| format!("{byte:02X}"))
         .collect::<String>();
     clean_memory_value(&value).filter(|value| !value.chars().all(|ch| ch == '0' || ch == 'F'))
+}
+
+fn spd_manufacturer_name(bytes: &[u8]) -> Option<String> {
+    let id = u16::from_be_bytes(bytes.try_into().ok()?);
+    let name = match id {
+        0x80ce | 0xce00 => "Samsung",
+        0x80ad | 0xad00 => "SK Hynix",
+        0x802c | 0x2c00 => "Micron",
+        _ => return None,
+    };
+    Some(name.to_string())
 }
 
 fn spd_ascii_string(bytes: &[u8]) -> Option<String> {
