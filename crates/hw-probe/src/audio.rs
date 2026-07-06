@@ -52,7 +52,6 @@ impl Probe for AudioProbe {
                     codec: enrichment.codec.clone(),
                     subsystem: enrichment.subsystem.clone(),
                     profiles: card_profiles.clone(),
-                    ..Default::default()
                 }),
             )
             .with_source(SourceEvidence {
@@ -144,7 +143,6 @@ async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
                 codec: enrichment.codec.clone(),
                 subsystem: enrichment.subsystem.clone(),
                 profiles: card_profiles.clone(),
-                ..Default::default()
             }),
         )
         .with_source(SourceEvidence {
