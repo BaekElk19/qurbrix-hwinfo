@@ -80,24 +80,26 @@ async fn probe_sysfs_cdroms(ctx: &ProbeContext<'_>) -> Vec<Device> {
             continue;
         }
         let device_node = format!("/dev/{name}");
-        devices.push(
-            Device::new(
-                device_id::other("cdrom", name),
-                DeviceKind::Cdrom,
-                name.to_string(),
-                DeviceProperties::Cdrom(CdromInfo {
-                    device_node: Some(device_node),
-                    media_present: None,
-                    capabilities: Vec::new(),
-                }),
-            )
-            .with_source(SourceEvidence {
-                source: path.display().to_string(),
-                kind: SourceKind::Sysfs,
-                status: SourceStatus::Success,
-                summary: None,
+        let mut device = Device::new(
+            device_id::other("cdrom", name),
+            DeviceKind::Cdrom,
+            name.to_string(),
+            DeviceProperties::Cdrom(CdromInfo {
+                device_node: Some(device_node),
+                media_present: None,
+                capabilities: Vec::new(),
             }),
-        );
+        )
+        .with_source(SourceEvidence {
+            source: path.display().to_string(),
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+        device.vendor = read_trimmed(ctx, &path.join("device/vendor")).await;
+        device.model = read_trimmed(ctx, &path.join("device/model")).await;
+        device.serial = read_trimmed(ctx, &path.join("device/serial")).await;
+        devices.push(device);
     }
 
     devices
@@ -106,4 +108,13 @@ async fn probe_sysfs_cdroms(ctx: &ProbeContext<'_>) -> Vec<Device> {
 fn is_sr_node(name: &str) -> bool {
     name.strip_prefix("sr")
         .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+async fn read_trimmed(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {
+    let result = ctx.runner.read_file(path).await;
+    if !result.is_success() {
+        return None;
+    }
+    let value = result.stdout.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
