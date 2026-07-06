@@ -1,11 +1,15 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, Device, DeviceKind, DeviceProperties, InputInfo, InputKind, ScanWarning,
-    SourceEvidence, SourceKind, SourceStatus,
+    device_id, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus, InputInfo,
+    InputKind, ScanWarning, SourceEvidence, SourceKind, SourceStatus,
 };
-use hw_parser::{parse_proc_bus_input_devices, InputCapabilities};
-use std::path::Path;
+use hw_parser::{
+    parse_hwinfo_input, parse_proc_bus_input_devices, HwinfoInputKind, HwinfoInputRecord,
+    InputCapabilities,
+};
+use hw_source::CommandSpec;
+use std::{collections::HashMap, path::Path};
 
 pub struct InputProbe;
 
@@ -20,19 +24,20 @@ impl Probe for InputProbe {
     }
 
     async fn probe(&self, ctx: &ProbeContext<'_>) -> ProbeResult {
+        let hwinfo = input_hwinfo_records(ctx).await;
         let result = ctx
             .runner
             .read_file(Path::new("/proc/bus/input/devices"))
             .await;
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
-            fallback.devices = probe_sysfs_inputs(ctx).await;
+            fallback.devices = probe_sysfs_inputs(ctx, &hwinfo).await;
             return fallback;
         }
         let records = parse_proc_bus_input_devices(&result.stdout);
         if records.is_empty() {
             return ProbeResult {
-                devices: probe_sysfs_inputs(ctx).await,
+                devices: probe_sysfs_inputs(ctx, &hwinfo).await,
                 warnings: vec![ScanWarning::new(
                     "source_empty",
                     "input source produced no device records",
@@ -56,7 +61,7 @@ impl Probe for InputProbe {
                     .clone()
                     .unwrap_or_else(|| "Input device".to_string());
                 let input_kind = classify_input(&name, &input.handlers, &input.capabilities);
-                Device::new(
+                let device = Device::new(
                     device_id::input_event(&event),
                     DeviceKind::Input,
                     name,
@@ -77,14 +82,51 @@ impl Probe for InputProbe {
                     kind: SourceKind::Procfs,
                     status: SourceStatus::Success,
                     summary: None,
-                })
+                });
+                apply_input_hwinfo_enrichment(device, &hwinfo)
             })
             .collect();
         ProbeResult::with_devices(devices)
     }
 }
 
-async fn probe_sysfs_inputs(ctx: &ProbeContext<'_>) -> Vec<Device> {
+#[derive(Clone)]
+struct InputHwinfoEntry {
+    source: String,
+    record: HwinfoInputRecord,
+}
+
+#[derive(Default)]
+struct InputHwinfoRecords {
+    by_event_node: HashMap<String, InputHwinfoEntry>,
+}
+
+async fn input_hwinfo_records(ctx: &ProbeContext<'_>) -> InputHwinfoRecords {
+    let mut records = InputHwinfoRecords::default();
+    for args in [["--keyboard"], ["--mouse"]] {
+        let result = ctx
+            .runner
+            .run_command(&CommandSpec::new("hwinfo", args), ctx.timeout)
+            .await;
+        if !result.is_success() {
+            continue;
+        }
+        for record in parse_hwinfo_input(&result.stdout) {
+            if let Some(event_node) = record.event_node.clone() {
+                records.by_event_node.insert(
+                    event_node,
+                    InputHwinfoEntry {
+                        source: result.source.clone(),
+                        record,
+                    },
+                );
+            }
+        }
+    }
+    records
+}
+
+async fn probe_sysfs_inputs(ctx: &ProbeContext<'_>, hwinfo: &InputHwinfoRecords) -> Vec<Device> {
     let mut events = ctx
         .runner
         .glob("/sys/class/input/event*")
@@ -109,37 +151,158 @@ async fn probe_sysfs_inputs(ctx: &ProbeContext<'_>) -> Vec<Device> {
             .await
             .unwrap_or_else(|| event_node.clone());
         let capabilities = read_sysfs_input_capabilities(ctx, &path).await;
-        devices.push(
-            Device::new(
-                device_id::input_event(&event),
-                DeviceKind::Input,
-                name.clone(),
-                DeviceProperties::Input(InputInfo {
-                    input_kind: classify_input(&name, &[], &capabilities),
-                    event_node: Some(event_node),
-                    phys: read_trimmed(ctx, &path.join("device/phys")).await,
-                    uniq: read_trimmed(ctx, &path.join("device/uniq")).await,
-                    handlers: Vec::new(),
-                    bus_type: read_trimmed(ctx, &path.join("device/id/bustype")).await,
-                    vendor_id: read_trimmed(ctx, &path.join("device/id/vendor"))
-                        .await
-                        .map(|value| value.to_ascii_lowercase()),
-                    product_id: read_trimmed(ctx, &path.join("device/id/product"))
-                        .await
-                        .map(|value| value.to_ascii_lowercase()),
-                    version: read_trimmed(ctx, &path.join("device/id/version")).await,
-                }),
-            )
-            .with_source(SourceEvidence {
-                source: path.display().to_string(),
-                kind: SourceKind::Sysfs,
-                status: SourceStatus::Success,
-                summary: None,
+        let device = Device::new(
+            device_id::input_event(&event),
+            DeviceKind::Input,
+            name.clone(),
+            DeviceProperties::Input(InputInfo {
+                input_kind: classify_input(&name, &[], &capabilities),
+                event_node: Some(event_node),
+                phys: read_trimmed(ctx, &path.join("device/phys")).await,
+                uniq: read_trimmed(ctx, &path.join("device/uniq")).await,
+                handlers: Vec::new(),
+                bus_type: read_trimmed(ctx, &path.join("device/id/bustype")).await,
+                vendor_id: read_trimmed(ctx, &path.join("device/id/vendor"))
+                    .await
+                    .map(|value| value.to_ascii_lowercase()),
+                product_id: read_trimmed(ctx, &path.join("device/id/product"))
+                    .await
+                    .map(|value| value.to_ascii_lowercase()),
+                version: read_trimmed(ctx, &path.join("device/id/version")).await,
             }),
-        );
+        )
+        .with_source(SourceEvidence {
+            source: path.display().to_string(),
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+        devices.push(apply_input_hwinfo_enrichment(device, hwinfo));
+    }
+
+    for (event_node, entry) in &hwinfo.by_event_node {
+        if devices
+            .iter()
+            .any(|device| input_event_node(device).as_deref() == Some(event_node))
+        {
+            continue;
+        }
+        devices.push(input_device_from_hwinfo(event_node, entry));
     }
 
     devices
+}
+
+fn apply_input_hwinfo_enrichment(mut device: Device, hwinfo: &InputHwinfoRecords) -> Device {
+    let Some(event_node) = input_event_node(&device) else {
+        return device;
+    };
+    let Some(entry) = hwinfo.by_event_node.get(&event_node) else {
+        return device;
+    };
+    let record = &entry.record;
+    let mut contributed = false;
+
+    if device.vendor.is_none() && record.vendor.is_some() {
+        device.vendor = record.vendor.clone();
+        contributed = true;
+    }
+    if device.model.is_none() {
+        let model = record.model.clone().or_else(|| record.device.clone());
+        if model.is_some() {
+            device.model = model;
+            contributed = true;
+        }
+    }
+    if record.driver.is_some() || !record.driver_modules.is_empty() {
+        let mut driver = device.driver.take().unwrap_or(DriverInfo {
+            name: None,
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        let original = driver.clone();
+        driver.name = driver.name.or_else(|| record.driver.clone());
+        for module in &record.driver_modules {
+            if !driver.modules.iter().any(|item| item == module) {
+                driver.modules.push(module.clone());
+            }
+        }
+        contributed |= driver != original;
+        device.driver = Some(driver);
+    }
+    if contributed
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == entry.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: entry.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn input_device_from_hwinfo(event_node: &str, entry: &InputHwinfoEntry) -> Device {
+    let record = &entry.record;
+    let event = event_node
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(event_node);
+    let name = record
+        .model
+        .clone()
+        .or_else(|| record.device.clone())
+        .unwrap_or_else(|| event_node.to_string());
+    let mut device = Device::new(
+        device_id::input_event(event),
+        DeviceKind::Input,
+        name,
+        DeviceProperties::Input(InputInfo {
+            input_kind: hwinfo_input_kind(record.input_kind),
+            event_node: Some(event_node.to_string()),
+            ..Default::default()
+        }),
+    )
+    .with_source(SourceEvidence {
+        source: entry.source.clone(),
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    });
+    device.vendor = record.vendor.clone();
+    device.model = record.model.clone().or_else(|| record.device.clone());
+    if record.driver.is_some() || !record.driver_modules.is_empty() {
+        device = device.with_driver(DriverInfo {
+            name: record.driver.clone(),
+            version: None,
+            modules: record.driver_modules.clone(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+    }
+    device
+}
+
+fn input_event_node(device: &Device) -> Option<String> {
+    match &device.properties {
+        DeviceProperties::Input(info) => info.event_node.clone(),
+        _ => None,
+    }
+}
+
+fn hwinfo_input_kind(kind: HwinfoInputKind) -> InputKind {
+    match kind {
+        HwinfoInputKind::Keyboard => InputKind::Keyboard,
+        HwinfoInputKind::Mouse => InputKind::Mouse,
+        HwinfoInputKind::UnknownInput => InputKind::UnknownInput,
+    }
 }
 
 fn event_index(name: &str) -> Option<u32> {

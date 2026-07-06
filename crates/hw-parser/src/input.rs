@@ -23,6 +23,26 @@ pub struct InputCapabilities {
     pub properties: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct HwinfoInputRecord {
+    pub input_kind: HwinfoInputKind,
+    pub event_node: Option<String>,
+    pub model: Option<String>,
+    pub vendor: Option<String>,
+    pub device: Option<String>,
+    pub driver: Option<String>,
+    pub driver_modules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum HwinfoInputKind {
+    Keyboard,
+    Mouse,
+    #[default]
+    UnknownInput,
+}
+
 pub fn parse_proc_bus_input_devices(input: &str) -> Vec<InputRecord> {
     let id_re = Regex::new(r"Bus=(\S+)\s+Vendor=(\S+)\s+Product=(\S+)\s+Version=(\S+)").unwrap();
     let mut records = Vec::new();
@@ -70,4 +90,113 @@ pub fn parse_proc_bus_input_devices(input: &str) -> Vec<InputRecord> {
         }
     }
     records
+}
+
+pub fn parse_hwinfo_input(input: &str) -> Vec<HwinfoInputRecord> {
+    let mut records = Vec::new();
+    let mut section = Vec::new();
+
+    for line in input.lines().chain(std::iter::once("")) {
+        if line.trim().is_empty() {
+            push_hwinfo_input_record(&mut records, parse_hwinfo_input_section(&section));
+            section.clear();
+            continue;
+        }
+        section.push(line);
+    }
+
+    records
+}
+
+fn parse_hwinfo_input_section(lines: &[&str]) -> Option<HwinfoInputRecord> {
+    let mut record = HwinfoInputRecord::default();
+
+    for line in lines {
+        let Some((key, value)) = line.trim().split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "Hardware Class" => {
+                record.input_kind = match value {
+                    "keyboard" => HwinfoInputKind::Keyboard,
+                    "mouse" => HwinfoInputKind::Mouse,
+                    _ => HwinfoInputKind::UnknownInput,
+                };
+            }
+            "Model" => record.model = clean_hwinfo_input_value(value),
+            "Vendor" | "SubVendor" => record.vendor = clean_hwinfo_input_value(value),
+            "Device" => record.device = clean_hwinfo_input_value(value),
+            "Driver" => record.driver = clean_hwinfo_input_value(value),
+            "Driver Modules" => record.driver_modules = clean_hwinfo_input_modules(value),
+            "Device File" | "Device Files" => {
+                if record.event_node.is_none() {
+                    record.event_node = hwinfo_input_event_node(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (record.input_kind != HwinfoInputKind::UnknownInput).then_some(record)
+}
+
+fn push_hwinfo_input_record(
+    records: &mut Vec<HwinfoInputRecord>,
+    record: Option<HwinfoInputRecord>,
+) {
+    if let Some(record) = record {
+        if record.event_node.is_some()
+            || record.model.is_some()
+            || record.vendor.is_some()
+            || record.device.is_some()
+            || record.driver.is_some()
+            || !record.driver_modules.is_empty()
+        {
+            records.push(record);
+        }
+    }
+}
+
+fn hwinfo_input_event_node(value: &str) -> Option<String> {
+    value
+        .split(|ch: char| ch == ',' || ch.is_whitespace())
+        .map(str::trim)
+        .find(|part| {
+            part.strip_prefix("/dev/input/event").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+            })
+        })
+        .map(ToString::to_string)
+}
+
+fn clean_hwinfo_input_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    let value = value.split('"').nth(1).unwrap_or(value).trim();
+    if value.is_empty() || value.contains("unknown") {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn clean_hwinfo_input_modules(value: &str) -> Vec<String> {
+    let quoted = value
+        .split('"')
+        .enumerate()
+        .filter_map(|(index, part)| (index % 2 == 1).then_some(part.trim()))
+        .filter(|part| !part.is_empty() && !part.contains("unknown"))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if !quoted.is_empty() {
+        return quoted;
+    }
+
+    value
+        .split([',', ' '])
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && !part.contains("unknown"))
+        .map(ToString::to_string)
+        .collect()
 }

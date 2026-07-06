@@ -13,6 +13,44 @@ fn parses_input_devices() {
 }
 
 #[test]
+fn parses_hwinfo_input_devices() {
+    let records = parse_hwinfo_input(
+        "18: USB 00.0: 10800 Keyboard\n\
+         \tHardware Class: keyboard\n\
+         \tModel: \"Lite-On USB Keyboard\"\n\
+         \tVendor: usb 0x04ca \"Lite-On Technology Corp.\"\n\
+         \tDevice: usb 0x00a1 \"USB Keyboard\"\n\
+         \tDriver: \"usbhid\"\n\
+         \tDriver Modules: \"usbhid\"\n\
+         \tDevice Files: /dev/input/event0, /dev/input/by-id/usb-keyboard-event-kbd\n\
+         \n\
+         19: USB 00.1: 10503 Mouse\n\
+         \tHardware Class: mouse\n\
+         \tModel: \"Logitech USB Optical Mouse\"\n\
+         \tVendor: usb 0x046d \"Logitech, Inc.\"\n\
+         \tDevice File: /dev/input/event5\n\
+         \n\
+         20: SCSI 0.0: 10600 Disk\n\
+         \tHardware Class: disk\n\
+         \tDevice File: /dev/sda\n",
+    );
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].input_kind, HwinfoInputKind::Keyboard);
+    assert_eq!(records[0].event_node.as_deref(), Some("/dev/input/event0"));
+    assert_eq!(records[0].model.as_deref(), Some("Lite-On USB Keyboard"));
+    assert_eq!(
+        records[0].vendor.as_deref(),
+        Some("Lite-On Technology Corp.")
+    );
+    assert_eq!(records[0].device.as_deref(), Some("USB Keyboard"));
+    assert_eq!(records[0].driver.as_deref(), Some("usbhid"));
+    assert_eq!(records[0].driver_modules, vec!["usbhid"]);
+    assert_eq!(records[1].input_kind, HwinfoInputKind::Mouse);
+    assert_eq!(records[1].event_node.as_deref(), Some("/dev/input/event5"));
+}
+
+#[test]
 fn parses_asound_cards() {
     let cards = parse_proc_asound_cards(&hw_testdata::fixture("proc/asound-cards.txt"));
     assert_eq!(cards[0].index, 0);

@@ -1208,6 +1208,84 @@ async fn input_probe_uses_sysfs_when_proc_bus_input_devices_parses_empty() {
 }
 
 #[tokio::test]
+async fn input_probe_enriches_human_readable_hwinfo_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/bus/input/devices",
+            "N: Name=\"AT Keyboard\"\nH: Handlers=sysrq kbd event0 leds\n\n",
+        )
+        .with_command(
+            "hwinfo",
+            ["--keyboard"],
+            "18: USB 00.0: 10800 Keyboard\n\
+             \tHardware Class: keyboard\n\
+             \tModel: \"Lite-On USB Keyboard\"\n\
+             \tVendor: usb 0x04ca \"Lite-On Technology Corp.\"\n\
+             \tDevice: usb 0x00a1 \"USB Keyboard\"\n\
+             \tDriver: \"usbhid\"\n\
+             \tDriver Modules: \"usbhid\"\n\
+             \tDevice File: /dev/input/event0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = InputProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.vendor.as_deref(), Some("Lite-On Technology Corp."));
+    assert_eq!(device.model.as_deref(), Some("Lite-On USB Keyboard"));
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("usbhid")
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .map(|driver| driver.modules.as_slice()),
+        Some(&["usbhid".to_string()][..])
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "hwinfo --keyboard"));
+}
+
+#[tokio::test]
+async fn input_probe_uses_hwinfo_when_proc_and_sysfs_are_missing() {
+    let runner = FakeSourceRunner::new().with_command(
+        "hwinfo",
+        ["--mouse"],
+        "19: USB 00.1: 10503 Mouse\n\
+         \tHardware Class: mouse\n\
+         \tModel: \"Logitech USB Optical Mouse\"\n\
+         \tVendor: usb 0x046d \"Logitech, Inc.\"\n\
+         \tDevice File: /dev/input/event5\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = InputProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Input);
+    assert_eq!(result.devices[0].name, "Logitech USB Optical Mouse");
+    assert_eq!(result.devices[0].vendor.as_deref(), Some("Logitech, Inc."));
+    let DeviceProperties::Input(info) = &result.devices[0].properties else {
+        panic!("expected input properties");
+    };
+    assert_eq!(info.input_kind, InputKind::Mouse);
+    assert_eq!(info.event_node.as_deref(), Some("/dev/input/event5"));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "hwinfo --mouse"));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_missing"
+            && warning.source.as_deref() == Some("/proc/bus/input/devices")
+    }));
+}
+
+#[tokio::test]
 async fn cdrom_probe_uses_sysfs_when_proc_cdrom_info_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(
