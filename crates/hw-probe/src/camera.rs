@@ -178,6 +178,7 @@ async fn apply_camera_sysfs_enrichment(
             device: usb.device,
             vendor_id: usb.vendor_id,
             product_id: usb.product_id,
+            speed: usb.speed,
             interface: usb.interface,
             class: usb.class,
         });
@@ -208,6 +209,7 @@ struct CameraUsbIdentity {
     serial: Option<String>,
     bus: Option<String>,
     device: Option<String>,
+    speed: Option<String>,
     interface: Option<String>,
     class: Option<String>,
 }
@@ -221,6 +223,7 @@ impl CameraUsbIdentity {
             || self.serial.is_some()
             || self.bus.is_some()
             || self.device.is_some()
+            || self.speed.is_some()
             || self.interface.is_some()
             || self.class.is_some()
     }
@@ -240,6 +243,7 @@ async fn read_camera_usb_identity(ctx: &ProbeContext<'_>, sysfs_path: &Path) -> 
         serial: read_sysfs_value(ctx, &usb_path, "serial").await,
         bus: read_sysfs_value(ctx, &usb_path, "busnum").await,
         device: read_sysfs_value(ctx, &usb_path, "devnum").await,
+        speed: read_sysfs_value(ctx, &usb_path, "speed").await,
         interface: read_sysfs_value(ctx, &sysfs_path.join("device"), "bInterfaceNumber").await,
         class: read_sysfs_value(ctx, &sysfs_path.join("device"), "bInterfaceClass")
             .await

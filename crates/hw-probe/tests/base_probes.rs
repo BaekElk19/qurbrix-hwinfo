@@ -203,6 +203,7 @@ async fn usb_probe_enriches_interface_descriptor_from_lsusb_verbose() {
             device: Some("004".to_string()),
             vendor_id: Some("0bda".to_string()),
             product_id: Some("5689".to_string()),
+            speed: None,
             interface: Some("0".to_string()),
             class: Some("0e".to_string()),
         })
@@ -295,6 +296,7 @@ async fn usb_probe_uses_sysfs_when_lsusb_is_missing() {
             device: Some("004".to_string()),
             vendor_id: Some("0bda".to_string()),
             product_id: Some("5689".to_string()),
+            speed: Some("480".to_string()),
             interface: None,
             class: Some("ef".to_string()),
         })

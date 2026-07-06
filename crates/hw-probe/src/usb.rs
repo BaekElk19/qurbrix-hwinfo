@@ -108,6 +108,7 @@ impl Probe for UsbProbe {
                         device: record.device,
                         vendor_id: record.vendor_id,
                         product_id: record.product_id,
+                        speed: record.speed,
                         interface: record.interface,
                         class: record.class,
                     })
@@ -241,7 +242,7 @@ async fn probe_sysfs_usb(ctx: &ProbeContext<'_>) -> Vec<Device> {
                     manufacturer: record.manufacturer,
                     product: record.product,
                     serial: record.serial,
-                    speed: record.speed,
+                    speed: record.speed.clone(),
                     max_power_ma: record.max_power_ma,
                 }),
             )
@@ -250,6 +251,7 @@ async fn probe_sysfs_usb(ctx: &ProbeContext<'_>) -> Vec<Device> {
                 device: record.device,
                 vendor_id: record.vendor_id,
                 product_id: record.product_id,
+                speed: record.speed,
                 interface: None,
                 class: record.class,
             })

@@ -386,6 +386,7 @@ async fn camera_probe_reads_usb_identity_from_sysfs_for_v4l2_node() {
         .with_file("/sys/class/video4linux/video0/device/../serial", "ABC123\n")
         .with_file("/sys/class/video4linux/video0/device/../busnum", "001\n")
         .with_file("/sys/class/video4linux/video0/device/../devnum", "004\n")
+        .with_file("/sys/class/video4linux/video0/device/../speed", "480\n")
         .with_file(
             "/sys/class/video4linux/video0/device/bInterfaceNumber",
             "00\n",
@@ -411,6 +412,7 @@ async fn camera_probe_reads_usb_identity_from_sysfs_for_v4l2_node() {
             device: Some("004".to_string()),
             vendor_id: Some("0bda".to_string()),
             product_id: Some("5689".to_string()),
+            speed: Some("480".to_string()),
             interface: Some("00".to_string()),
             class: Some("0e".to_string()),
         })

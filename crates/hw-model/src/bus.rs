@@ -16,6 +16,7 @@ pub enum BusInfo {
         device: Option<String>,
         vendor_id: Option<String>,
         product_id: Option<String>,
+        speed: Option<String>,
         interface: Option<String>,
         class: Option<String>,
     },
