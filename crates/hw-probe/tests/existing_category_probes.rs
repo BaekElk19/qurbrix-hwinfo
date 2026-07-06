@@ -1100,6 +1100,42 @@ async fn storage_probe_enriches_controller_identity_from_lshw_storage() {
 }
 
 #[tokio::test]
+async fn storage_probe_enriches_controller_identity_from_lspci_when_lshw_storage_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
+        .with_file(
+            "/sys/block/sda/device/../../../uevent",
+            "DRIVER=ahci\nPCI_CLASS=10601\nPCI_ID=8086:A352\nPCI_SLOT_NAME=0000:00:17.0\n",
+        )
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "00:17.0 SATA controller [0106]: Intel Corporation Cannon Lake Mobile PCH SATA AHCI Controller [8086:a352]\n\tKernel driver in use: ahci\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    let DeviceProperties::Storage(storage) = &device.properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(
+        storage.controller_model.as_deref(),
+        Some("Intel Corporation Cannon Lake Mobile PCH SATA AHCI Controller")
+    );
+    assert_eq!(storage.controller_driver.as_deref(), Some("ahci"));
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "lspci -nn -k"));
+}
+
+#[tokio::test]
 async fn storage_probe_enriches_human_readable_lshw_fields() {
     let runner = FakeSourceRunner::new()
         .with_command(

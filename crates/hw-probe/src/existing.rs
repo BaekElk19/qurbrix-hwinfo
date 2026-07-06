@@ -16,12 +16,13 @@ use hw_parser::{
     parse_hdparm_identify, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
     parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
-    parse_lshw_storage, parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv,
-    parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes,
-    parse_smartctl_json, parse_spd_decode_dimms, parse_speed_mtps, parse_xrandr_query,
-    parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord,
-    GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord,
-    LshwNetworkRecord, LshwStorageRecord,
+    parse_lshw_storage, parse_lspci_nn_k, parse_nvidia_settings_videoram,
+    parse_nvidia_smi_memory_csv, parse_proc_cpuinfo, parse_proc_hardware,
+    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
+    parse_spd_decode_dimms, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
+    DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord,
+    HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
+    LshwStorageRecord, PciRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -936,6 +937,7 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let mut devices = Vec::new();
     let lshw = storage_lshw_records(ctx).await;
     let lshw_storage = storage_lshw_storage_records(ctx).await;
+    let lspci = storage_lspci_records(ctx).await;
     let hwinfo = storage_hwinfo_records(ctx).await;
 
     for path in ctx.runner.glob("/sys/block/*").await.paths {
@@ -994,6 +996,7 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         device.serial = serial;
         let device = apply_storage_driver(ctx, device, name).await;
         let device = apply_storage_lshw_storage_enrichment(device, &lshw_storage);
+        let device = apply_storage_lspci_enrichment(device, &lspci);
         let device = apply_storage_lshw_enrichment(device, &lshw);
         let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
         let device = apply_storage_hdparm_enrichment(ctx, device).await;
@@ -1017,6 +1020,12 @@ struct StorageLshwRecords {
 struct StorageLshwStorageRecords {
     source: String,
     by_pci_address: HashMap<String, LshwStorageRecord>,
+}
+
+#[derive(Default)]
+struct StorageLspciRecords {
+    source: String,
+    by_pci_address: HashMap<String, PciRecord>,
 }
 
 #[derive(Default)]
@@ -1066,6 +1075,25 @@ async fn storage_lshw_storage_records(ctx: &ProbeContext<'_>) -> StorageLshwStor
         })
         .collect();
     StorageLshwStorageRecords {
+        source: result.source,
+        by_pci_address,
+    }
+}
+
+async fn storage_lspci_records(ctx: &ProbeContext<'_>) -> StorageLspciRecords {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return StorageLspciRecords::default();
+    }
+
+    let by_pci_address = parse_lspci_nn_k(&result.stdout)
+        .into_iter()
+        .map(|record| (record.address.clone(), record))
+        .collect();
+    StorageLspciRecords {
         source: result.source,
         by_pci_address,
     }
@@ -1421,6 +1449,50 @@ fn apply_storage_lshw_storage_enrichment(
     device
 }
 
+fn apply_storage_lspci_enrichment(mut device: Device, lspci: &StorageLspciRecords) -> Device {
+    let Some(address) = (match device.bus.as_ref() {
+        Some(BusInfo::Pci { address, .. }) => Some(address),
+        _ => None,
+    }) else {
+        return device;
+    };
+    let Some(record) = lspci.by_pci_address.get(address) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if let DeviceProperties::Storage(storage) = &mut device.properties {
+        if storage.controller_vendor.is_none() && record.vendor.is_some() {
+            storage.controller_vendor = record.vendor.clone();
+            contributed = true;
+        }
+        if storage.controller_model.is_none() && record.device.is_some() {
+            storage.controller_model = record.device.clone();
+            contributed = true;
+        }
+        if storage.controller_driver.is_none() && record.kernel_driver.is_some() {
+            storage.controller_driver = record.kernel_driver.clone();
+            contributed = true;
+        }
+    }
+
+    if contributed
+        && !lspci.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == lspci.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: lspci.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
 async fn apply_storage_hdparm_enrichment(ctx: &ProbeContext<'_>, mut device: Device) -> Device {
     let Some(node) = (match &device.properties {
         DeviceProperties::Storage(storage) => storage.device_node.clone(),
@@ -1620,6 +1692,7 @@ impl Probe for StorageProbe {
         };
         let lshw = storage_lshw_records(ctx).await;
         let lshw_storage = storage_lshw_storage_records(ctx).await;
+        let lspci = storage_lspci_records(ctx).await;
         let hwinfo = storage_hwinfo_records(ctx).await;
         let mut devices = Vec::new();
         for dev in records {
@@ -1652,6 +1725,7 @@ impl Probe for StorageProbe {
             device.serial = dev.serial;
             let device = apply_storage_driver(ctx, device, &name).await;
             let device = apply_storage_lshw_storage_enrichment(device, &lshw_storage);
+            let device = apply_storage_lspci_enrichment(device, &lspci);
             let device = apply_storage_lshw_enrichment(device, &lshw);
             let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
             let device = apply_storage_hdparm_enrichment(ctx, device).await;
