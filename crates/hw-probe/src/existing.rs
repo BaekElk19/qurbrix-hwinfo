@@ -579,10 +579,42 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         device.vendor = vendor;
         device.model = model;
         device.serial = serial;
-        devices.push(device);
+        devices.push(apply_storage_driver(ctx, device, name).await);
     }
 
     devices
+}
+
+async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str) -> Device {
+    let sysfs_path = Path::new("/sys/block").join(name);
+    let Some(driver) = read_optional_trimmed(ctx, &sysfs_path.join("device/uevent"))
+        .await
+        .and_then(|uevent| parse_uevent_value(&uevent, "DRIVER"))
+    else {
+        return device;
+    };
+
+    let mut device = device.with_driver(DriverInfo {
+        name: Some(driver),
+        version: None,
+        modules: Vec::new(),
+        provider: None,
+        status: DriverStatus::InUse,
+    });
+    let source = sysfs_path.display().to_string();
+    if !device
+        .sources
+        .iter()
+        .any(|evidence| evidence.source == source)
+    {
+        device = device.with_source(SourceEvidence {
+            source,
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
 }
 
 fn is_ignored_block_device(name: &str) -> bool {
@@ -654,36 +686,37 @@ impl Probe for StorageProbe {
                 };
             }
         };
-        let devices = records
-            .into_iter()
-            .filter(|dev| dev.device_type.as_deref() == Some("disk"))
-            .map(|dev| {
-                let node = format!("/dev/{}", dev.name);
-                let wwn = dev.wwn.map(normalize_storage_wwn);
-                let mut device = Device::new(
-                    device_id::storage(wwn.as_deref(), dev.serial.as_deref(), &node),
-                    DeviceKind::Storage,
-                    dev.model.clone().unwrap_or_else(|| node.clone()),
-                    DeviceProperties::Storage(StorageInfo {
-                        device_node: Some(node),
-                        size_bytes: dev.size,
-                        media_type: dev.tran,
-                        firmware: dev.rev,
-                        wwn,
-                        ..Default::default()
-                    }),
-                )
-                .with_source(SourceEvidence {
-                    source: result.source.clone(),
-                    kind: SourceKind::Command,
-                    status: SourceStatus::Success,
-                    summary: None,
-                });
-                device.model = dev.model;
-                device.serial = dev.serial;
-                device
-            })
-            .collect();
+        let mut devices = Vec::new();
+        for dev in records {
+            if dev.device_type.as_deref() != Some("disk") {
+                continue;
+            }
+            let name = dev.name;
+            let node = format!("/dev/{name}");
+            let wwn = dev.wwn.map(normalize_storage_wwn);
+            let mut device = Device::new(
+                device_id::storage(wwn.as_deref(), dev.serial.as_deref(), &node),
+                DeviceKind::Storage,
+                dev.model.clone().unwrap_or_else(|| node.clone()),
+                DeviceProperties::Storage(StorageInfo {
+                    device_node: Some(node),
+                    size_bytes: dev.size,
+                    media_type: dev.tran,
+                    firmware: dev.rev,
+                    wwn,
+                    ..Default::default()
+                }),
+            )
+            .with_source(SourceEvidence {
+                source: result.source.clone(),
+                kind: SourceKind::Command,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+            device.model = dev.model;
+            device.serial = dev.serial;
+            devices.push(apply_storage_driver(ctx, device, &name).await);
+        }
         ProbeResult::with_devices(devices)
     }
 }

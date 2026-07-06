@@ -596,6 +596,39 @@ async fn storage_probe_preserves_wwn_and_firmware_from_lsblk_success_path() {
 }
 
 #[tokio::test]
+async fn storage_probe_reads_driver_from_sysfs_for_lsblk_disk() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("sd")
+    );
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Sysfs && source.source == "/sys/block/sda"));
+}
+
+#[tokio::test]
 async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(
@@ -616,6 +649,7 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
         .with_file("/sys/block/sda/device/serial", "S12345\n")
         .with_file("/sys/block/sda/device/wwid", "naa.5002538f00000000\n")
         .with_file("/sys/block/sda/device/rev", "3B2QGXA7\n")
+        .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
         .with_file("/sys/block/sda/queue/rotational", "0\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
@@ -627,6 +661,20 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
     assert_eq!(result.devices[0].vendor.as_deref(), Some("Samsung"));
     assert_eq!(result.devices[0].model.as_deref(), Some("Samsung SSD 980"));
     assert_eq!(result.devices[0].serial.as_deref(), Some("S12345"));
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("sd")
+    );
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
     assert_eq!(
         warning_pairs(&result),
         vec![(
@@ -653,6 +701,14 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
         .expect("expected /sys/block/sda source evidence");
     assert_eq!(source.kind, SourceKind::Sysfs);
     assert_eq!(source.status, SourceStatus::Success);
+    assert_eq!(
+        result.devices[0]
+            .sources
+            .iter()
+            .filter(|source| source.source == "/sys/block/sda")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
