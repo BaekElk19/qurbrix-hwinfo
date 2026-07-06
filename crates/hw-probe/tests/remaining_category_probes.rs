@@ -641,6 +641,50 @@ async fn gpu_probe_enriches_human_readable_lshw_display_fields() {
 }
 
 #[tokio::test]
+async fn gpu_probe_enriches_single_gpu_from_glxinfo_basic() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics [8086:9a49]\n\tKernel driver in use: i915\n",
+        )
+        .with_command(
+            "glxinfo",
+            ["-B"],
+            "OpenGL vendor string: Intel\n\
+             OpenGL renderer string: Mesa Intel(R) UHD Graphics 620 (KBL GT2)\n\
+             OpenGL version string: 4.6 (Compatibility Profile) Mesa 23.1.9\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "Mesa Intel(R) UHD Graphics 620 (KBL GT2)");
+    assert_eq!(
+        device.model.as_deref(),
+        Some("Mesa Intel(R) UHD Graphics 620 (KBL GT2)")
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "glxinfo -B"));
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(
+                gpu.renderer.as_deref(),
+                Some("Mesa Intel(R) UHD Graphics 620 (KBL GT2)")
+            );
+            assert_eq!(gpu.opengl_vendor.as_deref(), Some("Intel"));
+            assert_eq!(
+                gpu.opengl_version.as_deref(),
+                Some("4.6 (Compatibility Profile) Mesa 23.1.9")
+            );
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn gpu_probe_reads_drm_vram_total() {
     let runner = FakeSourceRunner::new()
         .with_command(

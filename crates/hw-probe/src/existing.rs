@@ -12,12 +12,13 @@ use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id, parse_dmesg_gpu_vram,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor,
-    parse_dmidecode_system, parse_edid, parse_gpu_lspci, parse_hdparm_identify, parse_hwinfo_disk,
-    parse_hwinfo_monitor, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
-    parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
-    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes,
-    parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps, parse_xrandr_query,
-    parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord,
+    parse_dmidecode_system, parse_edid, parse_glxinfo_basic, parse_gpu_lspci,
+    parse_hdparm_identify, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
+    parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
+    parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
+    parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes,
+    parse_smartctl_json, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
+    DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord,
     HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
@@ -2168,6 +2169,7 @@ impl Probe for GpuProbe {
         let lshw = gpu_lshw_display_records(ctx).await;
         let drm = gpu_drm_records(ctx).await;
         let dmesg = gpu_dmesg_records(ctx).await;
+        let glxinfo = gpu_glxinfo_record(ctx).await;
         let result = ctx
             .runner
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
@@ -2176,6 +2178,7 @@ impl Probe for GpuProbe {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
             fallback.devices =
                 gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &lshw, &drm, &dmesg).await;
+            fallback.devices = apply_gpu_glxinfo_to_unique_device(fallback.devices, &glxinfo);
             return fallback;
         }
         let mut probe_result = ProbeResult::default();
@@ -2239,6 +2242,7 @@ impl Probe for GpuProbe {
                 &drm,
             ));
         }
+        probe_result.devices = apply_gpu_glxinfo_to_unique_device(probe_result.devices, &glxinfo);
         probe_result
     }
 }
@@ -2260,9 +2264,88 @@ struct GpuDmesgRecords {
     by_pci_address: HashMap<String, DmesgGpuVramRecord>,
 }
 
+#[derive(Default)]
+struct GpuGlxinfoRecord {
+    source: String,
+    record: GlxinfoBasicRecord,
+}
+
 struct GpuDrmRecord {
     memory_bytes: u64,
     source: String,
+}
+
+async fn gpu_glxinfo_record(ctx: &ProbeContext<'_>) -> GpuGlxinfoRecord {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("glxinfo", ["-B"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return GpuGlxinfoRecord::default();
+    }
+
+    GpuGlxinfoRecord {
+        source: result.source,
+        record: parse_glxinfo_basic(&result.stdout),
+    }
+}
+
+fn apply_gpu_glxinfo_to_unique_device(
+    mut devices: Vec<Device>,
+    glxinfo: &GpuGlxinfoRecord,
+) -> Vec<Device> {
+    if devices.len() != 1 {
+        return devices;
+    }
+    let device = devices.remove(0);
+    vec![apply_gpu_glxinfo_enrichment(device, glxinfo)]
+}
+
+fn apply_gpu_glxinfo_enrichment(mut device: Device, glxinfo: &GpuGlxinfoRecord) -> Device {
+    let record = &glxinfo.record;
+    let mut contributed = false;
+
+    if let Some(renderer) = record.renderer.clone() {
+        device.name = renderer.clone();
+        device.model = Some(renderer);
+        contributed = true;
+    }
+    if device.vendor.is_none() {
+        if let Some(vendor) = record.vendor.clone() {
+            device.vendor = Some(vendor);
+            contributed = true;
+        }
+    }
+    if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+        if gpu.renderer.is_none() && record.renderer.is_some() {
+            gpu.renderer = record.renderer.clone();
+            contributed = true;
+        }
+        if gpu.opengl_vendor.is_none() && record.vendor.is_some() {
+            gpu.opengl_vendor = record.vendor.clone();
+            contributed = true;
+        }
+        if gpu.opengl_version.is_none() && record.version.is_some() {
+            gpu.opengl_version = record.version.clone();
+            contributed = true;
+        }
+    }
+
+    if contributed
+        && !glxinfo.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == glxinfo.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: glxinfo.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
 }
 
 async fn gpu_lshw_display_records(ctx: &ProbeContext<'_>) -> GpuLshwDisplayRecords {

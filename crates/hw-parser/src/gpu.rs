@@ -15,6 +15,13 @@ pub struct DmesgGpuVramRecord {
     pub memory_bytes: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GlxinfoBasicRecord {
+    pub renderer: Option<String>,
+    pub vendor: Option<String>,
+    pub version: Option<String>,
+}
+
 pub fn parse_gpu_lspci(input: &str) -> Vec<PciRecord> {
     parse_lspci_nn_k(input)
         .into_iter()
@@ -27,6 +34,28 @@ pub fn parse_gpu_lspci(input: &str) -> Vec<PciRecord> {
             class.contains("vga") || class.contains("3d controller") || class.contains("display")
         })
         .collect()
+}
+
+pub fn parse_glxinfo_basic(input: &str) -> GlxinfoBasicRecord {
+    let mut record = GlxinfoBasicRecord::default();
+
+    for line in input.lines() {
+        let Some((key, value)) = line.trim().split_once(':') else {
+            continue;
+        };
+        let value = clean_lshw_display_value(value);
+        match key.trim() {
+            "OpenGL renderer string" => record.renderer = value,
+            "OpenGL vendor string" => record.vendor = value,
+            "OpenGL version string" => record.version = value,
+            "OpenGL core profile version string" if record.version.is_none() => {
+                record.version = value;
+            }
+            _ => {}
+        }
+    }
+
+    record
 }
 
 pub fn parse_dmesg_gpu_vram(input: &str) -> Vec<DmesgGpuVramRecord> {

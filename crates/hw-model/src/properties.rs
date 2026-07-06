@@ -137,6 +137,9 @@ pub struct StorageInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct GpuInfo {
     pub vendor: Option<String>,
+    pub renderer: Option<String>,
+    pub opengl_vendor: Option<String>,
+    pub opengl_version: Option<String>,
     pub memory_bytes: Option<u64>,
     pub current_resolution: Option<String>,
     pub max_resolution: Option<String>,
