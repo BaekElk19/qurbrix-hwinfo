@@ -1057,6 +1057,49 @@ async fn storage_probe_preserves_nvme_controller_pci_identity_from_sysfs() {
 }
 
 #[tokio::test]
+async fn storage_probe_enriches_controller_identity_from_lshw_storage() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"nvme0n1","type":"disk","size":1024,"model":"NVMe Disk","serial":"N1","tran":"nvme"}]}"#,
+        )
+        .with_file(
+            "/sys/class/nvme/nvme0/device/uevent",
+            "DRIVER=nvme\nPCI_CLASS=10802\nPCI_ID=144D:A80A\nPCI_SUBSYS_ID=144D:A801\nPCI_SLOT_NAME=0000:0d:00.0\n",
+        )
+        .with_command(
+            "lshw",
+            ["-class", "storage"],
+            "  *-storage\n\
+                  description: Non-Volatile memory controller\n\
+                  product: NVMe SSD Controller PM9A1/PM9A3/980PRO\n\
+                  vendor: Samsung Electronics Co Ltd\n\
+                  bus info: pci@0000:0d:00.0\n\
+                  configuration: driver=nvme latency=0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    let DeviceProperties::Storage(storage) = &device.properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(
+        storage.controller_vendor.as_deref(),
+        Some("Samsung Electronics Co Ltd")
+    );
+    assert_eq!(
+        storage.controller_model.as_deref(),
+        Some("NVMe SSD Controller PM9A1/PM9A3/980PRO")
+    );
+    assert_eq!(storage.controller_driver.as_deref(), Some("nvme"));
+    assert!(device.sources.iter().any(|source| {
+        source.kind == SourceKind::Command && source.source == "lshw -class storage"
+    }));
+}
+
+#[tokio::test]
 async fn storage_probe_enriches_human_readable_lshw_fields() {
     let runner = FakeSourceRunner::new()
         .with_command(

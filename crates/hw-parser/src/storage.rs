@@ -44,6 +44,14 @@ pub struct LshwDiskRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LshwStorageRecord {
+    pub bus_info: Option<String>,
+    pub product: Option<String>,
+    pub vendor: Option<String>,
+    pub driver: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct HwinfoDiskRecord {
     pub device_node: Option<String>,
     pub model: Option<String>,
@@ -174,6 +182,42 @@ pub fn parse_lshw_disk(input: &str) -> Vec<LshwDiskRecord> {
     records
 }
 
+pub fn parse_lshw_storage(input: &str) -> Vec<LshwStorageRecord> {
+    let mut records = Vec::new();
+    let mut current: Option<LshwStorageRecord> = None;
+
+    for line in input.lines().chain(std::iter::once("")) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("*-storage") {
+            push_lshw_storage_record(&mut records, current.take());
+            current = Some(LshwStorageRecord::default());
+            continue;
+        }
+        if trimmed.starts_with("*-") {
+            push_lshw_storage_record(&mut records, current.take());
+            continue;
+        }
+
+        let Some(record) = current.as_mut() else {
+            continue;
+        };
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "bus info" => record.bus_info = clean_lshw_disk_value(value),
+            "product" => record.product = clean_lshw_disk_value(value),
+            "vendor" => record.vendor = clean_lshw_disk_value(value),
+            "configuration" => parse_lshw_storage_configuration(record, value),
+            _ => {}
+        }
+    }
+
+    push_lshw_storage_record(&mut records, current.take());
+    records
+}
+
 pub fn parse_hwinfo_disk(input: &str) -> Vec<HwinfoDiskRecord> {
     let mut records = Vec::new();
     let mut section = Vec::new();
@@ -268,6 +312,21 @@ fn push_lshw_disk_record(records: &mut Vec<LshwDiskRecord>, record: Option<LshwD
     }
 }
 
+fn push_lshw_storage_record(
+    records: &mut Vec<LshwStorageRecord>,
+    record: Option<LshwStorageRecord>,
+) {
+    if let Some(record) = record {
+        if record.bus_info.is_some()
+            || record.product.is_some()
+            || record.vendor.is_some()
+            || record.driver.is_some()
+        {
+            records.push(record);
+        }
+    }
+}
+
 fn parse_lshw_disk_configuration(record: &mut LshwDiskRecord, value: &str) {
     for part in value.split_whitespace() {
         let Some((key, value)) = part.split_once('=') else {
@@ -275,6 +334,17 @@ fn parse_lshw_disk_configuration(record: &mut LshwDiskRecord, value: &str) {
         };
         if key == "firmware" {
             record.firmware = clean_lshw_disk_value(value);
+        }
+    }
+}
+
+fn parse_lshw_storage_configuration(record: &mut LshwStorageRecord, value: &str) {
+    for part in value.split_whitespace() {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        if key == "driver" {
+            record.driver = clean_lshw_disk_value(value);
         }
     }
 }

@@ -1,6 +1,6 @@
 use hw_parser::{
-    parse_hdparm_identify, parse_hwinfo_disk, parse_lshw_disk, parse_lspci_nn_k, parse_lsusb,
-    parse_lsusb_verbose, parse_smartctl_json,
+    parse_hdparm_identify, parse_hwinfo_disk, parse_lshw_disk, parse_lshw_storage,
+    parse_lspci_nn_k, parse_lsusb, parse_lsusb_verbose, parse_smartctl_json,
 };
 
 #[test]
@@ -78,6 +78,30 @@ fn parses_lshw_disk_records() {
     assert_eq!(records[0].vendor.as_deref(), Some("Samsung"));
     assert_eq!(records[0].serial.as_deref(), Some("S12345"));
     assert_eq!(records[0].firmware.as_deref(), Some("3B2QGXA7"));
+}
+
+#[test]
+fn parses_lshw_storage_controller_records() {
+    let records = parse_lshw_storage(
+        "  *-storage\n\
+              description: Non-Volatile memory controller\n\
+              product: NVMe SSD Controller PM9A1/PM9A3/980PRO\n\
+              vendor: Samsung Electronics Co Ltd\n\
+              bus info: pci@0000:0d:00.0\n\
+              configuration: driver=nvme latency=0\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].bus_info.as_deref(), Some("pci@0000:0d:00.0"));
+    assert_eq!(
+        records[0].product.as_deref(),
+        Some("NVMe SSD Controller PM9A1/PM9A3/980PRO")
+    );
+    assert_eq!(
+        records[0].vendor.as_deref(),
+        Some("Samsung Electronics Co Ltd")
+    );
+    assert_eq!(records[0].driver.as_deref(), Some("nvme"));
 }
 
 #[test]
