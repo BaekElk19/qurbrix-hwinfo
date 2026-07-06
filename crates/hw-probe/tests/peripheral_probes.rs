@@ -710,6 +710,103 @@ async fn input_probe_uses_sysfs_when_proc_bus_input_devices_is_missing() {
 }
 
 #[tokio::test]
+async fn input_probe_classifies_sysfs_events_from_capabilities() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/input/event*",
+            vec![
+                PathBuf::from("/sys/class/input/event0"),
+                PathBuf::from("/sys/class/input/event1"),
+                PathBuf::from("/sys/class/input/event2"),
+            ],
+        )
+        .with_file(
+            "/sys/class/input/event0/device/name",
+            "Goodix Capacitive Device\n",
+        )
+        .with_file("/sys/class/input/event0/device/capabilities/ev", "b\n")
+        .with_file("/sys/class/input/event0/device/capabilities/abs", "3\n")
+        .with_file(
+            "/sys/class/input/event0/device/capabilities/key",
+            "400 0 0 0 0 0\n",
+        )
+        .with_file("/sys/class/input/event0/device/properties", "2\n")
+        .with_file("/sys/class/input/event1/device/name", "ELAN Input Device\n")
+        .with_file("/sys/class/input/event1/device/capabilities/ev", "b\n")
+        .with_file("/sys/class/input/event1/device/capabilities/abs", "3\n")
+        .with_file(
+            "/sys/class/input/event1/device/capabilities/key",
+            "420 0 0 0 0 0\n",
+        )
+        .with_file("/sys/class/input/event1/device/properties", "1\n")
+        .with_file(
+            "/sys/class/input/event2/device/name",
+            "Wacom HID 52FD Pen\n",
+        )
+        .with_file("/sys/class/input/event2/device/capabilities/ev", "b\n")
+        .with_file("/sys/class/input/event2/device/capabilities/abs", "3\n")
+        .with_file(
+            "/sys/class/input/event2/device/capabilities/key",
+            "1 0 0 0 0 0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = InputProbe.probe(&ctx).await;
+
+    let kinds = result
+        .devices
+        .iter()
+        .map(|device| {
+            let DeviceProperties::Input(info) = &device.properties else {
+                panic!("expected input properties");
+            };
+            info.input_kind
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        vec![
+            InputKind::Touchscreen,
+            InputKind::Touchpad,
+            InputKind::Tablet
+        ]
+    );
+}
+
+#[tokio::test]
+async fn input_probe_classifies_proc_events_from_capabilities() {
+    let runner = FakeSourceRunner::new().with_file(
+        "/proc/bus/input/devices",
+        "I: Bus=0018 Vendor=27c6 Product=0113 Version=0100\n\
+         N: Name=\"Goodix Capacitive Device\"\n\
+         H: Handlers=event0\n\
+         B: PROP=2\n\
+         B: EV=b\n\
+         B: KEY=400 0 0 0 0 0\n\
+         B: ABS=3\n\n\
+         I: Bus=0003 Vendor=056a Product=52fd Version=0111\n\
+         N: Name=\"Wacom HID 52FD Pen\"\n\
+         H: Handlers=event1\n\
+         B: EV=b\n\
+         B: KEY=1 0 0 0 0 0\n\
+         B: ABS=3\n\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = InputProbe.probe(&ctx).await;
+
+    let kinds = result
+        .devices
+        .iter()
+        .map(|device| {
+            let DeviceProperties::Input(info) = &device.properties else {
+                panic!("expected input properties");
+            };
+            info.input_kind
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(kinds, vec![InputKind::Touchscreen, InputKind::Tablet]);
+}
+
+#[tokio::test]
 async fn input_probe_uses_sysfs_when_proc_bus_input_devices_parses_empty() {
     let runner = FakeSourceRunner::new()
         .with_file("/proc/bus/input/devices", "\n")

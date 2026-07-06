@@ -4,7 +4,7 @@ use hw_model::{
     device_id, Device, DeviceKind, DeviceProperties, InputInfo, InputKind, ScanWarning,
     SourceEvidence, SourceKind, SourceStatus,
 };
-use hw_parser::parse_proc_bus_input_devices;
+use hw_parser::{parse_proc_bus_input_devices, InputCapabilities};
 use std::path::Path;
 
 pub struct InputProbe;
@@ -55,7 +55,7 @@ impl Probe for InputProbe {
                     .name
                     .clone()
                     .unwrap_or_else(|| "Input device".to_string());
-                let input_kind = classify_input(&name, &input.handlers);
+                let input_kind = classify_input(&name, &input.handlers, &input.capabilities);
                 Device::new(
                     device_id::input_event(&event),
                     DeviceKind::Input,
@@ -108,13 +108,14 @@ async fn probe_sysfs_inputs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         let name = read_trimmed(ctx, &path.join("device/name"))
             .await
             .unwrap_or_else(|| event_node.clone());
+        let capabilities = read_sysfs_input_capabilities(ctx, &path).await;
         devices.push(
             Device::new(
                 device_id::input_event(&event),
                 DeviceKind::Input,
                 name.clone(),
                 DeviceProperties::Input(InputInfo {
-                    input_kind: classify_input(&name, &[]),
+                    input_kind: classify_input(&name, &[], &capabilities),
                     event_node: Some(event_node),
                     phys: read_trimmed(ctx, &path.join("device/phys")).await,
                     uniq: read_trimmed(ctx, &path.join("device/uniq")).await,
@@ -149,7 +150,20 @@ fn event_index(name: &str) -> Option<u32> {
     suffix.parse().ok()
 }
 
-fn classify_input(name: &str, handlers: &[String]) -> InputKind {
+async fn read_sysfs_input_capabilities(ctx: &ProbeContext<'_>, path: &Path) -> InputCapabilities {
+    let capabilities_path = path.join("device/capabilities");
+    InputCapabilities {
+        ev: read_trimmed(ctx, &capabilities_path.join("ev")).await,
+        key: read_trimmed(ctx, &capabilities_path.join("key")).await,
+        rel: read_trimmed(ctx, &capabilities_path.join("rel")).await,
+        abs: read_trimmed(ctx, &capabilities_path.join("abs")).await,
+        properties: read_trimmed(ctx, &path.join("device/properties"))
+            .await
+            .or(read_trimmed(ctx, &capabilities_path.join("prop")).await),
+    }
+}
+
+fn classify_input(name: &str, handlers: &[String], capabilities: &InputCapabilities) -> InputKind {
     let lower = name.to_ascii_lowercase();
     if handlers.iter().any(|h| h == "kbd") || lower.contains("keyboard") {
         InputKind::Keyboard
@@ -157,11 +171,85 @@ fn classify_input(name: &str, handlers: &[String]) -> InputKind {
         InputKind::Touchpad
     } else if lower.contains("touchscreen") {
         InputKind::Touchscreen
+    } else if let Some(kind) = classify_input_capabilities(capabilities) {
+        kind
     } else if handlers.iter().any(|h| h.starts_with("mouse")) || lower.contains("mouse") {
         InputKind::Mouse
     } else {
         InputKind::UnknownInput
     }
+}
+
+fn classify_input_capabilities(capabilities: &InputCapabilities) -> Option<InputKind> {
+    const EV_REL: usize = 0x02;
+    const EV_ABS: usize = 0x03;
+    const REL_X: usize = 0x00;
+    const REL_Y: usize = 0x01;
+    const ABS_X: usize = 0x00;
+    const ABS_Y: usize = 0x01;
+    const INPUT_PROP_POINTER: usize = 0x00;
+    const INPUT_PROP_DIRECT: usize = 0x01;
+    const BTN_TOOL_PEN: usize = 0x140;
+    const BTN_TOOL_RUBBER: usize = 0x141;
+    const BTN_TOOL_BRUSH: usize = 0x142;
+    const BTN_TOOL_PENCIL: usize = 0x143;
+    const BTN_TOOL_AIRBRUSH: usize = 0x144;
+    const BTN_TOOL_FINGER: usize = 0x145;
+    const BTN_TOUCH: usize = 0x14a;
+    const BTN_STYLUS: usize = 0x14b;
+    const BTN_STYLUS2: usize = 0x14c;
+
+    let has_abs_xy = capability_bit(capabilities.ev.as_deref(), EV_ABS)
+        && capability_bit(capabilities.abs.as_deref(), ABS_X)
+        && capability_bit(capabilities.abs.as_deref(), ABS_Y);
+    let has_rel_xy = capability_bit(capabilities.ev.as_deref(), EV_REL)
+        && capability_bit(capabilities.rel.as_deref(), REL_X)
+        && capability_bit(capabilities.rel.as_deref(), REL_Y);
+    let has_touch = capability_bit(capabilities.key.as_deref(), BTN_TOUCH);
+    let has_finger_tool = capability_bit(capabilities.key.as_deref(), BTN_TOOL_FINGER);
+    let has_pen_tool = [
+        BTN_TOOL_PEN,
+        BTN_TOOL_RUBBER,
+        BTN_TOOL_BRUSH,
+        BTN_TOOL_PENCIL,
+        BTN_TOOL_AIRBRUSH,
+        BTN_STYLUS,
+        BTN_STYLUS2,
+    ]
+    .into_iter()
+    .any(|bit| capability_bit(capabilities.key.as_deref(), bit));
+    let direct = capability_bit(capabilities.properties.as_deref(), INPUT_PROP_DIRECT);
+    let pointer = capability_bit(capabilities.properties.as_deref(), INPUT_PROP_POINTER);
+
+    if has_abs_xy && has_pen_tool {
+        Some(InputKind::Tablet)
+    } else if has_abs_xy && has_touch && direct {
+        Some(InputKind::Touchscreen)
+    } else if has_abs_xy && has_touch && (pointer || has_finger_tool) {
+        Some(InputKind::Touchpad)
+    } else if has_rel_xy {
+        Some(InputKind::Mouse)
+    } else {
+        None
+    }
+}
+
+fn capability_bit(mask: Option<&str>, bit: usize) -> bool {
+    let Some(mask) = mask else {
+        return false;
+    };
+    let target_word = bit / 64;
+    let target_bit = bit % 64;
+    for (word_index, word) in mask.split_whitespace().rev().enumerate() {
+        if word_index != target_word {
+            continue;
+        }
+        let word = word.strip_prefix("0x").unwrap_or(word);
+        return u64::from_str_radix(word, 16)
+            .map(|value| value & (1u64 << target_bit) != 0)
+            .unwrap_or(false);
+    }
+    false
 }
 
 async fn read_trimmed(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {
