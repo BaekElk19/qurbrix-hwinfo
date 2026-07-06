@@ -106,15 +106,48 @@ async fn pci_probe_uses_sysfs_when_lspci_is_missing() {
 
 #[tokio::test]
 async fn usb_probe_builds_devices() {
-    let runner = FakeSourceRunner::new().with_command(
-        "lsusb",
-        std::iter::empty::<&str>(),
-        "Bus 001 Device 004: ID 0bda:5689 Realtek Semiconductor Corp. Integrated Camera\n",
-    );
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsusb",
+            std::iter::empty::<&str>(),
+            "Bus 001 Device 004: ID 0bda:5689 Realtek Semiconductor Corp. Integrated Camera\n",
+        )
+        .with_glob(
+            "/sys/bus/usb/devices/*",
+            vec![PathBuf::from("/sys/bus/usb/devices/1-2")],
+        )
+        .with_file("/sys/bus/usb/devices/1-2/busnum", "001\n")
+        .with_file("/sys/bus/usb/devices/1-2/devnum", "004\n")
+        .with_file("/sys/bus/usb/devices/1-2/bDeviceClass", "ef\n")
+        .with_file("/sys/bus/usb/devices/1-2/bDeviceSubClass", "02\n")
+        .with_file("/sys/bus/usb/devices/1-2/bDeviceProtocol", "01\n")
+        .with_file(
+            "/sys/bus/usb/devices/1-2/manufacturer",
+            "Realtek Semiconductor Corp.\n",
+        )
+        .with_file("/sys/bus/usb/devices/1-2/serial", "ABC123\n")
+        .with_file("/sys/bus/usb/devices/1-2/speed", "480\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = UsbProbe.probe(&ctx).await;
-    assert_eq!(result.devices[0].id, "usb:001:004");
+    assert_eq!(result.devices[0].id, "usb:0bda:5689:ABC123");
     assert_eq!(result.devices[0].kind, DeviceKind::Usb);
+    let DeviceProperties::Usb(info) = &result.devices[0].properties else {
+        panic!("expected usb properties");
+    };
+    assert_eq!(
+        info.manufacturer.as_deref(),
+        Some("Realtek Semiconductor Corp.")
+    );
+    assert_eq!(info.serial.as_deref(), Some("ABC123"));
+    assert_eq!(info.speed.as_deref(), Some("480"));
+    assert_eq!(info.class.as_deref(), Some("ef"));
+    assert_eq!(info.subclass.as_deref(), Some("02"));
+    assert_eq!(info.protocol.as_deref(), Some("01"));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Sysfs
+            && source.source == "/sys/bus/usb/devices/1-2"));
 }
 
 #[tokio::test]
