@@ -526,6 +526,33 @@ async fn printer_probe_reads_default_destination() {
 }
 
 #[tokio::test]
+async fn printer_probe_reads_make_model_from_long_status() {
+    let runner = FakeSourceRunner::new()
+        .with_command("lpstat", ["-a"], "Office accepting requests since now\n")
+        .with_command(
+            "lpstat",
+            ["-v"],
+            "device for Office: ipp://printer.local/ipp/print\n",
+        )
+        .with_command(
+            "lpstat",
+            ["-l", "-p"],
+            "printer Office is idle. enabled since now\n\tDescription: HP LaserJet Pro M404dn\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = PrinterProbe.probe(&ctx).await;
+
+    let DeviceProperties::Printer(info) = &result.devices[0].properties else {
+        panic!("expected printer properties");
+    };
+    assert_eq!(info.make_model.as_deref(), Some("HP LaserJet Pro M404dn"));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "lpstat -l -p"));
+}
+
+#[tokio::test]
 async fn printer_probe_uses_uri_source_when_status_source_is_missing() {
     let runner = FakeSourceRunner::new().with_command(
         "lpstat",

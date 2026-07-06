@@ -4,7 +4,7 @@ use hw_model::{
     device_id, Device, DeviceKind, DeviceProperties, PrinterInfo, ScanWarning, SourceEvidence,
     SourceKind, SourceStatus,
 };
-use hw_parser::{parse_lpstat_a, parse_lpstat_d, parse_lpstat_v};
+use hw_parser::{parse_lpstat_a, parse_lpstat_d, parse_lpstat_l_p, parse_lpstat_v};
 use hw_source::CommandSpec;
 
 pub struct PrinterProbe;
@@ -56,6 +56,7 @@ impl Probe for PrinterProbe {
             Vec::new()
         };
         let default = read_default_printer(ctx).await;
+        let details = read_printer_details(ctx).await;
         let statuses = parse_lpstat_a(&status.stdout);
         if statuses.is_empty() {
             warnings.push(
@@ -83,7 +84,10 @@ impl Probe for PrinterProbe {
                 let is_default = default
                     .as_ref()
                     .map(|default| default.queue == printer.queue);
-                let device = Device::new(
+                let detail = details
+                    .as_ref()
+                    .and_then(|details| details.records.iter().find(|d| d.queue == printer.queue));
+                let mut device = Device::new(
                     device_id::printer(&printer.queue),
                     DeviceKind::Printer,
                     printer.queue.clone(),
@@ -91,7 +95,7 @@ impl Probe for PrinterProbe {
                         queue_name: Some(printer.queue),
                         accepting: Some(printer.accepting),
                         device_uri: uri,
-                        make_model: None,
+                        make_model: detail.and_then(|detail| detail.make_model.clone()),
                         is_default,
                     }),
                 )
@@ -101,6 +105,19 @@ impl Probe for PrinterProbe {
                     status: SourceStatus::Success,
                     summary: None,
                 });
+                if detail
+                    .and_then(|detail| detail.make_model.as_ref())
+                    .is_some()
+                {
+                    if let Some(details) = details.as_ref() {
+                        device = device.with_source(SourceEvidence {
+                            source: details.source.clone(),
+                            kind: SourceKind::Command,
+                            status: SourceStatus::Success,
+                            summary: None,
+                        });
+                    }
+                }
                 with_default_source(device, default.as_ref())
             })
             .collect();
@@ -112,9 +129,28 @@ impl Probe for PrinterProbe {
     }
 }
 
+struct PrinterDetails {
+    source: String,
+    records: Vec<hw_parser::PrinterDetailRecord>,
+}
+
 struct PrinterDefault {
     queue: String,
     source: String,
+}
+
+async fn read_printer_details(ctx: &ProbeContext<'_>) -> Option<PrinterDetails> {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("lpstat", ["-l", "-p"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return None;
+    }
+    Some(PrinterDetails {
+        source: result.source,
+        records: parse_lpstat_l_p(&result.stdout),
+    })
 }
 
 async fn read_default_printer(ctx: &ProbeContext<'_>) -> Option<PrinterDefault> {
