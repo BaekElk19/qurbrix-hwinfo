@@ -1,3 +1,4 @@
+Architecture	: sw_64
 processor	: 0
 cpu model	: Sunway SW1621
 cpu MHz		: 2000.000

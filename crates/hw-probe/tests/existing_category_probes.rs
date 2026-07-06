@@ -442,15 +442,27 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
 
 #[tokio::test]
 async fn cpu_probe_normalizes_vendor_from_proc_cpuinfo_samples() {
-    for (path, expected_vendor) in [
-        ("cpu/proc-cpuinfo-intel-x86_64.txt", "Intel"),
-        ("cpu/proc-cpuinfo-amd-x86_64.txt", "AMD"),
-        ("cpu/proc-cpuinfo-hygon.txt", "Hygon"),
-        ("cpu/proc-cpuinfo-zhaoxin.txt", "Zhaoxin"),
-        ("cpu/proc-cpuinfo-phytium-arm64.txt", "Phytium"),
-        ("cpu/proc-cpuinfo-kunpeng-arm64.txt", "HiSilicon"),
-        ("cpu/proc-cpuinfo-hisilicon-kirin.txt", "HiSilicon"),
-        ("cpu/proc-cpuinfo-sunway.txt", "Sunway"),
+    for (path, expected_vendor, expected_architecture) in [
+        ("cpu/proc-cpuinfo-intel-x86_64.txt", "Intel", None),
+        ("cpu/proc-cpuinfo-amd-x86_64.txt", "AMD", None),
+        ("cpu/proc-cpuinfo-hygon.txt", "Hygon", None),
+        ("cpu/proc-cpuinfo-zhaoxin.txt", "Zhaoxin", None),
+        (
+            "cpu/proc-cpuinfo-phytium-arm64.txt",
+            "Phytium",
+            Some("aarch64"),
+        ),
+        (
+            "cpu/proc-cpuinfo-kunpeng-arm64.txt",
+            "HiSilicon",
+            Some("aarch64"),
+        ),
+        (
+            "cpu/proc-cpuinfo-hisilicon-kirin.txt",
+            "HiSilicon",
+            Some("aarch64"),
+        ),
+        ("cpu/proc-cpuinfo-sunway.txt", "Sunway", Some("sw_64")),
     ] {
         let runner = FakeSourceRunner::new().with_file("/proc/cpuinfo", hw_testdata::fixture(path));
         let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
@@ -461,6 +473,7 @@ async fn cpu_probe_normalizes_vendor_from_proc_cpuinfo_samples() {
             panic!("expected CPU properties");
         };
         assert_eq!(cpu.vendor.as_deref(), Some(expected_vendor), "{path}");
+        assert_eq!(cpu.architecture.as_deref(), expected_architecture, "{path}");
         assert_eq!(cpu.threads, Some(2), "{path}");
     }
 }

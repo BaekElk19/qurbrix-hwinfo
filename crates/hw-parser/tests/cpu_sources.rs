@@ -129,7 +129,7 @@ fn parse_proc_cpuinfo_covers_domestic_and_x86_vendor_samples() {
             "Sunway SW1621",
             "Sunway",
             2,
-            None,
+            Some("sw_64"),
         ),
     ] {
         let cpu = parse_proc_cpuinfo(&fixture(path));
