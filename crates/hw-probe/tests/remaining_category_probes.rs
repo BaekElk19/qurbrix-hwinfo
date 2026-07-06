@@ -677,6 +677,35 @@ async fn gpu_probe_reads_drm_vram_total() {
 }
 
 #[tokio::test]
+async fn gpu_probe_reads_dmesg_vram_total_by_pci_address() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 22 [1002:73df]\n\tKernel driver in use: amdgpu\n",
+        )
+        .with_command(
+            "dmesg",
+            std::iter::empty::<&str>(),
+            "[    2.123456] [drm] 0000:03:00.0: VRAM: 8192M 0x0000008000000000 - 0x0000009FFFFFFFFF\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.memory_bytes, Some(8192 * 1024 * 1024));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "dmesg"));
+}
+
+#[tokio::test]
 async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(

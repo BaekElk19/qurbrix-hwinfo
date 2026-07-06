@@ -10,15 +10,15 @@ use hw_model::{
 };
 use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
-    normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
+    normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id, parse_dmesg_gpu_vram,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor,
     parse_dmidecode_system, parse_edid, parse_gpu_lspci, parse_hdparm_identify, parse_hwinfo_disk,
     parse_hwinfo_monitor, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
     parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
     parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes,
     parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps, parse_xrandr_query,
-    parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, HwinfoDiskRecord,
-    HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
+    parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord,
+    HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -2107,6 +2107,7 @@ impl Probe for GpuProbe {
     async fn probe(&self, ctx: &ProbeContext<'_>) -> ProbeResult {
         let lshw = gpu_lshw_display_records(ctx).await;
         let drm = gpu_drm_records(ctx).await;
+        let dmesg = gpu_dmesg_records(ctx).await;
         let result = ctx
             .runner
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
@@ -2114,7 +2115,7 @@ impl Probe for GpuProbe {
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
             fallback.devices =
-                gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &lshw, &drm).await;
+                gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &lshw, &drm, &dmesg).await;
             return fallback;
         }
         let mut probe_result = ProbeResult::default();
@@ -2174,7 +2175,7 @@ impl Probe for GpuProbe {
                 summary: None,
             });
             probe_result.devices.push(apply_gpu_drm_enrichment(
-                apply_gpu_lshw_enrichment(device, &lshw),
+                apply_gpu_lshw_enrichment(apply_gpu_dmesg_enrichment(device, &dmesg), &lshw),
                 &drm,
             ));
         }
@@ -2191,6 +2192,12 @@ struct GpuLshwDisplayRecords {
 #[derive(Default)]
 struct GpuDrmRecords {
     by_pci_address: HashMap<String, GpuDrmRecord>,
+}
+
+#[derive(Default)]
+struct GpuDmesgRecords {
+    source: String,
+    by_pci_address: HashMap<String, DmesgGpuVramRecord>,
 }
 
 struct GpuDrmRecord {
@@ -2289,6 +2296,62 @@ fn apply_gpu_lshw_enrichment(mut device: Device, lshw: &GpuLshwDisplayRecords) -
             summary: None,
         });
     }
+    device
+}
+
+async fn gpu_dmesg_records(ctx: &ProbeContext<'_>) -> GpuDmesgRecords {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("dmesg", std::iter::empty::<&str>()),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return GpuDmesgRecords::default();
+    }
+
+    let by_pci_address = parse_dmesg_gpu_vram(&result.stdout)
+        .into_iter()
+        .map(|record| (record.pci_address.clone(), record))
+        .collect();
+    GpuDmesgRecords {
+        source: result.source,
+        by_pci_address,
+    }
+}
+
+fn apply_gpu_dmesg_enrichment(mut device: Device, dmesg: &GpuDmesgRecords) -> Device {
+    let Some(address) = device.bus.as_ref().and_then(gpu_pci_address) else {
+        return device;
+    };
+    let Some(record) = dmesg.by_pci_address.get(address) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+        if gpu.memory_bytes.is_none() {
+            gpu.memory_bytes = Some(record.memory_bytes);
+            contributed = true;
+        }
+    }
+
+    if contributed
+        && !dmesg.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == dmesg.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: dmesg.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+
     device
 }
 
@@ -2391,6 +2454,7 @@ async fn gpu_devices_from_sysfs_pci(
     consumed: &mut Vec<DeviceRef>,
     lshw: &GpuLshwDisplayRecords,
     drm: &GpuDrmRecords,
+    dmesg: &GpuDmesgRecords,
 ) -> Vec<Device> {
     let mut devices = Vec::new();
     for record in read_sysfs_pci_records(ctx).await {
@@ -2448,7 +2512,7 @@ async fn gpu_devices_from_sysfs_pci(
             });
         }
         devices.push(apply_gpu_drm_enrichment(
-            apply_gpu_lshw_enrichment(device, lshw),
+            apply_gpu_lshw_enrichment(apply_gpu_dmesg_enrichment(device, dmesg), lshw),
             drm,
         ));
     }

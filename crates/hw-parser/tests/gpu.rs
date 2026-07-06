@@ -1,4 +1,4 @@
-use hw_parser::{parse_gpu_lspci, parse_lshw_display};
+use hw_parser::{parse_dmesg_gpu_vram, parse_gpu_lspci, parse_lshw_display};
 
 #[test]
 fn parses_lshw_display_records() {
@@ -32,4 +32,15 @@ fn gpu_lspci_keeps_display_records() {
     );
 
     assert_eq!(records.len(), 1);
+}
+
+#[test]
+fn parses_dmesg_gpu_vram_records() {
+    let records = parse_dmesg_gpu_vram(
+        "[    2.123456] [drm] 0000:03:00.0: VRAM: 8192M 0x0000008000000000 - 0x0000009FFFFFFFFF\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].pci_address, "0000:03:00.0");
+    assert_eq!(records[0].memory_bytes, 8192 * 1024 * 1024);
 }
