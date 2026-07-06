@@ -172,6 +172,37 @@ fn parses_lshw_cdrom_records() {
 }
 
 #[test]
+fn parses_hwinfo_cdrom_records() {
+    let records = parse_hwinfo_cdrom(
+        "24: SCSI 200.0: 10602 CD-ROM (DVD)\n\
+         \tHardware Class: cdrom\n\
+         \tModel: \"HL-DT-ST DVDRAM GP60\"\n\
+         \tVendor: \"HL-DT-ST\"\n\
+         \tDevice: \"DVDRAM GP60\"\n\
+         \tRevision: \"1.00\"\n\
+         \tDriver: \"sr\"\n\
+         \tDriver Modules: \"sr\"\n\
+         \tDevice File: /dev/sr0\n\
+         \tSysFS ID: /class/block/sr0\n\
+         \tSerial ID: \"ABC123\"\n\
+         \n\
+         25: SCSI 0.0: 10600 Disk\n\
+         \tHardware Class: disk\n\
+         \tDevice File: /dev/sda\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].device_node.as_deref(), Some("/dev/sr0"));
+    assert_eq!(records[0].model.as_deref(), Some("HL-DT-ST DVDRAM GP60"));
+    assert_eq!(records[0].vendor.as_deref(), Some("HL-DT-ST"));
+    assert_eq!(records[0].device.as_deref(), Some("DVDRAM GP60"));
+    assert_eq!(records[0].revision.as_deref(), Some("1.00"));
+    assert_eq!(records[0].driver.as_deref(), Some("sr"));
+    assert_eq!(records[0].driver_modules, vec!["sr"]);
+    assert_eq!(records[0].serial.as_deref(), Some("ABC123"));
+}
+
+#[test]
 fn parses_bluetooth_and_video() {
     let controllers = parse_hciconfig(&hw_testdata::fixture("bluetooth/hciconfig-a.txt"));
     let paired =

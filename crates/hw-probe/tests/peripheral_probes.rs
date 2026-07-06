@@ -1313,6 +1313,98 @@ async fn cdrom_probe_enriches_from_lshw_cdrom_identity() {
 }
 
 #[tokio::test]
+async fn cdrom_probe_enriches_from_hwinfo_cdrom_identity() {
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/sys/dev/cdrom/info",
+            "drive name:\t\tsr0\nCan read DVD:\t\t1\n",
+        )
+        .with_command(
+            "hwinfo",
+            ["--cdrom"],
+            "24: SCSI 200.0: 10602 CD-ROM (DVD)\n\
+             \tHardware Class: cdrom\n\
+             \tModel: \"HL-DT-ST DVDRAM GP60\"\n\
+             \tVendor: \"HL-DT-ST\"\n\
+             \tDevice: \"DVDRAM GP60\"\n\
+             \tRevision: \"1.00\"\n\
+             \tDriver: \"sr\"\n\
+             \tDriver Modules: \"sr\"\n\
+             \tDevice File: /dev/sr0\n\
+             \tSerial ID: \"ABC123\"\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CdromProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "HL-DT-ST DVDRAM GP60");
+    assert_eq!(device.vendor.as_deref(), Some("HL-DT-ST"));
+    assert_eq!(device.model.as_deref(), Some("HL-DT-ST DVDRAM GP60"));
+    assert_eq!(device.serial.as_deref(), Some("ABC123"));
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("sr")
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .map(|driver| driver.modules.as_slice()),
+        Some(&["sr".to_string()][..])
+    );
+    assert_eq!(
+        device.driver.as_ref().map(|driver| driver.status),
+        Some(DriverStatus::InUse)
+    );
+    let DeviceProperties::Cdrom(info) = &device.properties else {
+        panic!("expected cdrom properties");
+    };
+    assert_eq!(info.firmware.as_deref(), Some("1.00"));
+    assert_eq!(info.capabilities, vec!["read-dvd"]);
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "hwinfo --cdrom"));
+}
+
+#[tokio::test]
+async fn cdrom_probe_uses_hwinfo_when_proc_and_sysfs_are_missing() {
+    let runner = FakeSourceRunner::new().with_command(
+        "hwinfo",
+        ["--cdrom"],
+        "24: SCSI 200.0: 10602 CD-ROM (DVD)\n\
+         \tHardware Class: cdrom\n\
+         \tModel: \"HL-DT-ST DVDRAM GP60\"\n\
+         \tVendor: \"HL-DT-ST\"\n\
+         \tDevice File: /dev/sr0\n\
+         \tRevision: \"1.00\"\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CdromProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let device = &result.devices[0];
+    assert_eq!(device.name, "HL-DT-ST DVDRAM GP60");
+    assert_eq!(device.vendor.as_deref(), Some("HL-DT-ST"));
+    assert_eq!(device.model.as_deref(), Some("HL-DT-ST DVDRAM GP60"));
+    let DeviceProperties::Cdrom(info) = &device.properties else {
+        panic!("expected cdrom properties");
+    };
+    assert_eq!(info.device_node.as_deref(), Some("/dev/sr0"));
+    assert_eq!(info.firmware.as_deref(), Some("1.00"));
+    assert!(info.capabilities.is_empty());
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "hwinfo --cdrom"));
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+}
+
+#[tokio::test]
 async fn cdrom_sysfs_fallback_enriches_from_lshw_cdrom_identity() {
     let runner = FakeSourceRunner::new()
         .with_glob(

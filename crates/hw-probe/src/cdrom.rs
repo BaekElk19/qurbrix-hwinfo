@@ -1,10 +1,12 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, CdromInfo, Device, DeviceKind, DeviceProperties, ScanWarning, SourceEvidence,
-    SourceKind, SourceStatus,
+    device_id, CdromInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
+    ScanWarning, SourceEvidence, SourceKind, SourceStatus,
 };
-use hw_parser::{parse_lshw_cdrom, parse_proc_cdrom_info, LshwCdromRecord};
+use hw_parser::{
+    parse_hwinfo_cdrom, parse_lshw_cdrom, parse_proc_cdrom_info, HwinfoCdromRecord, LshwCdromRecord,
+};
 use hw_source::CommandSpec;
 use std::{collections::HashMap, path::Path};
 
@@ -22,19 +24,20 @@ impl Probe for CdromProbe {
 
     async fn probe(&self, ctx: &ProbeContext<'_>) -> ProbeResult {
         let lshw = cdrom_lshw_records(ctx).await;
+        let hwinfo = cdrom_hwinfo_records(ctx).await;
         let result = ctx
             .runner
             .read_file(Path::new("/proc/sys/dev/cdrom/info"))
             .await;
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
-            fallback.devices = probe_sysfs_cdroms(ctx, &lshw).await;
+            fallback.devices = probe_sysfs_cdroms(ctx, &lshw, &hwinfo).await;
             return fallback;
         }
         let info = parse_proc_cdrom_info(&result.stdout);
         if info.drive_names.is_empty() {
             return ProbeResult {
-                devices: probe_sysfs_cdroms(ctx, &lshw).await,
+                devices: probe_sysfs_cdroms(ctx, &lshw, &hwinfo).await,
                 warnings: vec![ScanWarning::new(
                     "source_empty",
                     "cdrom source produced no drive records",
@@ -83,7 +86,8 @@ impl Probe for CdromProbe {
                     summary: None,
                 });
             }
-            devices.push(apply_cdrom_lshw_enrichment(device, &lshw));
+            let device = apply_cdrom_lshw_enrichment(device, &lshw);
+            devices.push(apply_cdrom_hwinfo_enrichment(device, &hwinfo));
         }
         ProbeResult::with_devices(devices)
     }
@@ -93,6 +97,12 @@ impl Probe for CdromProbe {
 struct CdromLshwRecords {
     source: String,
     by_node: HashMap<String, LshwCdromRecord>,
+}
+
+#[derive(Default)]
+struct CdromHwinfoRecords {
+    source: String,
+    by_node: HashMap<String, HwinfoCdromRecord>,
 }
 
 async fn cdrom_lshw_records(ctx: &ProbeContext<'_>) -> CdromLshwRecords {
@@ -109,6 +119,25 @@ async fn cdrom_lshw_records(ctx: &ProbeContext<'_>) -> CdromLshwRecords {
         .filter_map(|record| Some((record.logical_name.clone()?, record)))
         .collect();
     CdromLshwRecords {
+        source: result.source,
+        by_node,
+    }
+}
+
+async fn cdrom_hwinfo_records(ctx: &ProbeContext<'_>) -> CdromHwinfoRecords {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("hwinfo", ["--cdrom"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return CdromHwinfoRecords::default();
+    }
+
+    let by_node = parse_hwinfo_cdrom(&result.stdout)
+        .into_iter()
+        .filter_map(|record| Some((record.device_node.clone()?, record)))
+        .collect();
+    CdromHwinfoRecords {
         source: result.source,
         by_node,
     }
@@ -164,7 +193,82 @@ fn apply_cdrom_lshw_enrichment(mut device: Device, lshw: &CdromLshwRecords) -> D
     device
 }
 
-async fn probe_sysfs_cdroms(ctx: &ProbeContext<'_>, lshw: &CdromLshwRecords) -> Vec<Device> {
+fn apply_cdrom_hwinfo_enrichment(mut device: Device, hwinfo: &CdromHwinfoRecords) -> Device {
+    let Some(node) = (match &device.properties {
+        DeviceProperties::Cdrom(info) => info.device_node.clone(),
+        _ => None,
+    }) else {
+        return device;
+    };
+    let Some(record) = hwinfo.by_node.get(&node) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if device.vendor.is_none() && record.vendor.is_some() {
+        device.vendor = record.vendor.clone();
+        contributed = true;
+    }
+    if device.model.is_none() {
+        let model = record.model.clone().or_else(|| record.device.clone());
+        if model.is_some() {
+            device.model = model.clone();
+            if device.name == node || node.ends_with(&format!("/{}", device.name)) {
+                device.name = model.unwrap_or(device.name);
+            }
+            contributed = true;
+        }
+    }
+    if device.serial.is_none() && record.serial.is_some() {
+        device.serial = record.serial.clone();
+        contributed = true;
+    }
+    if let DeviceProperties::Cdrom(info) = &mut device.properties {
+        if info.firmware.is_none() && record.revision.is_some() {
+            info.firmware = record.revision.clone();
+            contributed = true;
+        }
+    }
+    if record.driver.is_some() || !record.driver_modules.is_empty() {
+        let mut driver = device.driver.take().unwrap_or(DriverInfo {
+            name: None,
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        let original = driver.clone();
+        driver.name = driver.name.or_else(|| record.driver.clone());
+        for module in &record.driver_modules {
+            if !driver.modules.iter().any(|item| item == module) {
+                driver.modules.push(module.clone());
+            }
+        }
+        contributed |= driver != original;
+        device.driver = Some(driver);
+    }
+    if contributed
+        && !hwinfo.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == hwinfo.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: hwinfo.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+async fn probe_sysfs_cdroms(
+    ctx: &ProbeContext<'_>,
+    lshw: &CdromLshwRecords,
+    hwinfo: &CdromHwinfoRecords,
+) -> Vec<Device> {
     let mut devices = Vec::new();
     let mut paths = ctx.runner.glob("/sys/class/block/sr*").await.paths;
     paths.sort();
@@ -197,10 +301,69 @@ async fn probe_sysfs_cdroms(ctx: &ProbeContext<'_>, lshw: &CdromLshwRecords) -> 
         device.vendor = read_trimmed(ctx, &path.join("device/vendor")).await;
         device.model = read_trimmed(ctx, &path.join("device/model")).await;
         device.serial = read_trimmed(ctx, &path.join("device/serial")).await;
-        devices.push(apply_cdrom_lshw_enrichment(device, lshw));
+        let device = apply_cdrom_lshw_enrichment(device, lshw);
+        devices.push(apply_cdrom_hwinfo_enrichment(device, hwinfo));
+    }
+
+    for (node, record) in &hwinfo.by_node {
+        if devices.iter().any(|device| {
+            matches!(
+                &device.properties,
+                DeviceProperties::Cdrom(info) if info.device_node.as_deref() == Some(node)
+            )
+        }) {
+            continue;
+        }
+        devices.push(cdrom_device_from_hwinfo(node, record, hwinfo));
     }
 
     devices
+}
+
+fn cdrom_device_from_hwinfo(
+    node: &str,
+    record: &HwinfoCdromRecord,
+    hwinfo: &CdromHwinfoRecords,
+) -> Device {
+    let fallback_name = Path::new(node)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(node);
+    let name = record
+        .model
+        .clone()
+        .or_else(|| record.device.clone())
+        .unwrap_or_else(|| fallback_name.to_string());
+    let mut device = Device::new(
+        device_id::other("cdrom", fallback_name),
+        DeviceKind::Cdrom,
+        name,
+        DeviceProperties::Cdrom(CdromInfo {
+            device_node: Some(node.to_string()),
+            media_present: None,
+            firmware: record.revision.clone(),
+            capabilities: Vec::new(),
+        }),
+    )
+    .with_source(SourceEvidence {
+        source: hwinfo.source.clone(),
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    });
+    device.vendor = record.vendor.clone();
+    device.model = record.model.clone().or_else(|| record.device.clone());
+    device.serial = record.serial.clone();
+    if record.driver.is_some() || !record.driver_modules.is_empty() {
+        device = device.with_driver(DriverInfo {
+            name: record.driver.clone(),
+            version: None,
+            modules: record.driver_modules.clone(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+    }
+    device
 }
 
 fn is_sr_node(name: &str) -> bool {
