@@ -1,8 +1,8 @@
 use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
-    device_id, Device, DeviceKind, DeviceProperties, InputInfo, InputKind, SourceEvidence,
-    SourceKind, SourceStatus,
+    device_id, Device, DeviceKind, DeviceProperties, InputInfo, InputKind, ScanWarning,
+    SourceEvidence, SourceKind, SourceStatus,
 };
 use hw_parser::parse_proc_bus_input_devices;
 use std::path::Path;
@@ -29,7 +29,19 @@ impl Probe for InputProbe {
             fallback.devices = probe_sysfs_inputs(ctx).await;
             return fallback;
         }
-        let devices = parse_proc_bus_input_devices(&result.stdout)
+        let records = parse_proc_bus_input_devices(&result.stdout);
+        if records.is_empty() {
+            return ProbeResult {
+                devices: probe_sysfs_inputs(ctx).await,
+                warnings: vec![ScanWarning::new(
+                    "source_empty",
+                    "input source produced no device records",
+                )
+                .with_source(result.source)],
+                consumed: Vec::new(),
+            };
+        }
+        let devices = records
             .into_iter()
             .enumerate()
             .map(|(idx, input)| {
