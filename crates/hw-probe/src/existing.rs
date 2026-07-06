@@ -2865,11 +2865,31 @@ impl Probe for MonitorProbe {
             for path in paths {
                 let bytes_result = ctx.runner.read_file_bytes(&path).await;
                 if bytes_result.is_success() {
-                    readable.push((bytes_result.bytes, bytes_result.source));
+                    readable.push((bytes_result.bytes, bytes_result.source, path));
                 }
             }
             if readable.len() == 1 {
-                edids.entry(connector).or_default().push(readable.remove(0));
+                let (bytes, source, _) = readable.remove(0);
+                edids.entry(connector).or_default().push((bytes, source));
+                continue;
+            }
+
+            let mut connected = Vec::new();
+            for (index, (_, _, path)) in readable.iter().enumerate() {
+                let Some(connector_path) = path.parent() else {
+                    continue;
+                };
+                let Some(status) = read_optional_trimmed(ctx, &connector_path.join("status")).await
+                else {
+                    continue;
+                };
+                if status.eq_ignore_ascii_case("connected") {
+                    connected.push(index);
+                }
+            }
+            if connected.len() == 1 {
+                let (bytes, source, _) = readable.swap_remove(connected[0]);
+                edids.entry(connector).or_default().push((bytes, source));
             }
         }
         if verbose_result.is_success() {
