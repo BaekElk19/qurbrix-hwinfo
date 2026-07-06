@@ -200,6 +200,42 @@ async fn bios_probe_outputs_bios_and_motherboard_devices() {
 }
 
 #[tokio::test]
+async fn bios_probe_preserves_baseboard_extended_fields() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "0,1,2,3"],
+        "BIOS Information\n\
+             \tVendor: LENOVO\n\
+             \tVersion: N2IET98W\n\
+             Base Board Information\n\
+             \tManufacturer: LENOVO\n\
+             \tProduct Name: 20XX\n\
+             \tVersion: SDK0T76530 WIN\n\
+             \tSerial Number: BOARD123\n\
+             \tAsset Tag: Not Available\n\
+             \tLocation In Chassis: Default string\n\
+             \tChassis Handle: 0x0003\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    let board = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Motherboard)
+        .expect("expected motherboard device");
+    match &board.properties {
+        DeviceProperties::Motherboard(info) => {
+            assert_eq!(info.version.as_deref(), Some("SDK0T76530 WIN"));
+            assert_eq!(info.asset_tag.as_deref(), Some("Not Available"));
+            assert_eq!(info.location_in_chassis.as_deref(), Some("Default string"));
+            assert_eq!(info.chassis_handle.as_deref(), Some("0x0003"));
+        }
+        other => panic!("expected motherboard properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn bios_probe_does_not_emit_generic_devices_for_empty_dmi_output() {
     let runner = FakeSourceRunner::new().with_command("dmidecode", ["-t", "0,1,2,3"], "");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
@@ -218,7 +254,9 @@ async fn bios_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
         .with_file("/sys/class/dmi/id/bios_date", "01/01/2026\n")
         .with_file("/sys/class/dmi/id/board_vendor", "LENOVO\n")
         .with_file("/sys/class/dmi/id/board_name", "20XX\n")
-        .with_file("/sys/class/dmi/id/board_serial", "BOARD123\n");
+        .with_file("/sys/class/dmi/id/board_version", "SDK0T76530 WIN\n")
+        .with_file("/sys/class/dmi/id/board_serial", "BOARD123\n")
+        .with_file("/sys/class/dmi/id/board_asset_tag", "ASSET456\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = BiosProbe.probe(&ctx).await;
 
@@ -261,7 +299,9 @@ async fn bios_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
         DeviceProperties::Motherboard(info) => {
             assert_eq!(info.manufacturer.as_deref(), Some("LENOVO"));
             assert_eq!(info.product_name.as_deref(), Some("20XX"));
+            assert_eq!(info.version.as_deref(), Some("SDK0T76530 WIN"));
             assert_eq!(info.serial.as_deref(), Some("BOARD123"));
+            assert_eq!(info.asset_tag.as_deref(), Some("ASSET456"));
         }
         other => panic!("expected motherboard properties, got {other:?}"),
     }

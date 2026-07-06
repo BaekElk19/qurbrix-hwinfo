@@ -18,7 +18,11 @@ pub struct DmiBiosBoardRecord {
     pub bios_release_date: Option<String>,
     pub board_manufacturer: Option<String>,
     pub board_product_name: Option<String>,
+    pub board_version: Option<String>,
     pub board_serial: Option<String>,
+    pub board_asset_tag: Option<String>,
+    pub board_location_in_chassis: Option<String>,
+    pub board_chassis_handle: Option<String>,
 }
 
 pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
@@ -119,7 +123,15 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
             ("BIOS Information", "Release Date") => record.bios_release_date = Some(value),
             ("Base Board Information", "Manufacturer") => record.board_manufacturer = Some(value),
             ("Base Board Information", "Product Name") => record.board_product_name = Some(value),
+            ("Base Board Information", "Version") => record.board_version = Some(value),
             ("Base Board Information", "Serial Number") => record.board_serial = Some(value),
+            ("Base Board Information", "Asset Tag") => record.board_asset_tag = Some(value),
+            ("Base Board Information", "Location In Chassis") => {
+                record.board_location_in_chassis = Some(value)
+            }
+            ("Base Board Information", "Chassis Handle") => {
+                record.board_chassis_handle = Some(value)
+            }
             _ => {}
         }
     }

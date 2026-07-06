@@ -1363,7 +1363,11 @@ async fn read_sysfs_dmi(ctx: &ProbeContext<'_>) -> Option<DmiBiosBoardRecord> {
         bios_release_date: read_sysfs_dmi_value(ctx, "bios_date").await,
         board_manufacturer: read_sysfs_dmi_value(ctx, "board_vendor").await,
         board_product_name: read_sysfs_dmi_value(ctx, "board_name").await,
+        board_version: read_sysfs_dmi_value(ctx, "board_version").await,
         board_serial: read_sysfs_dmi_value(ctx, "board_serial").await,
+        board_asset_tag: read_sysfs_dmi_value(ctx, "board_asset_tag").await,
+        board_location_in_chassis: None,
+        board_chassis_handle: None,
     };
 
     if dmi == Default::default() {
@@ -1434,8 +1438,11 @@ fn bios_board_devices(
         DeviceProperties::Motherboard(MotherboardInfo {
             manufacturer: dmi.board_manufacturer,
             product_name: dmi.board_product_name,
+            version: dmi.board_version,
             serial: dmi.board_serial,
-            ..Default::default()
+            asset_tag: dmi.board_asset_tag,
+            location_in_chassis: dmi.board_location_in_chassis,
+            chassis_handle: dmi.board_chassis_handle,
         }),
     )
     .with_source(SourceEvidence {

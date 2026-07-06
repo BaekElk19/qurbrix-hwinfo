@@ -40,6 +40,8 @@ pub struct MotherboardInfo {
     pub version: Option<String>,
     pub serial: Option<String>,
     pub asset_tag: Option<String>,
+    pub location_in_chassis: Option<String>,
+    pub chassis_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
