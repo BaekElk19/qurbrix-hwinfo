@@ -750,6 +750,59 @@ async fn gpu_probe_reads_dmesg_vram_total_by_pci_address() {
 }
 
 #[tokio::test]
+async fn gpu_probe_reads_deepin_sysfs_gpu_info_vram_total() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 22 [1002:73df]\n\tKernel driver in use: amdgpu\n",
+        )
+        .with_file(
+            "/sys/bus/pci/devices/0000:03:00.0/gpu-info",
+            "VRAM total size: 200000000\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.memory_bytes, Some(8_589_934_592));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device.sources.iter().any(|source| {
+        source.kind == SourceKind::Sysfs
+            && source.source == "/sys/bus/pci/devices/0000:03:00.0/gpu-info"
+    }));
+}
+
+#[tokio::test]
+async fn gpu_probe_reads_jingjia_proc_gpuinfo_memory_size() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: Jingjia Micro JM9 Series Graphics Adapter [0731:7200]\n\tKernel driver in use: jm9\n",
+        )
+        .with_file("/proc/gpuinfo_0", "Memory Size: 4 GB\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.memory_bytes, Some(4 * 1024 * 1024 * 1024));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Procfs && source.source == "/proc/gpuinfo_0"));
+}
+
+#[tokio::test]
 async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(

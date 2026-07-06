@@ -2170,19 +2170,32 @@ impl Probe for GpuProbe {
         let drm = gpu_drm_records(ctx).await;
         let dmesg = gpu_dmesg_records(ctx).await;
         let glxinfo = gpu_glxinfo_record(ctx).await;
+        let proc_gpuinfo = gpu_proc_gpuinfo_record(ctx).await;
         let result = ctx
             .runner
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
             .await;
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
-            fallback.devices =
-                gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &lshw, &drm, &dmesg).await;
+            fallback.devices = gpu_devices_from_sysfs_pci(
+                ctx,
+                &mut fallback.consumed,
+                &lshw,
+                &drm,
+                &dmesg,
+                &proc_gpuinfo,
+            )
+            .await;
             fallback.devices = apply_gpu_glxinfo_to_unique_device(fallback.devices, &glxinfo);
             return fallback;
         }
         let mut probe_result = ProbeResult::default();
-        for gpu in parse_gpu_lspci(&result.stdout) {
+        let gpus = parse_gpu_lspci(&result.stdout);
+        let jingjia_gpu_count = gpus
+            .iter()
+            .filter(|gpu| is_jingjia_vendor_id(gpu.vendor_id.as_deref()))
+            .count();
+        for gpu in gpus {
             let pci_id = device_id::pci(&gpu.address);
             let vendor = gpu
                 .vendor
@@ -2204,6 +2217,7 @@ impl Probe for GpuProbe {
                 .or_else(|| gpu.vendor.clone())
                 .or_else(|| gpu.device.clone());
             probe_result.consumed.push(DeviceRef { id: pci_id });
+            let sysfs_gpu_info = gpu_sysfs_gpu_info_record(ctx, &gpu.address).await;
             let device = Device::new(
                 device_id::other("gpu:pci", &gpu.address),
                 DeviceKind::Gpu,
@@ -2237,9 +2251,19 @@ impl Probe for GpuProbe {
                 status: SourceStatus::Success,
                 summary: None,
             });
-            probe_result.devices.push(apply_gpu_drm_enrichment(
-                apply_gpu_lshw_enrichment(apply_gpu_dmesg_enrichment(device, &dmesg), &lshw),
-                &drm,
+            probe_result.devices.push(apply_gpu_proc_gpuinfo_enrichment(
+                apply_gpu_memory_enrichment(
+                    apply_gpu_drm_enrichment(
+                        apply_gpu_lshw_enrichment(
+                            apply_gpu_dmesg_enrichment(device, &dmesg),
+                            &lshw,
+                        ),
+                        &drm,
+                    ),
+                    sysfs_gpu_info.as_ref(),
+                ),
+                &proc_gpuinfo,
+                jingjia_gpu_count == 1,
             ));
         }
         probe_result.devices = apply_gpu_glxinfo_to_unique_device(probe_result.devices, &glxinfo);
@@ -2268,6 +2292,12 @@ struct GpuDmesgRecords {
 struct GpuGlxinfoRecord {
     source: String,
     record: GlxinfoBasicRecord,
+}
+
+struct GpuMemoryRecord {
+    memory_bytes: u64,
+    source: String,
+    kind: SourceKind,
 }
 
 struct GpuDrmRecord {
@@ -2346,6 +2376,114 @@ fn apply_gpu_glxinfo_enrichment(mut device: Device, glxinfo: &GpuGlxinfoRecord) 
         });
     }
     device
+}
+
+async fn gpu_sysfs_gpu_info_record(
+    ctx: &ProbeContext<'_>,
+    address: &str,
+) -> Option<GpuMemoryRecord> {
+    let path = Path::new("/sys/bus/pci/devices")
+        .join(address)
+        .join("gpu-info");
+    let result = ctx.runner.read_file(&path).await;
+    if !result.is_success() {
+        return None;
+    }
+    Some(GpuMemoryRecord {
+        memory_bytes: parse_deepin_gpu_info_vram_total(&result.stdout)?,
+        source: result.source,
+        kind: SourceKind::Sysfs,
+    })
+}
+
+async fn gpu_proc_gpuinfo_record(ctx: &ProbeContext<'_>) -> Option<GpuMemoryRecord> {
+    let result = ctx.runner.read_file(Path::new("/proc/gpuinfo_0")).await;
+    if !result.is_success() {
+        return None;
+    }
+    Some(GpuMemoryRecord {
+        memory_bytes: parse_proc_gpuinfo_memory_size(&result.stdout)?,
+        source: result.source,
+        kind: SourceKind::Procfs,
+    })
+}
+
+fn parse_deepin_gpu_info_vram_total(input: &str) -> Option<u64> {
+    input.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        if key.trim() != "VRAM total size" {
+            return None;
+        }
+        let value = value.trim().trim_start_matches("0x");
+        u64::from_str_radix(value, 16).ok()
+    })
+}
+
+fn parse_proc_gpuinfo_memory_size(input: &str) -> Option<u64> {
+    input.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        if key.trim() == "Memory Size" {
+            parse_size_to_bytes(Some(value.trim()))
+        } else {
+            None
+        }
+    })
+}
+
+fn apply_gpu_proc_gpuinfo_enrichment(
+    device: Device,
+    proc_gpuinfo: &Option<GpuMemoryRecord>,
+    has_unique_jingjia_gpu: bool,
+) -> Device {
+    if !has_unique_jingjia_gpu || !device_is_jingjia_gpu(&device) {
+        return device;
+    }
+    apply_gpu_memory_enrichment(device, proc_gpuinfo.as_ref())
+}
+
+fn apply_gpu_memory_enrichment(mut device: Device, record: Option<&GpuMemoryRecord>) -> Device {
+    let Some(record) = record else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+        if gpu.memory_bytes.is_none() {
+            gpu.memory_bytes = Some(record.memory_bytes);
+            contributed = true;
+        }
+    }
+
+    if contributed
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == record.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: record.source.clone(),
+            kind: record.kind,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+
+    device
+}
+
+fn device_is_jingjia_gpu(device: &Device) -> bool {
+    device
+        .bus
+        .as_ref()
+        .and_then(|bus| match bus {
+            BusInfo::Pci { vendor_id, .. } => vendor_id.as_deref(),
+            _ => None,
+        })
+        .is_some_and(|vendor_id| is_jingjia_vendor_id(Some(vendor_id)))
+}
+
+fn is_jingjia_vendor_id(vendor_id: Option<&str>) -> bool {
+    vendor_id.is_some_and(|vendor_id| vendor_id.eq_ignore_ascii_case("0731"))
 }
 
 async fn gpu_lshw_display_records(ctx: &ProbeContext<'_>) -> GpuLshwDisplayRecords {
@@ -2598,17 +2736,25 @@ async fn gpu_devices_from_sysfs_pci(
     lshw: &GpuLshwDisplayRecords,
     drm: &GpuDrmRecords,
     dmesg: &GpuDmesgRecords,
+    proc_gpuinfo: &Option<GpuMemoryRecord>,
 ) -> Vec<Device> {
     let mut devices = Vec::new();
-    for record in read_sysfs_pci_records(ctx).await {
-        if !record
-            .class_id
-            .as_deref()
-            .is_some_and(|class| class.starts_with("03"))
-        {
-            continue;
-        }
+    let records: Vec<_> = read_sysfs_pci_records(ctx)
+        .await
+        .into_iter()
+        .filter(|record| {
+            record
+                .class_id
+                .as_deref()
+                .is_some_and(|class| class.starts_with("03"))
+        })
+        .collect();
+    let jingjia_gpu_count = records
+        .iter()
+        .filter(|record| is_jingjia_vendor_id(record.vendor_id.as_deref()))
+        .count();
 
+    for record in records {
         let vendor = record
             .vendor_id
             .as_deref()
@@ -2618,6 +2764,7 @@ async fn gpu_devices_from_sysfs_pci(
         consumed.push(DeviceRef {
             id: device_id::pci(&record.address),
         });
+        let sysfs_gpu_info = gpu_sysfs_gpu_info_record(ctx, &record.address).await;
         let driver = record.driver.clone();
         let modules = record.modules.clone();
         let mut device = Device::new(
@@ -2654,9 +2801,16 @@ async fn gpu_devices_from_sysfs_pci(
                 status: DriverStatus::InUse,
             });
         }
-        devices.push(apply_gpu_drm_enrichment(
-            apply_gpu_lshw_enrichment(apply_gpu_dmesg_enrichment(device, dmesg), lshw),
-            drm,
+        devices.push(apply_gpu_proc_gpuinfo_enrichment(
+            apply_gpu_memory_enrichment(
+                apply_gpu_drm_enrichment(
+                    apply_gpu_lshw_enrichment(apply_gpu_dmesg_enrichment(device, dmesg), lshw),
+                    drm,
+                ),
+                sysfs_gpu_info.as_ref(),
+            ),
+            proc_gpuinfo,
+            jingjia_gpu_count == 1,
         ));
     }
 
