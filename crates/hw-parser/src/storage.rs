@@ -43,6 +43,18 @@ pub struct LshwDiskRecord {
     pub firmware: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct HwinfoDiskRecord {
+    pub device_node: Option<String>,
+    pub model: Option<String>,
+    pub vendor: Option<String>,
+    pub device: Option<String>,
+    pub revision: Option<String>,
+    pub driver: Option<String>,
+    pub driver_modules: Vec<String>,
+    pub serial: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 struct SmartctlReport {
     smart_status: Option<SmartctlStatus>,
@@ -155,6 +167,70 @@ pub fn parse_lshw_disk(input: &str) -> Vec<LshwDiskRecord> {
     records
 }
 
+pub fn parse_hwinfo_disk(input: &str) -> Vec<HwinfoDiskRecord> {
+    let mut records = Vec::new();
+    let mut section = Vec::new();
+
+    for line in input.lines().chain(std::iter::once("")) {
+        if line.trim().is_empty() {
+            push_hwinfo_disk_record(&mut records, parse_hwinfo_disk_section(&section));
+            section.clear();
+            continue;
+        }
+        section.push(line);
+    }
+
+    records
+}
+
+fn parse_hwinfo_disk_section(lines: &[&str]) -> Option<HwinfoDiskRecord> {
+    let mut record = HwinfoDiskRecord::default();
+    let mut is_disk = false;
+
+    for line in lines {
+        let Some((key, value)) = line.trim().split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "Hardware Class" => is_disk = value == "disk",
+            "Model" => record.model = clean_hwinfo_disk_value(value),
+            "Vendor" | "SubVendor" => record.vendor = clean_hwinfo_disk_value(value),
+            "Device" => record.device = clean_hwinfo_disk_value(value),
+            "Revision" => record.revision = clean_hwinfo_disk_value(value),
+            "Driver" => record.driver = clean_hwinfo_disk_value(value),
+            "Driver Modules" => record.driver_modules = clean_hwinfo_disk_modules(value),
+            "Device File" => record.device_node = clean_hwinfo_disk_value(value),
+            "SysFS ID" => {
+                if record.device_node.is_none() {
+                    record.device_node = hwinfo_disk_node_from_sysfs_id(value);
+                }
+            }
+            "Serial ID" => record.serial = clean_hwinfo_disk_value(value),
+            _ => {}
+        }
+    }
+
+    is_disk.then_some(record)
+}
+
+fn push_hwinfo_disk_record(records: &mut Vec<HwinfoDiskRecord>, record: Option<HwinfoDiskRecord>) {
+    if let Some(record) = record {
+        if record.device_node.is_some()
+            || record.model.is_some()
+            || record.vendor.is_some()
+            || record.device.is_some()
+            || record.revision.is_some()
+            || record.driver.is_some()
+            || !record.driver_modules.is_empty()
+            || record.serial.is_some()
+        {
+            records.push(record);
+        }
+    }
+}
+
 fn push_lshw_disk_record(records: &mut Vec<LshwDiskRecord>, record: Option<LshwDiskRecord>) {
     if let Some(record) = record {
         if record.logical_name.is_some()
@@ -185,4 +261,40 @@ fn clean_lshw_disk_value(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn clean_hwinfo_disk_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    let value = value.split('"').nth(1).unwrap_or(value).trim();
+    if value.is_empty() || value.contains("unknown") {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn clean_hwinfo_disk_modules(value: &str) -> Vec<String> {
+    let quoted = value
+        .split('"')
+        .enumerate()
+        .filter_map(|(index, part)| (index % 2 == 1).then_some(part.trim()))
+        .filter(|part| !part.is_empty() && !part.contains("unknown"))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if !quoted.is_empty() {
+        return quoted;
+    }
+
+    value
+        .split([',', ' '])
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && !part.contains("unknown"))
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn hwinfo_disk_node_from_sysfs_id(value: &str) -> Option<String> {
+    let value = clean_hwinfo_disk_value(value)?;
+    let name = value.strip_prefix("/class/block/")?;
+    Some(format!("/dev/{name}"))
 }

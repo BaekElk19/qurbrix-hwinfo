@@ -12,12 +12,13 @@ use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
-    parse_gpu_lspci, parse_hwinfo_monitor, parse_ip_j_addr_result, parse_ip_j_link_result,
-    parse_lsblk_json_result, parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory,
-    parse_lshw_network, parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware,
-    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps,
-    parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord,
-    HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
+    parse_gpu_lspci, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
+    parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
+    parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
+    parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes,
+    parse_smartctl_json, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
+    DmiBiosBoardRecord, DmiMemoryRecord, HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord,
+    LshwDisplayRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -678,6 +679,7 @@ async fn read_optional_trimmed(ctx: &ProbeContext<'_>, path: &Path) -> Option<St
 async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let mut devices = Vec::new();
     let lshw = storage_lshw_records(ctx).await;
+    let hwinfo = storage_hwinfo_records(ctx).await;
 
     for path in ctx.runner.glob("/sys/block/*").await.paths {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -735,16 +737,27 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         device.serial = serial;
         let device = apply_storage_driver(ctx, device, name).await;
         let device = apply_storage_lshw_enrichment(device, &lshw);
+        let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
         devices.push(apply_storage_smartctl(ctx, device).await);
     }
 
-    devices
+    if devices.is_empty() {
+        storage_devices_from_hwinfo(&hwinfo)
+    } else {
+        devices
+    }
 }
 
 #[derive(Default)]
 struct StorageLshwRecords {
     source: String,
     by_node: HashMap<String, LshwDiskRecord>,
+}
+
+#[derive(Default)]
+struct StorageHwinfoRecords {
+    source: String,
+    by_node: HashMap<String, HwinfoDiskRecord>,
 }
 
 async fn storage_lshw_records(ctx: &ProbeContext<'_>) -> StorageLshwRecords {
@@ -764,6 +777,58 @@ async fn storage_lshw_records(ctx: &ProbeContext<'_>) -> StorageLshwRecords {
         source: result.source,
         by_node,
     }
+}
+
+async fn storage_hwinfo_records(ctx: &ProbeContext<'_>) -> StorageHwinfoRecords {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("hwinfo", ["--disk"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return StorageHwinfoRecords::default();
+    }
+
+    let by_node = parse_hwinfo_disk(&result.stdout)
+        .into_iter()
+        .filter_map(|record| Some((record.device_node.clone()?, record)))
+        .collect();
+    StorageHwinfoRecords {
+        source: result.source,
+        by_node,
+    }
+}
+
+fn storage_devices_from_hwinfo(hwinfo: &StorageHwinfoRecords) -> Vec<Device> {
+    hwinfo
+        .by_node
+        .values()
+        .cloned()
+        .map(|record| storage_device_from_hwinfo(record, hwinfo.source.as_str()))
+        .collect()
+}
+
+fn storage_device_from_hwinfo(record: HwinfoDiskRecord, source: &str) -> Device {
+    let node = record.device_node.clone().unwrap_or_default();
+    let mut device = Device::new(
+        device_id::storage(None, record.serial.as_deref(), &node),
+        DeviceKind::Storage,
+        record.model.clone().unwrap_or_else(|| node.clone()),
+        DeviceProperties::Storage(StorageInfo {
+            device_node: Some(node),
+            firmware: record.revision.clone(),
+            ..Default::default()
+        }),
+    );
+    device = apply_storage_hwinfo_driver(device, &record);
+    device.vendor = record.vendor;
+    device.model = record.model;
+    device.serial = record.serial;
+    device.with_source(SourceEvidence {
+        source: source.to_string(),
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    })
 }
 
 async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str) -> Device {
@@ -795,6 +860,75 @@ async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str
             summary: None,
         });
     }
+    device
+}
+
+fn apply_storage_hwinfo_enrichment(mut device: Device, hwinfo: &StorageHwinfoRecords) -> Device {
+    let Some(node) = (match &device.properties {
+        DeviceProperties::Storage(storage) => storage.device_node.clone(),
+        _ => None,
+    }) else {
+        return device;
+    };
+    let Some(record) = hwinfo.by_node.get(&node) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if device.vendor.is_none() && record.vendor.is_some() {
+        device.vendor = record.vendor.clone();
+        contributed = true;
+    }
+    if device.model.is_none() && record.model.is_some() {
+        device.model = record.model.clone();
+        if device.name == node {
+            device.name = record.model.clone().unwrap_or(device.name);
+        }
+        contributed = true;
+    }
+    if device.serial.is_none() && record.serial.is_some() {
+        device.serial = record.serial.clone();
+        contributed = true;
+    }
+    if let DeviceProperties::Storage(storage) = &mut device.properties {
+        if storage.firmware.is_none() && record.revision.is_some() {
+            storage.firmware = record.revision.clone();
+            contributed = true;
+        }
+    }
+    let had_driver = device.driver.is_some();
+    device = apply_storage_hwinfo_driver(device, record);
+    contributed |= !had_driver && device.driver.is_some();
+
+    if contributed
+        && !hwinfo.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == hwinfo.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: hwinfo.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn apply_storage_hwinfo_driver(mut device: Device, record: &HwinfoDiskRecord) -> Device {
+    if device.driver.is_some() || (record.driver.is_none() && record.driver_modules.is_empty()) {
+        return device;
+    }
+
+    device = device.with_driver(DriverInfo {
+        name: record.driver.clone(),
+        version: None,
+        modules: record.driver_modules.clone(),
+        provider: None,
+        status: DriverStatus::InUse,
+    });
     device
 }
 
@@ -985,6 +1119,7 @@ impl Probe for StorageProbe {
             }
         };
         let lshw = storage_lshw_records(ctx).await;
+        let hwinfo = storage_hwinfo_records(ctx).await;
         let mut devices = Vec::new();
         for dev in records {
             if dev.device_type.as_deref() != Some("disk") {
@@ -1016,6 +1151,7 @@ impl Probe for StorageProbe {
             device.serial = dev.serial;
             let device = apply_storage_driver(ctx, device, &name).await;
             let device = apply_storage_lshw_enrichment(device, &lshw);
+            let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
             devices.push(apply_storage_smartctl(ctx, device).await);
         }
         ProbeResult::with_devices(devices)

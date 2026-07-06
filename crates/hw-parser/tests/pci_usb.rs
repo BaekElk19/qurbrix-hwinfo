@@ -1,5 +1,6 @@
 use hw_parser::{
-    parse_lshw_disk, parse_lspci_nn_k, parse_lsusb, parse_lsusb_verbose, parse_smartctl_json,
+    parse_hwinfo_disk, parse_lshw_disk, parse_lspci_nn_k, parse_lsusb, parse_lsusb_verbose,
+    parse_smartctl_json,
 };
 
 #[test]
@@ -97,6 +98,32 @@ fn lshw_disk_parser_ignores_child_volume_sections() {
     assert_eq!(records[0].product.as_deref(), Some("Samsung SSD 980"));
     assert_eq!(records[0].serial.as_deref(), Some("S12345"));
     assert_eq!(records[0].firmware.as_deref(), Some("3B2QGXA7"));
+}
+
+#[test]
+fn parses_hwinfo_disk_records() {
+    let records = parse_hwinfo_disk(
+        "30: IDE 00.0: 10600 Disk\n\
+             Hardware Class: disk\n\
+             Model: \"Samsung SSD 980\"\n\
+             Vendor: \"Samsung\"\n\
+             Device: \"SSD 980\"\n\
+             Revision: \"3B2QGXA7\"\n\
+             Driver: \"nvme\"\n\
+             Driver Modules: \"nvme\"\n\
+             Device File: /dev/nvme0n1\n\
+             Serial ID: \"S12345\"\n\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].device_node.as_deref(), Some("/dev/nvme0n1"));
+    assert_eq!(records[0].model.as_deref(), Some("Samsung SSD 980"));
+    assert_eq!(records[0].vendor.as_deref(), Some("Samsung"));
+    assert_eq!(records[0].device.as_deref(), Some("SSD 980"));
+    assert_eq!(records[0].revision.as_deref(), Some("3B2QGXA7"));
+    assert_eq!(records[0].driver.as_deref(), Some("nvme"));
+    assert_eq!(records[0].driver_modules, vec!["nvme"]);
+    assert_eq!(records[0].serial.as_deref(), Some("S12345"));
 }
 
 #[test]

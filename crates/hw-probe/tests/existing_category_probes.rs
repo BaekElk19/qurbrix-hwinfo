@@ -924,6 +924,99 @@ async fn storage_probe_enriches_human_readable_lshw_fields() {
 }
 
 #[tokio::test]
+async fn storage_probe_enriches_human_readable_hwinfo_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"nvme0n1","type":"disk","size":1024,"tran":"nvme"}]}"#,
+        )
+        .with_command(
+            "hwinfo",
+            ["--disk"],
+            "30: IDE 00.0: 10600 Disk\n\
+                 Hardware Class: disk\n\
+                 Model: \"Samsung SSD 980\"\n\
+                 Vendor: \"Samsung\"\n\
+                 Revision: \"3B2QGXA7\"\n\
+                 Driver: \"nvme\"\n\
+                 Driver Modules: \"nvme\"\n\
+                 Device File: /dev/nvme0n1\n\
+                 Serial ID: \"S12345\"\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "Samsung SSD 980");
+    assert_eq!(device.vendor.as_deref(), Some("Samsung"));
+    assert_eq!(device.model.as_deref(), Some("Samsung SSD 980"));
+    assert_eq!(device.serial.as_deref(), Some("S12345"));
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("nvme")
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .map(|driver| driver.modules.as_slice()),
+        Some(&["nvme".to_string()][..])
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| { source.kind == SourceKind::Command && source.source == "hwinfo --disk" }));
+    let DeviceProperties::Storage(storage) = &device.properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
+}
+
+#[tokio::test]
+async fn storage_probe_uses_hwinfo_when_lsblk_and_sysfs_are_missing() {
+    let runner = FakeSourceRunner::new().with_command(
+        "hwinfo",
+        ["--disk"],
+        "30: IDE 00.0: 10600 Disk\n\
+             Hardware Class: disk\n\
+             Model: \"Samsung SSD 980\"\n\
+             Vendor: \"Samsung\"\n\
+             Revision: \"3B2QGXA7\"\n\
+             Driver: \"nvme\"\n\
+             Device File: /dev/nvme0n1\n\
+             Serial ID: \"S12345\"\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let device = &result.devices[0];
+    assert_eq!(device.id, "storage:serial:S12345");
+    assert_eq!(device.name, "Samsung SSD 980");
+    assert_eq!(device.vendor.as_deref(), Some("Samsung"));
+    assert_eq!(device.model.as_deref(), Some("Samsung SSD 980"));
+    assert_eq!(device.serial.as_deref(), Some("S12345"));
+    let DeviceProperties::Storage(storage) = &device.properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.device_node.as_deref(), Some("/dev/nvme0n1"));
+    assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| { source.kind == SourceKind::Command && source.source == "hwinfo --disk" }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_missing"
+            && warning.source.as_deref()
+                == Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV")
+    }));
+}
+
+#[tokio::test]
 async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(
