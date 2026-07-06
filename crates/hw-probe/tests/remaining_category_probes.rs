@@ -783,6 +783,63 @@ async fn gpu_probe_reads_nvidia_smi_memory_total_by_pci_address() {
 }
 
 #[tokio::test]
+async fn gpu_probe_reads_nvidia_settings_memory_for_unique_nvidia_gpu() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484]\n\tKernel driver in use: nvidia\n",
+        )
+        .with_command(
+            "nvidia-settings",
+            ["-q", "VideoRam"],
+            "Attribute 'VideoRam' (deepin:0.0): 8388608.\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.memory_bytes, Some(8_589_934_592));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device.sources.iter().any(|source| {
+        source.kind == SourceKind::Command && source.source == "nvidia-settings -q VideoRam"
+    }));
+}
+
+#[tokio::test]
+async fn gpu_probe_skips_nvidia_settings_memory_for_multiple_nvidia_gpus() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484]\n\tKernel driver in use: nvidia\n04:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA106 [GeForce RTX 3060] [10de:2503]\n\tKernel driver in use: nvidia\n",
+        )
+        .with_command(
+            "nvidia-settings",
+            ["-q", "VideoRam"],
+            "Attribute 'VideoRam' (deepin:0.0): 8388608.\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    for device in &result.devices {
+        match &device.properties {
+            DeviceProperties::Gpu(gpu) => assert_eq!(gpu.memory_bytes, None),
+            other => panic!("expected gpu properties, got {other:?}"),
+        }
+        assert!(!device
+            .sources
+            .iter()
+            .any(|source| source.source == "nvidia-settings -q VideoRam"));
+    }
+}
+
+#[tokio::test]
 async fn gpu_probe_reads_deepin_sysfs_gpu_info_vram_total() {
     let runner = FakeSourceRunner::new()
         .with_command(

@@ -16,11 +16,11 @@ use hw_parser::{
     parse_hdparm_identify, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
     parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
-    parse_nvidia_smi_memory_csv, parse_proc_cpuinfo, parse_proc_hardware,
-    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps,
-    parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord,
-    DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord,
-    LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
+    parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv, parse_proc_cpuinfo,
+    parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
+    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord,
+    DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord, HwinfoDiskRecord,
+    HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -2211,24 +2211,25 @@ impl Probe for GpuProbe {
         let drm = gpu_drm_records(ctx).await;
         let dmesg = gpu_dmesg_records(ctx).await;
         let nvidia_smi = gpu_nvidia_smi_records(ctx).await;
+        let nvidia_settings = gpu_nvidia_settings_record(ctx).await;
         let glxinfo = gpu_glxinfo_record(ctx).await;
         let proc_gpuinfo = gpu_proc_gpuinfo_record(ctx).await;
+        let enrichments = GpuEnrichmentSources {
+            lshw: &lshw,
+            drm: &drm,
+            dmesg: &dmesg,
+            nvidia_smi: &nvidia_smi,
+            nvidia_settings: &nvidia_settings,
+            proc_gpuinfo: &proc_gpuinfo,
+        };
         let result = ctx
             .runner
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
             .await;
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
-            fallback.devices = gpu_devices_from_sysfs_pci(
-                ctx,
-                &mut fallback.consumed,
-                &lshw,
-                &drm,
-                &dmesg,
-                &nvidia_smi,
-                &proc_gpuinfo,
-            )
-            .await;
+            fallback.devices =
+                gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &enrichments).await;
             fallback.devices = apply_gpu_glxinfo_to_unique_device(fallback.devices, &glxinfo);
             return fallback;
         }
@@ -2238,8 +2239,24 @@ impl Probe for GpuProbe {
             .iter()
             .filter(|gpu| is_jingjia_vendor_id(gpu.vendor_id.as_deref()))
             .count();
+        let nvidia_gpu_count = gpus
+            .iter()
+            .filter(|gpu| {
+                is_nvidia_gpu_identity(
+                    gpu.vendor_id.as_deref(),
+                    gpu.vendor.as_deref(),
+                    gpu.device.as_deref(),
+                )
+            })
+            .count();
         for gpu in gpus {
             let address = gpu.address.clone();
+            let use_nvidia_settings = nvidia_gpu_count == 1
+                && is_nvidia_gpu_identity(
+                    gpu.vendor_id.as_deref(),
+                    gpu.vendor.as_deref(),
+                    gpu.device.as_deref(),
+                );
             let pci_id = device_id::pci(&gpu.address);
             let vendor = gpu
                 .vendor
@@ -2306,7 +2323,10 @@ impl Probe for GpuProbe {
                     ),
                     sysfs_gpu_info
                         .as_ref()
-                        .or_else(|| gpu_nvidia_smi_record(&nvidia_smi, &address)),
+                        .or_else(|| gpu_nvidia_smi_record(&nvidia_smi, &address))
+                        .or_else(|| {
+                            unique_nvidia_settings_record(&nvidia_settings, use_nvidia_settings)
+                        }),
                 ),
                 &proc_gpuinfo,
                 jingjia_gpu_count == 1,
@@ -2349,6 +2369,15 @@ struct GpuMemoryRecord {
     memory_bytes: u64,
     source: String,
     kind: SourceKind,
+}
+
+struct GpuEnrichmentSources<'a> {
+    lshw: &'a GpuLshwDisplayRecords,
+    drm: &'a GpuDrmRecords,
+    dmesg: &'a GpuDmesgRecords,
+    nvidia_smi: &'a GpuNvidiaSmiRecords,
+    nvidia_settings: &'a Option<GpuMemoryRecord>,
+    proc_gpuinfo: &'a Option<GpuMemoryRecord>,
 }
 
 struct GpuDrmRecord {
@@ -2535,6 +2564,22 @@ fn device_is_jingjia_gpu(device: &Device) -> bool {
 
 fn is_jingjia_vendor_id(vendor_id: Option<&str>) -> bool {
     vendor_id.is_some_and(|vendor_id| vendor_id.eq_ignore_ascii_case("0731"))
+}
+
+fn is_nvidia_gpu_identity(
+    vendor_id: Option<&str>,
+    vendor: Option<&str>,
+    device: Option<&str>,
+) -> bool {
+    vendor_id
+        .and_then(normalize_gpu_vendor_id)
+        .is_some_and(|vendor| vendor == "NVIDIA")
+        || vendor
+            .and_then(normalize_gpu_vendor)
+            .is_some_and(|vendor| vendor == "NVIDIA")
+        || device
+            .and_then(normalize_gpu_vendor)
+            .is_some_and(|vendor| vendor == "NVIDIA")
 }
 
 async fn gpu_lshw_display_records(ctx: &ProbeContext<'_>) -> GpuLshwDisplayRecords {
@@ -2728,6 +2773,32 @@ fn gpu_nvidia_smi_record<'a>(
     records.by_pci_address.get(address)
 }
 
+async fn gpu_nvidia_settings_record(ctx: &ProbeContext<'_>) -> Option<GpuMemoryRecord> {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("nvidia-settings", ["-q", "VideoRam"]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return None;
+    }
+
+    Some(GpuMemoryRecord {
+        memory_bytes: parse_nvidia_settings_videoram(&result.stdout)?,
+        source: result.source,
+        kind: SourceKind::Command,
+    })
+}
+
+fn unique_nvidia_settings_record(
+    record: &Option<GpuMemoryRecord>,
+    use_for_device: bool,
+) -> Option<&GpuMemoryRecord> {
+    use_for_device.then_some(record.as_ref()).flatten()
+}
+
 async fn gpu_drm_records(ctx: &ProbeContext<'_>) -> GpuDrmRecords {
     let mut records = GpuDrmRecords::default();
     let mut paths = ctx
@@ -2825,11 +2896,7 @@ fn is_generic_gpu_label(value: &str) -> bool {
 async fn gpu_devices_from_sysfs_pci(
     ctx: &ProbeContext<'_>,
     consumed: &mut Vec<DeviceRef>,
-    lshw: &GpuLshwDisplayRecords,
-    drm: &GpuDrmRecords,
-    dmesg: &GpuDmesgRecords,
-    nvidia_smi: &GpuNvidiaSmiRecords,
-    proc_gpuinfo: &Option<GpuMemoryRecord>,
+    sources: &GpuEnrichmentSources<'_>,
 ) -> Vec<Device> {
     let mut devices = Vec::new();
     let records: Vec<_> = read_sysfs_pci_records(ctx)
@@ -2846,9 +2913,15 @@ async fn gpu_devices_from_sysfs_pci(
         .iter()
         .filter(|record| is_jingjia_vendor_id(record.vendor_id.as_deref()))
         .count();
+    let nvidia_gpu_count = records
+        .iter()
+        .filter(|record| is_nvidia_gpu_identity(record.vendor_id.as_deref(), None, None))
+        .count();
 
     for record in records {
         let address = record.address.clone();
+        let use_nvidia_settings = nvidia_gpu_count == 1
+            && is_nvidia_gpu_identity(record.vendor_id.as_deref(), None, None);
         let vendor = record
             .vendor_id
             .as_deref()
@@ -2898,14 +2971,20 @@ async fn gpu_devices_from_sysfs_pci(
         devices.push(apply_gpu_proc_gpuinfo_enrichment(
             apply_gpu_memory_enrichment(
                 apply_gpu_drm_enrichment(
-                    apply_gpu_lshw_enrichment(apply_gpu_dmesg_enrichment(device, dmesg), lshw),
-                    drm,
+                    apply_gpu_lshw_enrichment(
+                        apply_gpu_dmesg_enrichment(device, sources.dmesg),
+                        sources.lshw,
+                    ),
+                    sources.drm,
                 ),
                 sysfs_gpu_info
                     .as_ref()
-                    .or_else(|| gpu_nvidia_smi_record(nvidia_smi, &address)),
+                    .or_else(|| gpu_nvidia_smi_record(sources.nvidia_smi, &address))
+                    .or_else(|| {
+                        unique_nvidia_settings_record(sources.nvidia_settings, use_nvidia_settings)
+                    }),
             ),
-            proc_gpuinfo,
+            sources.proc_gpuinfo,
             jingjia_gpu_count == 1,
         ));
     }

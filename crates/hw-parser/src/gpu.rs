@@ -100,6 +100,23 @@ pub fn parse_nvidia_smi_memory_csv(input: &str) -> Vec<NvidiaSmiMemoryRecord> {
         .collect()
 }
 
+pub fn parse_nvidia_settings_videoram(input: &str) -> Option<u64> {
+    let mut values = input.lines().filter_map(|line| {
+        if !line.contains("VideoRam") {
+            return None;
+        }
+        let (_, value) = line.rsplit_once(':')?;
+        let digits = value
+            .trim()
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<String>();
+        digits.parse::<u64>().ok()?.checked_mul(1024)
+    });
+    let memory_bytes = values.next()?;
+    values.next().is_none().then_some(memory_bytes)
+}
+
 pub fn parse_lshw_display(input: &str) -> Vec<LshwDisplayRecord> {
     let mut records = Vec::new();
     let mut current: Option<LshwDisplayRecord> = None;

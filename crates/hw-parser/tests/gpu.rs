@@ -1,6 +1,6 @@
 use hw_parser::{
     parse_dmesg_gpu_vram, parse_glxinfo_basic, parse_gpu_lspci, parse_lshw_display,
-    parse_nvidia_smi_memory_csv,
+    parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv,
 };
 
 #[test]
@@ -55,6 +55,13 @@ fn parses_nvidia_smi_memory_csv_records() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].pci_address, "0000:03:00.0");
     assert_eq!(records[0].memory_bytes, 8192 * 1024 * 1024);
+}
+
+#[test]
+fn parses_nvidia_settings_videoram() {
+    let memory = parse_nvidia_settings_videoram("Attribute 'VideoRam' (deepin:0.0): 2097152.\n");
+
+    assert_eq!(memory, Some(2097152 * 1024));
 }
 
 #[test]
