@@ -665,6 +665,120 @@ async fn monitor_probe_reports_xrandr_max_resolution() {
 }
 
 #[tokio::test]
+async fn monitor_probe_enriches_single_monitor_from_hwinfo() {
+    let runner = FakeSourceRunner::new()
+        .with_command("xrandr", ["--query"], "HDMI-1 connected 1920x1080+0+0\n")
+        .with_command(
+            "hwinfo",
+            ["--monitor"],
+            "31: None 00.0: 10002 LCD Monitor\n\
+               Hardware Class: monitor\n\
+               Model: \"AOC 24B2W1\"\n\
+               Vendor: \"AOC International\"\n\
+               Device: eisa 0x1234\n\
+               Serial ID: \"MON123\"\n\
+               Resolution: 1920x1080@60Hz\n\
+               Size: 520x320 mm\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.source == "hwinfo --monitor"));
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.product.as_deref(), Some("AOC 24B2W1"));
+            assert_eq!(monitor.manufacturer.as_deref(), Some("AOC International"));
+            assert_eq!(monitor.serial.as_deref(), Some("MON123"));
+            assert_eq!(monitor.size_mm, Some((520, 320)));
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn monitor_probe_matches_hwinfo_by_unique_resolution() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "xrandr",
+            ["--query"],
+            "DP-1 connected 2560x1440+1920+0\n\
+             HDMI-1 connected 1920x1080+0+0\n",
+        )
+        .with_command(
+            "hwinfo",
+            ["--monitor"],
+            "31: None 00.0: 10002 LCD Monitor\n\
+               Hardware Class: monitor\n\
+               Model: \"AOC HDMI\"\n\
+               Vendor: \"AOC International\"\n\
+               Resolution: 1920x1080@60Hz\n\
+\n\
+             32: None 00.0: 10002 LCD Monitor\n\
+               Hardware Class: monitor\n\
+               Model: \"Dell DP\"\n\
+               Vendor: \"Dell Inc.\"\n\
+               Resolution: 2560x1440@60Hz\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    let by_connector = result
+        .devices
+        .iter()
+        .filter_map(|device| match &device.properties {
+            DeviceProperties::Monitor(monitor) => Some((
+                monitor.connector.as_deref().unwrap_or_default(),
+                monitor.product.as_deref(),
+            )),
+            _ => None,
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(by_connector.get("DP-1"), Some(&Some("Dell DP")));
+    assert_eq!(by_connector.get("HDMI-1"), Some(&Some("AOC HDMI")));
+}
+
+#[tokio::test]
+async fn monitor_probe_uses_hwinfo_when_xrandr_and_sysfs_are_missing() {
+    let runner = FakeSourceRunner::new().with_command(
+        "hwinfo",
+        ["--monitor"],
+        "31: None 00.0: 10002 LCD Monitor\n\
+           Hardware Class: monitor\n\
+           Model: \"AOC HWINFO\"\n\
+           Vendor: \"AOC International\"\n\
+           Serial ID: \"HW123\"\n\
+           Resolution: 1920x1080@60Hz\n\
+           Size: 520x320 mm\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "monitor:hwinfo:HW123");
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("xrandr --query"));
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.product.as_deref(), Some("AOC HWINFO"));
+            assert_eq!(monitor.manufacturer.as_deref(), Some("AOC International"));
+            assert_eq!(monitor.serial.as_deref(), Some("HW123"));
+            assert_eq!(monitor.resolution.as_deref(), Some("1920x1080"));
+            assert_eq!(monitor.size_mm, Some((520, 320)));
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn monitor_probe_uses_sysfs_edid_when_xrandr_query_is_missing() {
     let path = PathBuf::from("/sys/class/drm/card0-HDMI-A-1/edid");
     let runner = FakeSourceRunner::new()

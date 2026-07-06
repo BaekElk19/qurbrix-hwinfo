@@ -12,12 +12,12 @@ use hw_parser::{
     infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
-    parse_gpu_lspci, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
-    parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
-    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes,
-    parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps, parse_xrandr_query,
-    parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord, LshwDiskRecord, LshwDisplayRecord,
-    LshwNetworkRecord,
+    parse_gpu_lspci, parse_hwinfo_monitor, parse_ip_j_addr_result, parse_ip_j_link_result,
+    parse_lsblk_json_result, parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory,
+    parse_lshw_network, parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware,
+    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps,
+    parse_xrandr_query, parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord,
+    HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -1828,6 +1828,7 @@ impl Probe for MonitorProbe {
             .runner
             .run_command(&CommandSpec::new("xrandr", ["--verbose"]), ctx.timeout)
             .await;
+        let hwinfo = monitor_hwinfo_records(ctx).await;
 
         let mut warnings = Vec::new();
         let mut edids: HashMap<String, Vec<(Vec<u8>, String)>> = HashMap::new();
@@ -1895,7 +1896,7 @@ impl Probe for MonitorProbe {
         };
         monitors.sort_by(|left, right| left.0.cmp(&right.0));
 
-        let devices = monitors
+        let mut devices: Vec<_> = monitors
             .into_iter()
             .filter_map(
                 |(
@@ -1922,29 +1923,148 @@ impl Probe for MonitorProbe {
                         source = valid_edid_source;
                     }
 
-                    Some(
-                        Device::new(
-                            id,
-                            DeviceKind::Monitor,
-                            connector,
-                            DeviceProperties::Monitor(info),
-                        )
-                        .with_source(SourceEvidence {
-                            source,
-                            kind: source_kind,
-                            status: SourceStatus::Success,
-                            summary: None,
-                        }),
+                    let device = Device::new(
+                        id,
+                        DeviceKind::Monitor,
+                        connector,
+                        DeviceProperties::Monitor(info),
                     )
+                    .with_source(SourceEvidence {
+                        source,
+                        kind: source_kind,
+                        status: SourceStatus::Success,
+                        summary: None,
+                    });
+                    Some(apply_monitor_hwinfo_enrichment(device, &hwinfo))
                 },
             )
             .collect();
+        if devices.is_empty() {
+            devices = hwinfo
+                .records
+                .iter()
+                .enumerate()
+                .map(|(index, record)| monitor_device_from_hwinfo(index, record, &hwinfo.source))
+                .collect();
+        }
         ProbeResult {
             devices,
             warnings,
             consumed: Vec::new(),
         }
     }
+}
+
+fn monitor_device_from_hwinfo(index: usize, record: &HwinfoMonitorRecord, source: &str) -> Device {
+    let key = record
+        .serial
+        .clone()
+        .or_else(|| record.model.clone())
+        .unwrap_or_else(|| index.to_string());
+    let name = record
+        .model
+        .clone()
+        .or_else(|| record.vendor.clone())
+        .unwrap_or_else(|| "Monitor".to_string());
+    Device::new(
+        device_id::other("monitor:hwinfo", &key),
+        DeviceKind::Monitor,
+        name,
+        DeviceProperties::Monitor(MonitorInfo {
+            resolution: record.resolution.clone(),
+            size_mm: record.size_mm,
+            manufacturer: record.vendor.clone(),
+            manufacturer_name: record.vendor.clone(),
+            product: record.model.clone(),
+            serial: record.serial.clone(),
+            ..Default::default()
+        }),
+    )
+    .with_source(SourceEvidence {
+        source: source.to_string(),
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    })
+}
+
+#[derive(Default)]
+struct MonitorHwinfoRecords {
+    source: String,
+    records: Vec<HwinfoMonitorRecord>,
+}
+
+async fn monitor_hwinfo_records(ctx: &ProbeContext<'_>) -> MonitorHwinfoRecords {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("hwinfo", ["--monitor"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return MonitorHwinfoRecords::default();
+    }
+
+    MonitorHwinfoRecords {
+        source: result.source,
+        records: parse_hwinfo_monitor(&result.stdout),
+    }
+}
+
+fn apply_monitor_hwinfo_enrichment(mut device: Device, hwinfo: &MonitorHwinfoRecords) -> Device {
+    let DeviceProperties::Monitor(info) = &mut device.properties else {
+        return device;
+    };
+    let Some(record) = matching_hwinfo_monitor(info, &hwinfo.records) else {
+        return device;
+    };
+
+    if info.product.is_none() {
+        info.product = record.model.clone();
+    }
+    if info.manufacturer.is_none() {
+        info.manufacturer = record.vendor.clone();
+    }
+    if info.manufacturer_name.is_none() {
+        info.manufacturer_name = record.vendor.clone();
+    }
+    if info.serial.is_none() {
+        info.serial = record.serial.clone();
+    }
+    if info.size_mm.is_none() {
+        info.size_mm = record.size_mm;
+    }
+    if info.resolution.is_none() {
+        info.resolution = record.resolution.clone();
+    }
+    if !hwinfo.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == hwinfo.source)
+    {
+        device.sources.push(SourceEvidence {
+            source: hwinfo.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+
+    device
+}
+
+fn matching_hwinfo_monitor<'a>(
+    info: &MonitorInfo,
+    records: &'a [HwinfoMonitorRecord],
+) -> Option<&'a HwinfoMonitorRecord> {
+    if records.len() == 1 {
+        return records.first();
+    }
+    let resolution = info.resolution.as_deref()?;
+    let mut matches = records
+        .iter()
+        .filter(|record| record.resolution.as_deref() == Some(resolution));
+    let matched = matches.next()?;
+    matches.next().is_none().then_some(matched)
 }
 
 fn is_ignored_network_interface(ifname: &str) -> bool {

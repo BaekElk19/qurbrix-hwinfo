@@ -1,4 +1,28 @@
-use hw_parser::{lookup_pnp_manufacturer, parse_xrandr_query, parse_xrandr_verbose};
+use hw_parser::{
+    lookup_pnp_manufacturer, parse_hwinfo_monitor, parse_xrandr_query, parse_xrandr_verbose,
+};
+
+#[test]
+fn parse_hwinfo_monitor_extracts_identity_size_and_resolution() {
+    let records = parse_hwinfo_monitor(
+        "31: None 00.0: 10002 LCD Monitor\n\
+           Hardware Class: monitor\n\
+           Model: \"AOC 24B2W1\"\n\
+           Vendor: \"AOC International\"\n\
+           Device: eisa 0x1234\n\
+           Serial ID: \"MON123\"\n\
+           Resolution: 1920x1080@60Hz\n\
+           Size: 520x320 mm\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].model.as_deref(), Some("AOC 24B2W1"));
+    assert_eq!(records[0].vendor.as_deref(), Some("AOC International"));
+    assert_eq!(records[0].device.as_deref(), Some("eisa 0x1234"));
+    assert_eq!(records[0].serial.as_deref(), Some("MON123"));
+    assert_eq!(records[0].resolution.as_deref(), Some("1920x1080"));
+    assert_eq!(records[0].size_mm, Some((520, 320)));
+}
 
 #[test]
 fn parse_xrandr_query_extracts_first_mode_as_max_resolution() {

@@ -7,7 +7,7 @@
 `lscpu` + `lshw -class processor` + `dmidecode -t 4` 多源合并、`/proc/cpuinfo`
 `Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback、DMI 当前频率/count 修正、CPU vendor/arch 归一化，并已把 family/model/stepping/bogomips/virtualization 暴露到 `CpuInfo`；Memory 已在 `dmidecode -t memory` 不可用或解析为空时用 `lshw -class memory` 恢复 DIMM 级字段，再尝试 EDAC sysfs DIMM 节点，最后退回 `/proc/meminfo` 总量，空解析会产生 `source_empty` warning；BIOS/主板已在 `dmidecode -t 0,1,2,3` 不可用时读取 `/sys/class/dmi/id`，并从 `/sys/firmware/efi` 补 firmware type 和 Secure Boot state；PCI 已在 `lspci -nn -k` 不可用时读取 `/sys/bus/pci/devices/*` 基础 ID 字段和 kernel driver，GPU 已可消费其中 display-class 节点并保留 driver，还可用 `lshw -class display` 补人类可读 product/vendor/driver，并可从 `/sys/class/drm/*/device/mem_info_vram_total` 按 PCI 地址补 VRAM total；Network 已可从 `ip -j addr` 补 IPv4/IPv6，可用 sysfs 标记 wireless/ethernet capability 和 `network_type`，同时保留 PCI bus ID、driver modules，并可用 `lshw -class network` 补人类可读 product/vendor/capacity/driver/firmware；Storage 已可从 `/sys/block/*/device/uevent` 补 kernel driver，可用 `lshw -class disk` 补人类可读 vendor/model/serial/firmware，并可从 `smartctl -a -j` 补 SMART health/temperature 和 NVMe power-on hours、power-cycle count、available spare/threshold、percentage used、data units read/written、media errors、error-log entries（含非零状态但 JSON 可解析的输出）；USB 已可用 `/sys/bus/usb/devices/*` enrich `lsusb` 成功路径，可用 `lsusb -v` 补首个 interface descriptor，并在 `lsusb` 不可用时读取 sysfs 基础 device 字段和 max power；Audio 已在 `/proc/asound/cards` 不可用时读取 `/sys/class/sound/card*` 基础声卡节点，并从 `/proc/asound/card*/codec#*` 与 sysfs 声卡节点补 codec/driver/modules/vendor/subsystem/PCI bus ID，还可用 `lshw -class multimedia` 和 `hwinfo --sound` 补人类可读 product/vendor/driver，用 `pactl list cards` 补 card profile；Bluetooth 已在 `hciconfig -a` 不可用时读取 `/sys/class/bluetooth/hci*` controller address 和 rfkill 字段，并可用 `lshw -class communication` 补控制器 vendor/model/driver；Input 已在 `/proc/bus/input/devices` 不可用时读取 `/sys/class/input/event*` 基础事件节点，并可用 procfs/sysfs evdev capability bitmask 分类 touchscreen/touchpad/tablet/mouse，还可用 `hwinfo --keyboard`/`--mouse` 按 `/dev/input/event*` 补输入设备 vendor/model/driver 或生成基础 keyboard/mouse 设备；Battery 已可在 UPower/sysfs 路径归一化 `LGC` 为 `LG Chem`，并可从 sysfs fallback 补电池温度；Camera 已在 `v4l2-ctl --list-devices` 不可用时读取 `/sys/class/video4linux/video*` 基础节点，从 video4linux sysfs 补 kernel driver 和 USB identity/speed，可用 `lshw -class multimedia` 按 `/dev/video*` 补人类可读 product/vendor/driver，并可用 `v4l2-ctl --device <node> --list-formats-ext` 补格式/分辨率 capability；Printer 已在 `lpstat -a` 不可用时使用 `lpstat -v` 恢复基础队列/URI，从 `lpstat -d` 标记默认队列，并从 `lpstat -l -p` 补 make/model 描述；CD-ROM 已可用 `/sys/class/block/sr*` enrich proc 成功路径，并可用可选 `lshw -class disk` `*-cdrom` 和 `hwinfo --cdrom` 记录补 vendor/model/serial/firmware/driver；在 `/proc/sys/dev/cdrom/info` 不可用时也会读取基础光驱节点和可用身份字段，sysfs 不可用时可由 `hwinfo --cdrom` 生成基础光驱设备。
 
-补充（2026-07-06）：Monitor 已使用 `xrandr --query`、`xrandr --verbose` 和 `/sys/class/drm/*/edid`，在进程内解析 EDID vendor/product/week/year/size/preferred mode/gamma，并从物理尺寸计算 diagonal inches；同时从 xrandr mode 列表保留 max resolution。剩余差距是 `hwinfo_monitor` 和重复 sysfs connector 的精确匹配。
+补充（2026-07-06）：Monitor 已使用 `xrandr --query`、`xrandr --verbose`、`/sys/class/drm/*/edid` 和可选 `hwinfo --monitor`，在进程内解析 EDID vendor/product/week/year/size/preferred mode/gamma，并从物理尺寸计算 diagonal inches；同时从 xrandr mode 列表保留 max resolution，并用 `hwinfo --monitor` 补安全匹配显示器的 vendor/model/serial/size 或创建 hwinfo-only fallback 设备。剩余差距是重复 sysfs connector 的精确匹配。
 
 ## 1. Executive Summary
 
@@ -19,7 +19,7 @@
 6. 国产 CPU、ARM64、LoongArch 仍有 P1 风险：`qurbrix-hwinfo` 已有 `/proc/cpuinfo` parser、`Hardware`/`Processor` fallback、`/proc/hardware` Kirin fallback 和 locale 强制，但更广泛真机 fixture 仍待补齐。
 7. Deepin 已有架构 alias 和架构分流，覆盖 `aarch64`、`sw_64`、`loongarch`、`loongarch64`；证据：`ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/commonfunction.cpp:25-33`，`ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/GenerateDevice/DeviceFactory.cpp:29-69`。
 8. `qurbrix-hwinfo` 的错误、超时、命令缺失、权限不足处理比参考项目更结构化，值得保留；证据：`qurbrix-hwinfo/crates/hw-source/src/runner.rs:22-59`。
-9. 优先补齐顺序建议：P1 国产 CPU/vendor/arch 真机 fixtures；P1/P2 显示器 `hwinfo_monitor`/connector 匹配；P2 音频 SoC alias、USB/network 过滤和分类增强。
+9. 优先补齐顺序建议：P1 国产 CPU/vendor/arch 真机 fixtures；P1/P2 显示器重复 connector 匹配；P2 音频 SoC alias、USB/network 过滤和分类增强。
 
 ## 2. Scope and Method
 
@@ -50,7 +50,7 @@
 | BIOS / Motherboard | `dmidecode -t 0,1,2,3` + `/sys/class/dmi/id` fallback + `/sys/firmware/efi` enrichment | 可识别 BIOS vendor/version/date、firmware type、Secure Boot state 和 board manufacturer/product/serial | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Storage | `lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV` + `/sys/block/*` fallback + optional `lshw -class disk` + optional `smartctl -a -j` | 正常路径取 disk 并保留 WWN/firmware/kernel driver；fallback 路径补 node/vendor/model/serial/WWN/firmware/size/rotational/driver；lshw 可补人类可读 vendor/model/serial/firmware；smartctl 可补 SMART health/temperature 和 NVMe 健康计数，且保留非零状态 JSON | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | GPU | `lspci -nn -k`，GPU parser；optional `lshw -class display`；optional DRM sysfs VRAM enrichment；`lspci` 不可用时可消费 `/sys/bus/pci/devices/*` display-class 节点 | 能识别 PCI GPU 和 driver/modules；lshw 可按 PCI bus 补人类可读 product/vendor/driver；DRM sysfs 可按 PCI bus 补 VRAM total；sysfs fallback 可保留基础 PCI ID/VID/PID/class/driver/modules，并可用 lshw/DRM 补人类可读 identity 和显存；仍缺 glxinfo/nvidia/dmesg render/memory enrichment | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
-| Monitor | `xrandr --query` + `xrandr --verbose` + `/sys/class/drm/*/edid` | 取 connector/resolution/max resolution，并从 EDID 补 vendor/product/week/year/size/preferred mode/gamma/diagonal inches；仍缺 `hwinfo_monitor` 和重复 connector 精确匹配 | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
+| Monitor | `xrandr --query` + `xrandr --verbose` + `/sys/class/drm/*/edid` + optional `hwinfo --monitor` | 取 connector/resolution/max resolution，并从 EDID 补 vendor/product/week/year/size/preferred mode/gamma/diagonal inches；可用 `hwinfo --monitor` 补安全匹配显示器的 vendor/model/serial/size，或在 xrandr/sysfs 无设备时生成 hwinfo-only fallback；仍缺重复 connector 精确匹配 | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Network | `ip -j link` + `ip -j addr` + `/sys/class/net/*` enrichment/fallback + optional `lshw -class network` | 正常路径取 interface/MAC/operstate/IPv4/IPv6，并从 sysfs 补 speed/duplex、wireless/ethernet capability、`network_type`、uevent driver、driver modules 和 PCI bus ID；fallback 路径也补 sysfs 字段；可从 lshw 补 product/vendor/capacity-derived speed/driver version/firmware；过滤 loopback/常见虚拟网卡；仍缺 NM DBus enrichment | `qurbrix-hwinfo/crates/hw-probe/src/existing.rs` |
 | Error handling | command/read/glob 抽象，区分 Missing/PermissionDenied/Timeout/Failed | 优于多数脚本式参考实现，建议保留 | `qurbrix-hwinfo/crates/hw-source/src/runner.rs:22-59` |
 | Dedup | 仅按 `Device.id` 合并 sources/warnings/capabilities | 有基础去重；缺少基于 bus/class/vendor/serial 的语义合并 | `qurbrix-hwinfo/crates/hw-collect/src/merge.rs:4-20` |
@@ -69,7 +69,7 @@
 | CPU 字段解析 | 解析 model/vendor/thread/bogomips/architecture/family/frequency/model/stepping/flags/virtualization | qurbrix 已补主要 CPU 字段解析和模型暴露 | `ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/DeviceManager/DeviceCpu.cpp:224-289` |
 | Loongson CPU | 对 Loongson 避免被 lshw/dmidecode 覆盖型号 | 特殊 CPU name 保护规则 | `ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/DeviceManager/DeviceCpu.cpp:306-323`；`ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/DeviceManager/DeviceCpu.cpp:365-390` |
 | Phytium/ARM 频率 | 注释说明飞腾无法通过 lscpu 获取当前频率，使用 dmidecode Current Speed | ARM/国产 CPU 频率 fallback | `ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/DeviceManager/DeviceCpu.cpp:384-390` |
-| Monitor | 使用 `xrandr`/verbose/EDID 处理显示器信息 | qurbrix monitor 已吸收 query/verbose/sysfs EDID 路径和 xrandr max mode，剩余 `hwinfo_monitor`、重复 connector 匹配 | `ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/GenerateDevice/GetInfoPool.cpp:109-110` |
+| Monitor | 使用 `xrandr`/verbose/EDID 处理显示器信息 | qurbrix monitor 已吸收 query/verbose/sysfs EDID 路径、xrandr max mode 和可选 `hwinfo --monitor` enrichment/fallback，剩余重复 connector 匹配 | `ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/GenerateDevice/GetInfoPool.cpp:109-110` |
 
 Not Applicable：Deepin 的 GUI 文案加载进度、发行版专属 UI 结构不适合直接进入 `qurbrix-hwinfo`。qurbrix 应保留 CLI/library 输出模型，不引入 GUI service 依赖。
 
@@ -143,9 +143,9 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | `lsusb` | USB 来源并带过滤/去重 | 使用更详细输出 | USB primary 基础来源，缺失时有 sysfs fallback | P2 | 加 `lsusb -v` optional source |
 | `dmidecode` | BIOS/board/memory/CPU 修正 | 系统硬件常用来源 | CPU、BIOS/board/memory 来源；BIOS/board 权限不足走 sysfs；memory 权限不足先走 `lshw -class memory` DIMM fallback，再走 EDAC sysfs DIMM fallback，最后走 `/proc/meminfo` 总量 fallback | 已吸收部分 | memory 仍可补 SPD/eeprom 级字段 |
 | `lshw` | CPU/audio/network/display 等多类 fallback | 网络/硬件详情 | CPU 和 Memory 已作为 optional fallback 使用；Network、Audio、Storage、GPU、CD-ROM 已作为 optional enrichment 使用 | 已吸收部分 | 可选，不作为硬依赖，后续补 camera/bluetooth 等轻量 enrichment |
-| `hwinfo` | monitor/general 来源 | 依赖或脚本中存在 | 已作为 audio/input/CD-ROM 的可选 enrichment/fallback 来源 | P3 | 保持可选，不作为硬依赖 |
+| `hwinfo` | monitor/general 来源 | 依赖或脚本中存在 | 已作为 monitor/audio/input/CD-ROM 的可选 enrichment/fallback 来源 | 已吸收部分 | 保持可选，不作为硬依赖 |
 | `udevadm` | 搜索范围内需关注 | 参考项目可通过 udev 类源 | 未见核心使用 | P2 | 可用于 USB/PCI/input 属性补充 |
-| `xrandr` | query/verbose | verbose + EDID | 已使用 `xrandr --query` 和 `xrandr --verbose`，并解析 verbose EDID 和 query mode 列表 max resolution | 已吸收部分 | 后续补 `hwinfo_monitor` |
+| `xrandr` | query/verbose | verbose + EDID | 已使用 `xrandr --query` 和 `xrandr --verbose`，并解析 verbose EDID 和 query mode 列表 max resolution | 已吸收部分 | 继续保留 optional source 失败不影响基础显示器 |
 | `glxinfo` | GPU 展示增强类 | GPU 可能使用 | 未使用 | P3 | Not Applicable for core scan；可选显示 renderer |
 
 ## 9. Device Category Gap Matrix
@@ -157,7 +157,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 | 内存 | dmidecode type 17 等 | dmidecode memory，dmidecode 失败时用 `lshw -class memory` 产出 DIMM fallback，再用 EDAC sysfs 产出 DIMM label/type/size fallback，最后用 `/proc/meminfo` 产出总量 fallback | 缺 SPD/eeprom 级厂商/序列号/时序字段 fallback | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 硬盘/分区/控制器 | lsblk/sg/lshw/厂商修正 | lsblk disk，失败时 fallback 到 `/sys/block/*` 并保留 vendor/model/serial/WWN/firmware/size/rotational/driver；可选 `lshw -class disk` 补人类可读 vendor/model/serial/firmware；可选 smartctl 补 SMART health/temperature 和 NVMe 健康计数并处理非零状态 JSON | 缺 controller/hwinfo/hdparm enrichment | P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs` |
 | 显卡/显示控制器 | lspci、lshw display、nvidia、国产 GPU alias | lspci GPU/driver/modules；可选 `lshw -class display` 按 PCI bus 补人类可读 product/vendor/driver；可选 DRM sysfs 按 PCI bus 补 VRAM total；lspci 不可用时从 sysfs PCI display-class 生成基础 GPU 并消费对应 PCI，保留 kernel driver/modules | 缺 glxinfo/dmesg/nvidia render/memory enrichment | P2 | 是 | Kylin `.../cpuinfo.py:415-425`；qurbrix `crates/hw-probe/src/existing.rs` |
-| 显示器 | xrandr verbose/EDID/product/year/size/gamma/maxmode | xrandr query/verbose + sysfs EDID，已补 vendor/product/week/year/size/preferred mode/gamma/diagonal inches/max resolution | 缺 `hwinfo_monitor` 和重复 connector 精确匹配 | P2 | 是 | Kylin `.../cpuinfo.py:1339-1411`；qurbrix `crates/hw-probe/src/existing.rs` |
+| 显示器 | xrandr verbose/EDID/product/year/size/gamma/maxmode，service-support 使用 `hwinfo --monitor` | xrandr query/verbose + sysfs EDID + optional `hwinfo --monitor`，已补 vendor/product/week/year/size/preferred mode/gamma/diagonal inches/max resolution，hwinfo 可补 vendor/model/serial/size 或生成 fallback 设备 | 缺重复 connector 精确匹配 | P2 | 是 | Kylin `.../cpuinfo.py:1339-1411`；Kylin `hardware-capability-scan-report.md:135`；qurbrix `crates/hw-probe/src/existing.rs` |
 | 网卡/Wi-Fi/蓝牙 | sysfs/MAC/filter、lshw/lspci/driver | network 使用 `ip -j link`/`ip -j addr` 并用 `/sys/class/net/*` enrich speed/duplex/wireless/ethernet capability/`network_type`/driver/modules/PCI bus ID，失败时 fallback 到 sysfs；`lshw -class network` 可补 product/vendor/capacity/driver version/firmware；bluetooth 使用 `hciconfig -a`，可用 `lshw -class communication` 补 vendor/model/driver，失败时 fallback 到 `/sys/class/bluetooth/hci*` controller address/rfkill 字段 | Network 仍缺 NM DBus enrichment；Bluetooth 仍缺 hwinfo/BlueZ DBus enrichment 和 sysfs paired-device fallback | P1/P2 | 是 | qurbrix `crates/hw-probe/src/existing.rs`；`crates/hw-probe/src/bluetooth.rs` |
 | 声卡 | lshw、`/proc/asound`、SoC vendor | qurbrix 使用 `/proc/asound/cards`，可从 `/proc/asound/card*/codec#*` 和 `/sys/class/sound/card*/device` 补 codec/driver/modules/vendor/subsystem/PCI bus ID，proc cards 缺失时 fallback 到 sysfs card，可从 `lshw -class multimedia` 和 `hwinfo --sound` 补人类可读 product/vendor/driver，并可从 `pactl list cards` 补 ALSA card profiles | 仍缺更广 SoC alias | P2 | 是 | Deepin `.../GetInfoPool.cpp:88,119`；Kylin `.../cpuinfo.py:479-483` |
 | USB 设备 | 过滤 hub/重复/无效设备，详细描述符 | `lsusb` 基础字段；成功路径和 fallback 均可读 sysfs 基础字段和 max power；`lsusb -v` 可补首个 interface descriptor；并过滤 hub/host controller/interface entries | 无多 interface 结构化建模、跨类别 consumed dedup | P2 | 是 | qurbrix `crates/hw-probe/src/usb.rs` |
@@ -218,12 +218,12 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 
 | 项 | 内容 |
 | --- | --- |
-| 目标 | 显示器 EDID/DRM/sysfs/max resolution 已吸收，剩余 `hwinfo_monitor` 和重复 connector 匹配 |
+| 目标 | 显示器 EDID/DRM/sysfs/max resolution/`hwinfo --monitor` 已吸收，剩余重复 connector 匹配 |
 | 涉及模块 | `MonitorProbe`、monitor parser、fixtures |
-| 推荐实现方式 | 已用 `xrandr --query` 保留 max resolution，用 `xrandr --verbose` 和 `/sys/class/drm/*/edid` optional source 解析 manufacturer/product/week/year/size/preferred mode/gamma，并计算 diagonal inches；后续最小增量是可选 `hwinfo_monitor` |
+| 推荐实现方式 | 已用 `xrandr --query` 保留 max resolution，用 `xrandr --verbose` 和 `/sys/class/drm/*/edid` optional source 解析 manufacturer/product/week/year/size/preferred mode/gamma，并计算 diagonal inches；已用可选 `hwinfo --monitor` 补安全匹配显示器的 vendor/model/serial/size 或生成 fallback 设备 |
 | 不建议照抄 reference 的原因 | Kylin 写 `/tmp/edid.dat` 并调用 `edid-decode`，不适合 library 并发和无副作用要求 |
-| 建议测试 | 内屏无 EDID name、外接显示器 EDID、headless xrandr 失败、gamma/diagonal inches、重复 sysfs connector |
-| 验收标准 | 有 EDID 时 vendor/product/size/date/gamma/diagonal inches 填充；无 EDID 不影响 resolution/max resolution；后续 `hwinfo_monitor` 有独立断言 |
+| 建议测试 | 内屏无 EDID name、外接显示器 EDID、headless xrandr 失败、gamma/diagonal inches、hwinfo 单屏和唯一分辨率匹配、重复 sysfs connector |
+| 验收标准 | 有 EDID 时 vendor/product/size/date/gamma/diagonal inches 填充；无 EDID 不影响 resolution/max resolution；有可安全匹配 hwinfo monitor 时补 vendor/model/serial/size；xrandr/sysfs 无设备但 hwinfo 可用时仍输出显示器 |
 
 ### P2
 
@@ -262,7 +262,7 @@ Not Applicable：Kylin 代码中有大量 `/tmp/youker-assistant-*` 临时文件
 * `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:168-229`：证明 memory 当前依赖 `dmidecode -t memory`。
 * `qurbrix-hwinfo/crates/hw-probe/src/existing.rs:242-295`：证明 BIOS/board 当前依赖 `dmidecode -t 0,1,2,3`。
 * `qurbrix-hwinfo/crates/hw-probe/src/existing.rs`：证明 GPU 当前基于 `lspci -nn -k`，并可用 `lshw -class display` 和 sysfs PCI display-class fallback。
-* `qurbrix-hwinfo/crates/hw-probe/src/existing.rs`：证明 monitor 当前使用 `xrandr --query`、`xrandr --verbose` 和 `/sys/class/drm/*/edid`，并保留 EDID 字段。
+* `qurbrix-hwinfo/crates/hw-probe/src/existing.rs`：证明 monitor 当前使用 `xrandr --query`、`xrandr --verbose`、`/sys/class/drm/*/edid` 和可选 `hwinfo --monitor`，并保留 EDID/hwinfo 字段。
 * `ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/GenerateDevice/GetInfoPool.cpp:85-122`：证明 Deepin 收集多种硬件数据源。
 * `ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/GenerateDevice/DeviceFactory.cpp:29-69`：证明 Deepin 按架构/board vendor 选择 generator。
 * `ReferenceProject/deepin-devicemanager-6.0.67/deepin-devicemanager/src/commonfunction.cpp:25-33`：证明 Deepin 架构 alias 覆盖 arm64、amd64、sw_64、loongarch。
