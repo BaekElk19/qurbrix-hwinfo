@@ -1166,6 +1166,46 @@ async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str
             }
         }
     }
+
+    if device.bus.is_none() {
+        device = apply_storage_parent_pci_identity(ctx, device, &sysfs_path).await;
+    }
+    device
+}
+
+async fn apply_storage_parent_pci_identity(
+    ctx: &ProbeContext<'_>,
+    mut device: Device,
+    sysfs_path: &Path,
+) -> Device {
+    for depth in 1..=6 {
+        let mut path = sysfs_path.join("device");
+        for _ in 0..depth {
+            path = path.join("..");
+        }
+        let path = path.join("uevent");
+        let Some(uevent) = read_optional_trimmed(ctx, &path).await else {
+            continue;
+        };
+        let Some(bus) = pci_bus_from_uevent(&uevent) else {
+            continue;
+        };
+        let source = path.display().to_string();
+        device = device.with_bus(bus);
+        if !device
+            .sources
+            .iter()
+            .any(|evidence| evidence.source == source)
+        {
+            device = device.with_source(SourceEvidence {
+                source,
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+        return device;
+    }
     device
 }
 

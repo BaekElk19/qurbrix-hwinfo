@@ -988,6 +988,41 @@ async fn storage_probe_reads_driver_from_sysfs_for_lsblk_disk() {
 }
 
 #[tokio::test]
+async fn storage_probe_preserves_sata_parent_pci_identity_from_sysfs() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
+        .with_file(
+            "/sys/block/sda/device/../../../uevent",
+            "DRIVER=ahci\nPCI_CLASS=10601\nPCI_ID=8086:A352\nPCI_SUBSYS_ID=1028:087C\nPCI_SLOT_NAME=0000:00:17.0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(
+        device.bus,
+        Some(BusInfo::Pci {
+            address: "0000:00:17.0".to_string(),
+            vendor_id: Some("8086".to_string()),
+            device_id: Some("a352".to_string()),
+            subsystem_vendor_id: Some("1028".to_string()),
+            subsystem_device_id: Some("087c".to_string()),
+            class: Some("010601".to_string()),
+        })
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Sysfs
+            && source.source == "/sys/block/sda/device/../../../uevent"));
+}
+
+#[tokio::test]
 async fn storage_probe_preserves_nvme_controller_pci_identity_from_sysfs() {
     let runner = FakeSourceRunner::new()
         .with_command(
