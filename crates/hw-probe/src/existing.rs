@@ -13,10 +13,11 @@ use hw_parser::{
     normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor, parse_edid,
     parse_gpu_lspci, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
-    parse_lscpu, parse_lshw_disk, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
-    parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes,
-    parse_smartctl_json, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
-    DmiBiosBoardRecord, DmiMemoryRecord, LshwDiskRecord, LshwNetworkRecord,
+    parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
+    parse_lshw_processor, parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes,
+    parse_size_to_bytes, parse_smartctl_json, parse_speed_mtps, parse_xrandr_query,
+    parse_xrandr_verbose, DmiBiosBoardRecord, DmiMemoryRecord, LshwDiskRecord, LshwDisplayRecord,
+    LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -1271,13 +1272,14 @@ impl Probe for GpuProbe {
     }
 
     async fn probe(&self, ctx: &ProbeContext<'_>) -> ProbeResult {
+        let lshw = gpu_lshw_display_records(ctx).await;
         let result = ctx
             .runner
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
             .await;
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
-            fallback.devices = gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed).await;
+            fallback.devices = gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &lshw).await;
             return fallback;
         }
         let mut probe_result = ProbeResult::default();
@@ -1303,49 +1305,169 @@ impl Probe for GpuProbe {
                 .or_else(|| gpu.vendor.clone())
                 .or_else(|| gpu.device.clone());
             probe_result.consumed.push(DeviceRef { id: pci_id });
-            probe_result.devices.push(
-                Device::new(
-                    device_id::other("gpu:pci", &gpu.address),
-                    DeviceKind::Gpu,
-                    gpu.device
-                        .clone()
-                        .or(gpu.vendor.clone())
-                        .unwrap_or_else(|| "GPU".to_string()),
-                    DeviceProperties::Gpu(GpuInfo {
-                        vendor,
-                        ..Default::default()
-                    }),
-                )
-                .with_bus(BusInfo::Pci {
-                    address: gpu.address,
-                    vendor_id: gpu.vendor_id,
-                    device_id: gpu.device_id,
-                    subsystem_vendor_id: gpu.subsystem_vendor_id,
-                    subsystem_device_id: gpu.subsystem_device_id,
-                    class: gpu.class_id,
-                })
-                .with_driver(DriverInfo {
-                    name: gpu.kernel_driver,
-                    version: None,
-                    modules: gpu.kernel_modules,
-                    provider: None,
-                    status: DriverStatus::InUse,
-                })
-                .with_source(SourceEvidence {
-                    source: result.source.clone(),
-                    kind: SourceKind::Command,
-                    status: SourceStatus::Success,
-                    summary: None,
+            let device = Device::new(
+                device_id::other("gpu:pci", &gpu.address),
+                DeviceKind::Gpu,
+                gpu.device
+                    .clone()
+                    .or(gpu.vendor.clone())
+                    .unwrap_or_else(|| "GPU".to_string()),
+                DeviceProperties::Gpu(GpuInfo {
+                    vendor,
+                    ..Default::default()
                 }),
-            );
+            )
+            .with_bus(BusInfo::Pci {
+                address: gpu.address,
+                vendor_id: gpu.vendor_id,
+                device_id: gpu.device_id,
+                subsystem_vendor_id: gpu.subsystem_vendor_id,
+                subsystem_device_id: gpu.subsystem_device_id,
+                class: gpu.class_id,
+            })
+            .with_driver(DriverInfo {
+                name: gpu.kernel_driver,
+                version: None,
+                modules: gpu.kernel_modules,
+                provider: None,
+                status: DriverStatus::InUse,
+            })
+            .with_source(SourceEvidence {
+                source: result.source.clone(),
+                kind: SourceKind::Command,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+            probe_result
+                .devices
+                .push(apply_gpu_lshw_enrichment(device, &lshw));
         }
         probe_result
     }
 }
 
+#[derive(Default)]
+struct GpuLshwDisplayRecords {
+    source: String,
+    by_pci_address: HashMap<String, LshwDisplayRecord>,
+}
+
+async fn gpu_lshw_display_records(ctx: &ProbeContext<'_>) -> GpuLshwDisplayRecords {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("lshw", ["-class", "display"]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return GpuLshwDisplayRecords::default();
+    }
+
+    let by_pci_address = parse_lshw_display(&result.stdout)
+        .into_iter()
+        .filter_map(|record| {
+            Some((
+                lshw_display_pci_address(record.bus_info.as_deref()?)?,
+                record,
+            ))
+        })
+        .collect();
+    GpuLshwDisplayRecords {
+        source: result.source,
+        by_pci_address,
+    }
+}
+
+fn apply_gpu_lshw_enrichment(mut device: Device, lshw: &GpuLshwDisplayRecords) -> Device {
+    let Some(address) = device.bus.as_ref().and_then(gpu_pci_address) else {
+        return device;
+    };
+    let Some(record) = lshw.by_pci_address.get(address) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if let Some(product) = record.product.clone() {
+        if device.model.is_none() {
+            device.model = Some(product.clone());
+            contributed = true;
+        }
+        if is_generic_gpu_label(&device.name) {
+            device.name = product;
+            contributed = true;
+        }
+    }
+    if let Some(vendor) = record
+        .vendor
+        .as_deref()
+        .and_then(normalize_gpu_vendor)
+        .map(str::to_string)
+        .or_else(|| record.vendor.clone())
+    {
+        if device.vendor.is_none() {
+            device.vendor = Some(vendor.clone());
+            contributed = true;
+        }
+        if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+            if gpu.vendor.as_deref().is_none_or(is_generic_gpu_label) {
+                gpu.vendor = Some(vendor);
+                contributed = true;
+            }
+        }
+    }
+    if record.driver.is_some() {
+        let mut driver = device.driver.take().unwrap_or(DriverInfo {
+            name: None,
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        let original = driver.clone();
+        driver.name = driver.name.or_else(|| record.driver.clone());
+        contributed |= driver != original;
+        device.driver = Some(driver);
+    }
+    if contributed
+        && !lshw.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == lshw.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: lshw.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn gpu_pci_address(bus: &BusInfo) -> Option<&str> {
+    match bus {
+        BusInfo::Pci { address, .. } => Some(address),
+        _ => None,
+    }
+}
+
+fn lshw_display_pci_address(value: &str) -> Option<String> {
+    value.strip_prefix("pci@").map(ToString::to_string)
+}
+
+fn is_generic_gpu_label(value: &str) -> bool {
+    let value = value.trim();
+    value.eq_ignore_ascii_case("gpu")
+        || value.eq_ignore_ascii_case("device")
+        || value.to_ascii_lowercase().starts_with("gpu ")
+}
+
 async fn gpu_devices_from_sysfs_pci(
     ctx: &ProbeContext<'_>,
     consumed: &mut Vec<DeviceRef>,
+    lshw: &GpuLshwDisplayRecords,
 ) -> Vec<Device> {
     let mut devices = Vec::new();
     for record in read_sysfs_pci_records(ctx).await {
@@ -1402,7 +1524,7 @@ async fn gpu_devices_from_sysfs_pci(
                 status: DriverStatus::InUse,
             });
         }
-        devices.push(device);
+        devices.push(apply_gpu_lshw_enrichment(device, lshw));
     }
 
     devices

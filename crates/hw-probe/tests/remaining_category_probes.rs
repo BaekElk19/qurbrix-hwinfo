@@ -268,6 +268,52 @@ async fn gpu_probe_normalizes_vendor_from_numeric_vendor_id_when_text_is_generic
 }
 
 #[tokio::test]
+async fn gpu_probe_enriches_human_readable_lshw_display_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 Display controller [0380]: Device [1234:5678]\n",
+        )
+        .with_command(
+            "lshw",
+            ["-class", "display"],
+            "  *-display\n\
+                  description: VGA compatible controller\n\
+                  product: Jingjia JM9 Series Graphics Adapter\n\
+                  vendor: Jingjia Micro\n\
+                  bus info: pci@0000:03:00.0\n\
+                  configuration: driver=jm9 latency=0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "Jingjia JM9 Series Graphics Adapter");
+    assert_eq!(device.vendor.as_deref(), Some("Jingjia Micro"));
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("jm9")
+    );
+    assert!(
+        device
+            .sources
+            .iter()
+            .any(|source| source.kind == SourceKind::Command
+                && source.source == "lshw -class display")
+    );
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.vendor.as_deref(), Some("Jingjia Micro"));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(
@@ -343,6 +389,39 @@ async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
     );
     assert_eq!(result.warnings.len(), 1);
     assert_eq!(result.warnings[0].source.as_deref(), Some("lspci -nn -k"));
+}
+
+#[tokio::test]
+async fn gpu_sysfs_fallback_uses_lshw_display_identity() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/bus/pci/devices/*",
+            vec![PathBuf::from("/sys/bus/pci/devices/0000:03:00.0")],
+        )
+        .with_file("/sys/bus/pci/devices/0000:03:00.0/vendor", "0x1234\n")
+        .with_file("/sys/bus/pci/devices/0000:03:00.0/device", "0x5678\n")
+        .with_file("/sys/bus/pci/devices/0000:03:00.0/class", "0x038000\n")
+        .with_command(
+            "lshw",
+            ["-class", "display"],
+            "  *-display\n\
+                  product: Jingjia JM9 Series Graphics Adapter\n\
+                  vendor: Jingjia Micro\n\
+                  bus info: pci@0000:03:00.0\n\
+                  configuration: driver=jm9 latency=0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "Jingjia JM9 Series Graphics Adapter");
+    assert_eq!(device.vendor.as_deref(), Some("Jingjia Micro"));
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.vendor.as_deref(), Some("Jingjia Micro"));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]
