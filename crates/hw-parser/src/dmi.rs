@@ -188,6 +188,7 @@ pub fn parse_spd_decode_dimms(input: &str) -> Vec<DmiMemoryRecord> {
 pub fn parse_spd_eeprom(bytes: &[u8]) -> Option<DmiMemoryRecord> {
     match bytes.get(2).copied()? {
         0x0c => parse_ddr4_spd_eeprom(bytes),
+        0x12 => parse_ddr5_spd_eeprom(bytes),
         _ => None,
     }
 }
@@ -211,6 +212,22 @@ fn parse_ddr4_spd_eeprom(bytes: &[u8]) -> Option<DmiMemoryRecord> {
         part_number,
         memory_type: Some("DDR4 SDRAM".to_string()),
         speed,
+        ..Default::default()
+    };
+    has_spd_data.then_some(record)
+}
+
+fn parse_ddr5_spd_eeprom(bytes: &[u8]) -> Option<DmiMemoryRecord> {
+    let manufacturer = bytes.get(512..514).and_then(spd_manufacturer_name);
+    let serial = bytes.get(517..521).and_then(spd_hex_string);
+    let part_number = spd_ascii_string(bytes.get(521..551).unwrap_or_default());
+    let has_spd_data = manufacturer.is_some() || serial.is_some() || part_number.is_some();
+
+    let record = DmiMemoryRecord {
+        manufacturer,
+        serial,
+        part_number,
+        memory_type: Some("DDR5 SDRAM".to_string()),
         ..Default::default()
     };
     has_spd_data.then_some(record)
@@ -462,6 +479,7 @@ fn spd_manufacturer_name(bytes: &[u8]) -> Option<String> {
         0x80ce | 0xce00 => "Samsung",
         0x80ad | 0xad00 => "SK Hynix",
         0x802c | 0x2c00 => "Micron",
+        0x859b | 0x9b00 => "Crucial",
         _ => return None,
     };
     Some(name.to_string())

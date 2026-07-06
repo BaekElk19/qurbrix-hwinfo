@@ -257,6 +257,39 @@ async fn memory_probe_uses_raw_spd_eeprom_when_command_sources_are_missing() {
 }
 
 #[tokio::test]
+async fn memory_probe_uses_raw_ddr5_spd_identity_when_command_sources_are_missing() {
+    let spd_path = PathBuf::from("/sys/bus/i2c/drivers/ee1004/0-0051/eeprom");
+    let runner = FakeSourceRunner::new()
+        .with_glob("/sys/bus/i2c/drivers/eeprom/*/eeprom", Vec::new())
+        .with_glob(
+            "/sys/bus/i2c/drivers/ee1004/*/eeprom",
+            vec![spd_path.clone()],
+        )
+        .with_file_bytes(spd_path.clone(), ddr5_spd_eeprom());
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.size_bytes, None);
+            assert_eq!(memory.vendor.as_deref(), Some("Crucial"));
+            assert_eq!(memory.memory_type.as_deref(), Some("DDR5 SDRAM"));
+            assert_eq!(memory.speed_mtps, None);
+            assert_eq!(memory.locator.as_deref(), Some("0-0051"));
+            assert_eq!(memory.serial.as_deref(), Some("E6FFB785"));
+            assert_eq!(memory.part_number.as_deref(), Some("CT8G48C40U5.M4A1"));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == spd_path.display().to_string()
+            && source.kind == SourceKind::Sysfs
+            && source.status == SourceStatus::Success
+    }));
+}
+
+#[tokio::test]
 async fn bios_probe_outputs_bios_and_motherboard_devices() {
     let runner = FakeSourceRunner::new().with_command(
         "dmidecode",
@@ -288,6 +321,19 @@ fn ddr4_spd_eeprom() -> Vec<u8> {
     bytes[325] = 0x56;
     bytes[326] = 0x78;
     bytes[329..347].copy_from_slice(b"M471A1K43DB1-CWE  ");
+    bytes
+}
+
+fn ddr5_spd_eeprom() -> Vec<u8> {
+    let mut bytes = vec![0; 1024];
+    bytes[2] = 0x12;
+    bytes[512] = 0x85;
+    bytes[513] = 0x9b;
+    bytes[517] = 0xe6;
+    bytes[518] = 0xff;
+    bytes[519] = 0xb7;
+    bytes[520] = 0x85;
+    bytes[521..537].copy_from_slice(b"CT8G48C40U5.M4A1");
     bytes
 }
 

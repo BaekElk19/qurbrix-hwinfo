@@ -216,6 +216,31 @@ fn ignores_raw_spd_eeprom_with_invalid_width_combination() {
 }
 
 #[test]
+fn parses_raw_ddr5_spd_identity_fields() {
+    let record = parse_spd_eeprom(&ddr5_spd_eeprom()).expect("DDR5 SPD identity record");
+
+    assert_eq!(record.memory_type.as_deref(), Some("DDR5 SDRAM"));
+    assert_eq!(record.manufacturer.as_deref(), Some("Crucial"));
+    assert_eq!(record.serial.as_deref(), Some("E6FFB785"));
+    assert_eq!(record.part_number.as_deref(), Some("CT8G48C40U5.M4A1"));
+    assert_eq!(record.size, None);
+    assert_eq!(record.speed, None);
+}
+
+fn ddr5_spd_eeprom() -> Vec<u8> {
+    let mut bytes = vec![0; 1024];
+    bytes[2] = 0x12;
+    bytes[512] = 0x85;
+    bytes[513] = 0x9b;
+    bytes[517] = 0xe6;
+    bytes[518] = 0xff;
+    bytes[519] = 0xb7;
+    bytes[520] = 0x85;
+    bytes[521..537].copy_from_slice(b"CT8G48C40U5.M4A1");
+    bytes
+}
+
+#[test]
 fn parses_printer_status_and_uri() {
     let statuses = parse_lpstat_a(&hw_testdata::fixture("printer/lpstat-a.txt"));
     let uris = parse_lpstat_v(&hw_testdata::fixture("printer/lpstat-v.txt"));
