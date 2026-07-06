@@ -4,7 +4,7 @@ use hw_model::{
     device_id, Device, DeviceKind, DeviceProperties, PrinterInfo, ScanWarning, SourceEvidence,
     SourceKind, SourceStatus,
 };
-use hw_parser::{parse_lpstat_a, parse_lpstat_v};
+use hw_parser::{parse_lpstat_a, parse_lpstat_d, parse_lpstat_v};
 use hw_source::CommandSpec;
 
 pub struct PrinterProbe;
@@ -30,9 +30,13 @@ impl Probe for PrinterProbe {
                 .runner
                 .run_command(&CommandSpec::new("lpstat", ["-v"]), ctx.timeout)
                 .await;
+            let default = read_default_printer(ctx).await;
             if uri_result.is_success() {
-                fallback.devices =
-                    devices_from_uris(parse_lpstat_v(&uri_result.stdout), &uri_result.source);
+                fallback.devices = devices_from_uris(
+                    parse_lpstat_v(&uri_result.stdout),
+                    &uri_result.source,
+                    default.as_ref(),
+                );
             } else {
                 fallback
                     .warnings
@@ -51,6 +55,7 @@ impl Probe for PrinterProbe {
             warnings.extend(ProbeResult::source_failure(self.name(), &uri_result).warnings);
             Vec::new()
         };
+        let default = read_default_printer(ctx).await;
         let statuses = parse_lpstat_a(&status.stdout);
         if statuses.is_empty() {
             warnings.push(
@@ -58,7 +63,7 @@ impl Probe for PrinterProbe {
                     .with_source(status.source),
             );
             let devices = if uri_result.is_success() {
-                devices_from_uris(uris, &uri_result.source)
+                devices_from_uris(uris, &uri_result.source, default.as_ref())
             } else {
                 Vec::new()
             };
@@ -75,7 +80,10 @@ impl Probe for PrinterProbe {
                     .iter()
                     .find(|u| u.queue == printer.queue)
                     .and_then(|u| u.device_uri.clone());
-                Device::new(
+                let is_default = default
+                    .as_ref()
+                    .map(|default| default.queue == printer.queue);
+                let device = Device::new(
                     device_id::printer(&printer.queue),
                     DeviceKind::Printer,
                     printer.queue.clone(),
@@ -84,7 +92,7 @@ impl Probe for PrinterProbe {
                         accepting: Some(printer.accepting),
                         device_uri: uri,
                         make_model: None,
-                        is_default: None,
+                        is_default,
                     }),
                 )
                 .with_source(SourceEvidence {
@@ -92,7 +100,8 @@ impl Probe for PrinterProbe {
                     kind: SourceKind::Command,
                     status: SourceStatus::Success,
                     summary: None,
-                })
+                });
+                with_default_source(device, default.as_ref())
             })
             .collect();
         ProbeResult {
@@ -103,10 +112,34 @@ impl Probe for PrinterProbe {
     }
 }
 
-fn devices_from_uris(uris: Vec<hw_parser::PrinterUriRecord>, source: &str) -> Vec<Device> {
+struct PrinterDefault {
+    queue: String,
+    source: String,
+}
+
+async fn read_default_printer(ctx: &ProbeContext<'_>) -> Option<PrinterDefault> {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("lpstat", ["-d"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return None;
+    }
+    parse_lpstat_d(&result.stdout).map(|queue| PrinterDefault {
+        queue,
+        source: result.source,
+    })
+}
+
+fn devices_from_uris(
+    uris: Vec<hw_parser::PrinterUriRecord>,
+    source: &str,
+    default: Option<&PrinterDefault>,
+) -> Vec<Device> {
     uris.into_iter()
         .map(|printer| {
-            Device::new(
+            let is_default = default.map(|default| default.queue == printer.queue);
+            let device = Device::new(
                 device_id::printer(&printer.queue),
                 DeviceKind::Printer,
                 printer.queue.clone(),
@@ -115,7 +148,7 @@ fn devices_from_uris(uris: Vec<hw_parser::PrinterUriRecord>, source: &str) -> Ve
                     accepting: None,
                     device_uri: printer.device_uri,
                     make_model: None,
-                    is_default: None,
+                    is_default,
                 }),
             )
             .with_source(SourceEvidence {
@@ -123,7 +156,20 @@ fn devices_from_uris(uris: Vec<hw_parser::PrinterUriRecord>, source: &str) -> Ve
                 kind: SourceKind::Command,
                 status: SourceStatus::Success,
                 summary: None,
-            })
+            });
+            with_default_source(device, default)
         })
         .collect()
+}
+
+fn with_default_source(device: Device, default: Option<&PrinterDefault>) -> Device {
+    let Some(default) = default else {
+        return device;
+    };
+    device.with_source(SourceEvidence {
+        source: default.source.clone(),
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    })
 }

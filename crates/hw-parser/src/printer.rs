@@ -40,3 +40,10 @@ pub fn parse_lpstat_v(input: &str) -> Vec<PrinterUriRecord> {
         })
         .collect()
 }
+
+pub fn parse_lpstat_d(input: &str) -> Option<String> {
+    input.lines().find_map(|line| {
+        let value = line.strip_prefix("system default destination:")?.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}

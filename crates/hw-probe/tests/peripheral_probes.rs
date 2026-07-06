@@ -484,6 +484,41 @@ async fn printer_probe_warns_when_uri_source_fails() {
 }
 
 #[tokio::test]
+async fn printer_probe_reads_default_destination() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lpstat",
+            ["-a"],
+            "Office accepting requests since now\nBackup accepting requests since now\n",
+        )
+        .with_command(
+            "lpstat",
+            ["-v"],
+            "device for Office: ipp://printer.local/ipp/print\ndevice for Backup: ipp://backup.local/ipp/print\n",
+        )
+        .with_command("lpstat", ["-d"], "system default destination: Office\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = PrinterProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    let DeviceProperties::Printer(office) = &result.devices[0].properties else {
+        panic!("expected printer properties");
+    };
+    assert_eq!(office.queue_name.as_deref(), Some("Office"));
+    assert_eq!(office.is_default, Some(true));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "lpstat -d"));
+
+    let DeviceProperties::Printer(backup) = &result.devices[1].properties else {
+        panic!("expected printer properties");
+    };
+    assert_eq!(backup.queue_name.as_deref(), Some("Backup"));
+    assert_eq!(backup.is_default, Some(false));
+}
+
+#[tokio::test]
 async fn printer_probe_uses_uri_source_when_status_source_is_missing() {
     let runner = FakeSourceRunner::new().with_command(
         "lpstat",
