@@ -188,6 +188,7 @@ pub struct BatteryInfo {
     pub energy_design_wh: Option<f32>,
     pub energy_now_wh: Option<f32>,
     pub voltage_v: Option<f32>,
+    pub temperature_celsius: Option<f32>,
     pub cycle_count: Option<u32>,
     pub present: Option<bool>,
 }

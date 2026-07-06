@@ -56,6 +56,7 @@ impl Probe for BatteryProbe {
                         energy_design_wh: power.energy_design_wh,
                         energy_now_wh: power.energy_now_wh,
                         voltage_v: power.voltage_v,
+                        temperature_celsius: None,
                         cycle_count: None,
                         present: power.present,
                     }),
@@ -114,6 +115,7 @@ async fn probe_sysfs_batteries(ctx: &ProbeContext<'_>) -> Vec<Device> {
                     energy_design_wh: read_micro_units(ctx, &path.join("energy_full_design")).await,
                     energy_now_wh: read_micro_units(ctx, &path.join("energy_now")).await,
                     voltage_v: read_micro_units(ctx, &path.join("voltage_now")).await,
+                    temperature_celsius: read_deci_units(ctx, &path.join("temp")).await,
                     cycle_count: read_trimmed(ctx, &path.join("cycle_count"))
                         .await
                         .and_then(|value| value.parse().ok()),
@@ -160,4 +162,12 @@ async fn read_micro_units(ctx: &ProbeContext<'_>, path: &Path) -> Option<f32> {
         .parse::<f32>()
         .ok()
         .map(|value| value / 1_000_000.0)
+}
+
+async fn read_deci_units(ctx: &ProbeContext<'_>, path: &Path) -> Option<f32> {
+    read_trimmed(ctx, path)
+        .await?
+        .parse::<f32>()
+        .ok()
+        .map(|value| value / 10.0)
 }

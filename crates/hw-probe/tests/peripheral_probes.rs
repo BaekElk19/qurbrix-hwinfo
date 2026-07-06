@@ -193,6 +193,7 @@ async fn battery_probe_uses_sysfs_when_upower_is_missing() {
         )
         .with_file("/sys/class/power_supply/BAT0/energy_now", "46000000\n")
         .with_file("/sys/class/power_supply/BAT0/voltage_now", "11500000\n")
+        .with_file("/sys/class/power_supply/BAT0/temp", "298\n")
         .with_file("/sys/class/power_supply/BAT0/cycle_count", "321\n")
         .with_file("/sys/class/power_supply/BAT0/present", "1\n")
         .with_file("/sys/class/power_supply/BAT1/type", "Mains\n");
@@ -223,6 +224,7 @@ async fn battery_probe_uses_sysfs_when_upower_is_missing() {
     assert_eq!(info.energy_design_wh, Some(57.0));
     assert_eq!(info.energy_now_wh, Some(46.0));
     assert_eq!(info.voltage_v, Some(11.5));
+    assert_eq!(info.temperature_celsius, Some(29.8));
     assert_eq!(info.cycle_count, Some(321));
     assert_eq!(info.present, Some(true));
 
