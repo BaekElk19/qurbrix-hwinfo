@@ -50,6 +50,7 @@ impl Probe for CdromProbe {
                 DeviceProperties::Cdrom(CdromInfo {
                     device_node: Some(format!("/dev/{drive}")),
                     media_present: None,
+                    firmware: None,
                     capabilities: info.capabilities.clone(),
                 }),
             )
@@ -63,7 +64,16 @@ impl Probe for CdromProbe {
             device.vendor = read_trimmed(ctx, &sysfs_path.join("device/vendor")).await;
             device.model = read_trimmed(ctx, &sysfs_path.join("device/model")).await;
             device.serial = read_trimmed(ctx, &sysfs_path.join("device/serial")).await;
-            if device.vendor.is_some() || device.model.is_some() || device.serial.is_some() {
+            let firmware = read_trimmed(ctx, &sysfs_path.join("device/rev")).await;
+            let has_firmware = firmware.is_some();
+            if let DeviceProperties::Cdrom(info) = &mut device.properties {
+                info.firmware = firmware;
+            }
+            if device.vendor.is_some()
+                || device.model.is_some()
+                || device.serial.is_some()
+                || has_firmware
+            {
                 device = device.with_source(SourceEvidence {
                     source: sysfs_path.display().to_string(),
                     kind: SourceKind::Sysfs,
@@ -97,6 +107,7 @@ async fn probe_sysfs_cdroms(ctx: &ProbeContext<'_>) -> Vec<Device> {
             DeviceProperties::Cdrom(CdromInfo {
                 device_node: Some(device_node),
                 media_present: None,
+                firmware: read_trimmed(ctx, &path.join("device/rev")).await,
                 capabilities: Vec::new(),
             }),
         )

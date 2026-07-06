@@ -207,6 +207,7 @@ pub struct PrinterInfo {
 pub struct CdromInfo {
     pub device_node: Option<String>,
     pub media_present: Option<bool>,
+    pub firmware: Option<String>,
     pub capabilities: Vec<String>,
 }
 

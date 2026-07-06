@@ -938,7 +938,8 @@ async fn cdrom_probe_uses_sysfs_when_proc_cdrom_info_is_missing() {
         )
         .with_file("/sys/class/block/sr0/device/vendor", "HL-DT-ST\n")
         .with_file("/sys/class/block/sr0/device/model", "DVDRAM GP60\n")
-        .with_file("/sys/class/block/sr0/device/serial", "ABC123\n");
+        .with_file("/sys/class/block/sr0/device/serial", "ABC123\n")
+        .with_file("/sys/class/block/sr0/device/rev", "1.00\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = CdromProbe.probe(&ctx).await;
 
@@ -958,6 +959,7 @@ async fn cdrom_probe_uses_sysfs_when_proc_cdrom_info_is_missing() {
     };
     assert_eq!(info.device_node.as_deref(), Some("/dev/sr0"));
     assert_eq!(info.media_present, None);
+    assert_eq!(info.firmware.as_deref(), Some("1.00"));
     assert!(info.capabilities.is_empty());
 
     assert_eq!(result.warnings.len(), 1);
@@ -977,7 +979,8 @@ async fn cdrom_probe_enriches_proc_drives_from_sysfs_identity() {
         )
         .with_file("/sys/class/block/sr0/device/vendor", "HL-DT-ST\n")
         .with_file("/sys/class/block/sr0/device/model", "DVDRAM GP60\n")
-        .with_file("/sys/class/block/sr0/device/serial", "ABC123\n");
+        .with_file("/sys/class/block/sr0/device/serial", "ABC123\n")
+        .with_file("/sys/class/block/sr0/device/rev", "1.00\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = CdromProbe.probe(&ctx).await;
 
@@ -985,6 +988,10 @@ async fn cdrom_probe_enriches_proc_drives_from_sysfs_identity() {
     assert_eq!(result.devices[0].vendor.as_deref(), Some("HL-DT-ST"));
     assert_eq!(result.devices[0].model.as_deref(), Some("DVDRAM GP60"));
     assert_eq!(result.devices[0].serial.as_deref(), Some("ABC123"));
+    let DeviceProperties::Cdrom(info) = &result.devices[0].properties else {
+        panic!("expected cdrom properties");
+    };
+    assert_eq!(info.firmware.as_deref(), Some("1.00"));
     assert!(result.devices[0]
         .sources
         .iter()
