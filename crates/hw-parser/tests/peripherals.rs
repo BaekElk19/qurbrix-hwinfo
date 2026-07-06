@@ -42,6 +42,38 @@ fn parses_lshw_multimedia_audio_devices() {
 }
 
 #[test]
+fn parses_hwinfo_sound_devices() {
+    let records = parse_hwinfo_sound(
+        "12: PCI 1f.3: 0403 Audio device\n\
+         \t[Created at pci.386]\n\
+         \tUnique ID: nS1_.abc123\n\
+         \tHardware Class: sound\n\
+         \tModel: \"Intel Cannon Lake PCH cAVS\"\n\
+         \tVendor: pci 0x8086 \"Intel Corporation\"\n\
+         \tDevice: pci 0xa348 \"Cannon Lake PCH cAVS\"\n\
+         \tDriver: \"snd_hda_intel\"\n\
+         \tDriver Modules: \"snd_hda_intel\"\n\
+         \tSysFS BusID: 0000:00:1f.3\n\
+         \tSysFS ID: /class/sound/card0\n\
+         \n\
+         13: PCI 02.0: 0200 Ethernet controller\n\
+         \tHardware Class: network\n\
+         \tModel: \"Intel Ethernet\"\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].model.as_deref(),
+        Some("Intel Cannon Lake PCH cAVS")
+    );
+    assert_eq!(records[0].vendor.as_deref(), Some("Intel Corporation"));
+    assert_eq!(records[0].driver.as_deref(), Some("snd_hda_intel"));
+    assert_eq!(records[0].driver_modules, vec!["snd_hda_intel"]);
+    assert_eq!(records[0].pci_address.as_deref(), Some("0000:00:1f.3"));
+    assert_eq!(records[0].card_index, Some(0));
+}
+
+#[test]
 fn parses_pactl_card_profiles() {
     let records = parse_pactl_card_profiles(
         "Card #0\n\

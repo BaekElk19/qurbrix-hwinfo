@@ -18,6 +18,17 @@ pub struct LshwMultimediaRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct HwinfoSoundRecord {
+    pub model: Option<String>,
+    pub vendor: Option<String>,
+    pub device: Option<String>,
+    pub driver: Option<String>,
+    pub driver_modules: Vec<String>,
+    pub pci_address: Option<String>,
+    pub card_index: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PactlCardProfileRecord {
     pub card_index: Option<u32>,
     pub profiles: Vec<String>,
@@ -76,6 +87,22 @@ pub fn parse_lshw_multimedia(input: &str) -> Vec<LshwMultimediaRecord> {
     records
 }
 
+pub fn parse_hwinfo_sound(input: &str) -> Vec<HwinfoSoundRecord> {
+    let mut records = Vec::new();
+    let mut section = Vec::new();
+
+    for line in input.lines().chain(std::iter::once("")) {
+        if line.trim().is_empty() {
+            push_hwinfo_sound_record(&mut records, parse_hwinfo_sound_section(&section));
+            section.clear();
+            continue;
+        }
+        section.push(line);
+    }
+
+    records
+}
+
 pub fn parse_pactl_card_profiles(input: &str) -> Vec<PactlCardProfileRecord> {
     let mut records = Vec::new();
     let mut current: Option<PactlCardProfileRecord> = None;
@@ -115,6 +142,57 @@ pub fn parse_pactl_card_profiles(input: &str) -> Vec<PactlCardProfileRecord> {
     }
 
     records
+}
+
+fn parse_hwinfo_sound_section(lines: &[&str]) -> Option<HwinfoSoundRecord> {
+    let mut record = HwinfoSoundRecord::default();
+    let mut is_sound = false;
+    let raw_section = lines.join("\n");
+
+    for line in lines {
+        let Some((key, value)) = line.trim().split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "Hardware Class" => is_sound = value == "sound",
+            "Model" => record.model = clean_hwinfo_value(value),
+            "Vendor" => record.vendor = clean_hwinfo_value(value),
+            "Device" => record.device = clean_hwinfo_value(value),
+            "Driver" => record.driver = clean_hwinfo_value(value),
+            "Driver Modules" => record.driver_modules = clean_hwinfo_modules(value),
+            "SysFS BusID" => record.pci_address = clean_hwinfo_pci_address(value),
+            "SysFS ID" => record.card_index = parse_hwinfo_sound_card_index(value),
+            _ => {}
+        }
+    }
+
+    let usb_audio_fallback =
+        raw_section.contains("USB Audio") && raw_section.contains("snd-usb-audio");
+    if is_sound || usb_audio_fallback {
+        Some(record)
+    } else {
+        None
+    }
+}
+
+fn push_hwinfo_sound_record(
+    records: &mut Vec<HwinfoSoundRecord>,
+    record: Option<HwinfoSoundRecord>,
+) {
+    if let Some(record) = record {
+        if record.model.is_some()
+            || record.vendor.is_some()
+            || record.device.is_some()
+            || record.driver.is_some()
+            || !record.driver_modules.is_empty()
+            || record.pci_address.is_some()
+            || record.card_index.is_some()
+        {
+            records.push(record);
+        }
+    }
 }
 
 fn push_pactl_card_profile_record(
@@ -157,4 +235,48 @@ fn clean_lshw_multimedia_value(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn clean_hwinfo_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    let value = value.split('"').nth(1).unwrap_or(value).trim();
+    if value.is_empty() || value.contains("unknown") {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn clean_hwinfo_modules(value: &str) -> Vec<String> {
+    let quoted = value
+        .split('"')
+        .enumerate()
+        .filter_map(|(index, part)| (index % 2 == 1).then_some(part.trim()))
+        .filter(|part| !part.is_empty() && !part.contains("unknown"))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if !quoted.is_empty() {
+        return quoted;
+    }
+
+    value
+        .split([',', ' '])
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && !part.contains("unknown"))
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn clean_hwinfo_pci_address(value: &str) -> Option<String> {
+    clean_hwinfo_value(value).map(|value| {
+        value
+            .strip_prefix("pci@")
+            .unwrap_or(value.as_str())
+            .to_string()
+    })
+}
+
+fn parse_hwinfo_sound_card_index(value: &str) -> Option<u32> {
+    let re = Regex::new(r"card(\d+)").unwrap();
+    re.captures(value).and_then(|caps| caps[1].parse().ok())
 }

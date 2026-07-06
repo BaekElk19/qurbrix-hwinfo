@@ -8,7 +8,8 @@ use hw_model::{
     SourceEvidence, SourceKind, SourceStatus,
 };
 use hw_parser::{
-    parse_lshw_multimedia, parse_pactl_card_profiles, parse_proc_asound_cards, LshwMultimediaRecord,
+    parse_hwinfo_sound, parse_lshw_multimedia, parse_pactl_card_profiles, parse_proc_asound_cards,
+    HwinfoSoundRecord, LshwMultimediaRecord,
 };
 use hw_source::CommandSpec;
 use std::{collections::HashMap, path::Path};
@@ -33,6 +34,7 @@ impl Probe for AudioProbe {
             return fallback;
         }
         let lshw = audio_lshw_records(ctx).await;
+        let hwinfo = audio_hwinfo_records(ctx).await;
         let profiles = audio_profile_records(ctx).await;
         let mut devices = Vec::new();
         for card in parse_proc_asound_cards(&result.stdout) {
@@ -61,7 +63,8 @@ impl Probe for AudioProbe {
             });
             let device = apply_audio_enrichment(device, enrichment);
             let device = apply_audio_profile_source(device, &profiles, &card_profiles);
-            devices.push(apply_audio_lshw_enrichment(device, &lshw));
+            let device = apply_audio_lshw_enrichment(device, &lshw);
+            devices.push(apply_audio_hwinfo_enrichment(device, &hwinfo, card.index));
         }
         ProbeResult::with_devices(devices)
     }
@@ -71,6 +74,13 @@ impl Probe for AudioProbe {
 struct AudioLshwRecords {
     source: String,
     by_pci_address: HashMap<String, LshwMultimediaRecord>,
+}
+
+#[derive(Default)]
+struct AudioHwinfoRecords {
+    source: String,
+    by_pci_address: HashMap<String, HwinfoSoundRecord>,
+    by_card_index: HashMap<u32, HwinfoSoundRecord>,
 }
 
 #[derive(Default)]
@@ -99,6 +109,7 @@ struct AudioEnrichment {
 
 async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let lshw = audio_lshw_records(ctx).await;
+    let hwinfo = audio_hwinfo_records(ctx).await;
     let profiles = audio_profile_records(ctx).await;
     let mut devices = Vec::new();
     let mut cards = ctx
@@ -144,7 +155,8 @@ async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
         });
         let device = apply_audio_enrichment(device, enrichment);
         let device = apply_audio_profile_source(device, &profiles, &card_profiles);
-        devices.push(apply_audio_lshw_enrichment(device, &lshw));
+        let device = apply_audio_lshw_enrichment(device, &lshw);
+        devices.push(apply_audio_hwinfo_enrichment(device, &hwinfo, index));
     }
 
     devices
@@ -170,6 +182,30 @@ async fn audio_lshw_records(ctx: &ProbeContext<'_>) -> AudioLshwRecords {
         source: result.source,
         by_pci_address,
     }
+}
+
+async fn audio_hwinfo_records(ctx: &ProbeContext<'_>) -> AudioHwinfoRecords {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("hwinfo", ["--sound"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return AudioHwinfoRecords::default();
+    }
+
+    let mut records = AudioHwinfoRecords {
+        source: result.source,
+        ..Default::default()
+    };
+    for record in parse_hwinfo_sound(&result.stdout) {
+        if let Some(address) = record.pci_address.clone() {
+            records.by_pci_address.insert(address, record.clone());
+        }
+        if let Some(index) = record.card_index {
+            records.by_card_index.insert(index, record);
+        }
+    }
+    records
 }
 
 async fn audio_profile_records(ctx: &ProbeContext<'_>) -> AudioProfileRecords {
@@ -316,6 +352,68 @@ fn apply_audio_profile_source(
         status: SourceStatus::Success,
         summary: None,
     });
+    device
+}
+
+fn apply_audio_hwinfo_enrichment(
+    mut device: Device,
+    hwinfo: &AudioHwinfoRecords,
+    card_index: u32,
+) -> Device {
+    let record = device
+        .bus
+        .as_ref()
+        .and_then(audio_pci_address)
+        .and_then(|address| hwinfo.by_pci_address.get(address))
+        .or_else(|| hwinfo.by_card_index.get(&card_index));
+    let Some(record) = record else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if device.vendor.is_none() && record.vendor.is_some() {
+        device.vendor = record.vendor.clone();
+        contributed = true;
+    }
+    if device.model.is_none() {
+        let model = record.model.clone().or_else(|| record.device.clone());
+        if model.is_some() {
+            device.model = model;
+            contributed = true;
+        }
+    }
+    if record.driver.is_some() || !record.driver_modules.is_empty() {
+        let mut driver = device.driver.take().unwrap_or(DriverInfo {
+            name: None,
+            version: None,
+            modules: Vec::new(),
+            provider: None,
+            status: DriverStatus::InUse,
+        });
+        let original = driver.clone();
+        driver.name = driver.name.or_else(|| record.driver.clone());
+        for module in &record.driver_modules {
+            if !driver.modules.iter().any(|item| item == module) {
+                driver.modules.push(module.clone());
+            }
+        }
+        contributed |= driver != original;
+        device.driver = Some(driver);
+    }
+    if contributed
+        && !hwinfo.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == hwinfo.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: hwinfo.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
     device
 }
 

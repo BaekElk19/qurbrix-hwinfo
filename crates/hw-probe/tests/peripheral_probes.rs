@@ -141,6 +141,56 @@ async fn audio_probe_enriches_human_readable_lshw_fields() {
 }
 
 #[tokio::test]
+async fn audio_probe_enriches_human_readable_hwinfo_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/asound/cards",
+            " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xa1230000 irq 145\n",
+        )
+        .with_file(
+            "/sys/class/sound/card0/device/uevent",
+            "PCI_CLASS=40300\nPCI_ID=8086:A348\nPCI_SLOT_NAME=0000:00:1f.3\n",
+        )
+        .with_command(
+            "hwinfo",
+            ["--sound"],
+            "12: PCI 1f.3: 0403 Audio device\n\
+             \tHardware Class: sound\n\
+             \tModel: \"Intel Cannon Lake PCH cAVS\"\n\
+             \tVendor: pci 0x8086 \"Intel Corporation\"\n\
+             \tDevice: pci 0xa348 \"Cannon Lake PCH cAVS\"\n\
+             \tDriver: \"snd_hda_intel\"\n\
+             \tDriver Modules: \"snd_hda_intel\"\n\
+             \tSysFS BusID: 0000:00:1f.3\n\
+             \tSysFS ID: /class/sound/card0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = AudioProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.vendor.as_deref(), Some("Intel Corporation"));
+    assert_eq!(device.model.as_deref(), Some("Intel Cannon Lake PCH cAVS"));
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("snd_hda_intel")
+    );
+    assert_eq!(
+        device
+            .driver
+            .as_ref()
+            .map(|driver| driver.modules.as_slice()),
+        Some(&["snd_hda_intel".to_string()][..])
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "hwinfo --sound"));
+}
+
+#[tokio::test]
 async fn audio_probe_reads_pactl_card_profiles() {
     let runner = FakeSourceRunner::new()
         .with_file(
