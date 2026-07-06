@@ -374,6 +374,42 @@ async fn gpu_probe_enriches_human_readable_lshw_display_fields() {
 }
 
 #[tokio::test]
+async fn gpu_probe_reads_drm_vram_total() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 22 [1002:73df]\n\tKernel driver in use: amdgpu\n",
+        )
+        .with_glob(
+            "/sys/class/drm/*/device/uevent",
+            vec![PathBuf::from("/sys/class/drm/card1/device/uevent")],
+        )
+        .with_file(
+            "/sys/class/drm/card1/device/uevent",
+            "PCI_SLOT_NAME=0000:03:00.0\n",
+        )
+        .with_file(
+            "/sys/class/drm/card1/device/mem_info_vram_total",
+            "8589934592\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.memory_bytes, Some(8_589_934_592));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device.sources.iter().any(|source| {
+        source.kind == SourceKind::Sysfs
+            && source.source == "/sys/class/drm/card1/device/mem_info_vram_total"
+    }));
+}
+
+#[tokio::test]
 async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_glob(

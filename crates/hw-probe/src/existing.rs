@@ -1367,13 +1367,15 @@ impl Probe for GpuProbe {
 
     async fn probe(&self, ctx: &ProbeContext<'_>) -> ProbeResult {
         let lshw = gpu_lshw_display_records(ctx).await;
+        let drm = gpu_drm_records(ctx).await;
         let result = ctx
             .runner
             .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
             .await;
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
-            fallback.devices = gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &lshw).await;
+            fallback.devices =
+                gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &lshw, &drm).await;
             return fallback;
         }
         let mut probe_result = ProbeResult::default();
@@ -1432,9 +1434,10 @@ impl Probe for GpuProbe {
                 status: SourceStatus::Success,
                 summary: None,
             });
-            probe_result
-                .devices
-                .push(apply_gpu_lshw_enrichment(device, &lshw));
+            probe_result.devices.push(apply_gpu_drm_enrichment(
+                apply_gpu_lshw_enrichment(device, &lshw),
+                &drm,
+            ));
         }
         probe_result
     }
@@ -1444,6 +1447,16 @@ impl Probe for GpuProbe {
 struct GpuLshwDisplayRecords {
     source: String,
     by_pci_address: HashMap<String, LshwDisplayRecord>,
+}
+
+#[derive(Default)]
+struct GpuDrmRecords {
+    by_pci_address: HashMap<String, GpuDrmRecord>,
+}
+
+struct GpuDrmRecord {
+    memory_bytes: u64,
+    source: String,
 }
 
 async fn gpu_lshw_display_records(ctx: &ProbeContext<'_>) -> GpuLshwDisplayRecords {
@@ -1540,6 +1553,82 @@ fn apply_gpu_lshw_enrichment(mut device: Device, lshw: &GpuLshwDisplayRecords) -
     device
 }
 
+async fn gpu_drm_records(ctx: &ProbeContext<'_>) -> GpuDrmRecords {
+    let mut records = GpuDrmRecords::default();
+    let mut paths = ctx
+        .runner
+        .glob("/sys/class/drm/*/device/uevent")
+        .await
+        .paths;
+    paths.sort();
+
+    for uevent_path in paths {
+        let result = ctx.runner.read_file(&uevent_path).await;
+        if !result.is_success() {
+            continue;
+        }
+        let Some(address) = pci_bus_from_uevent(&result.stdout).and_then(|bus| match bus {
+            BusInfo::Pci { address, .. } => Some(address),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let Some(device_path) = uevent_path.parent() else {
+            continue;
+        };
+        let memory_path = device_path.join("mem_info_vram_total");
+        let Some(memory_bytes) = read_optional_trimmed(ctx, &memory_path)
+            .await
+            .and_then(|value| value.parse::<u64>().ok())
+        else {
+            continue;
+        };
+
+        records.by_pci_address.insert(
+            address,
+            GpuDrmRecord {
+                memory_bytes,
+                source: memory_path.display().to_string(),
+            },
+        );
+    }
+
+    records
+}
+
+fn apply_gpu_drm_enrichment(mut device: Device, drm: &GpuDrmRecords) -> Device {
+    let Some(address) = device.bus.as_ref().and_then(gpu_pci_address) else {
+        return device;
+    };
+    let Some(record) = drm.by_pci_address.get(address) else {
+        return device;
+    };
+    let mut contributed = false;
+
+    if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+        if gpu.memory_bytes.is_none() {
+            gpu.memory_bytes = Some(record.memory_bytes);
+            contributed = true;
+        }
+    }
+
+    if contributed
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == record.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: record.source.clone(),
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+
+    device
+}
+
 fn gpu_pci_address(bus: &BusInfo) -> Option<&str> {
     match bus {
         BusInfo::Pci { address, .. } => Some(address),
@@ -1562,6 +1651,7 @@ async fn gpu_devices_from_sysfs_pci(
     ctx: &ProbeContext<'_>,
     consumed: &mut Vec<DeviceRef>,
     lshw: &GpuLshwDisplayRecords,
+    drm: &GpuDrmRecords,
 ) -> Vec<Device> {
     let mut devices = Vec::new();
     for record in read_sysfs_pci_records(ctx).await {
@@ -1618,7 +1708,10 @@ async fn gpu_devices_from_sysfs_pci(
                 status: DriverStatus::InUse,
             });
         }
-        devices.push(apply_gpu_lshw_enrichment(device, lshw));
+        devices.push(apply_gpu_drm_enrichment(
+            apply_gpu_lshw_enrichment(device, lshw),
+            drm,
+        ));
     }
 
     devices
