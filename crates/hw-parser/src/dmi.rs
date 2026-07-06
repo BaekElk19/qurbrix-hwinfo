@@ -185,6 +185,32 @@ pub fn parse_spd_decode_dimms(input: &str) -> Vec<DmiMemoryRecord> {
     records
 }
 
+pub fn parse_spd_eeprom(bytes: &[u8]) -> Option<DmiMemoryRecord> {
+    match bytes.get(2).copied()? {
+        0x0c => parse_ddr4_spd_eeprom(bytes),
+        _ => None,
+    }
+}
+
+fn parse_ddr4_spd_eeprom(bytes: &[u8]) -> Option<DmiMemoryRecord> {
+    let size = ddr4_spd_size(bytes).map(|size_mib| format!("{size_mib} MB"));
+    let speed = ddr4_spd_speed(bytes).map(|speed_mtps| format!("{speed_mtps} MT/s"));
+    let serial = bytes.get(323..327).and_then(spd_hex_string);
+    let part_number = spd_ascii_string(bytes.get(329..349).unwrap_or_default());
+    let has_spd_data =
+        size.is_some() || speed.is_some() || serial.is_some() || part_number.is_some();
+
+    let record = DmiMemoryRecord {
+        size,
+        serial,
+        part_number,
+        memory_type: Some("DDR4 SDRAM".to_string()),
+        speed,
+        ..Default::default()
+    };
+    has_spd_data.then_some(record)
+}
+
 pub fn parse_dmidecode_system(input: &str) -> DmiSystemRecord {
     let mut record = DmiSystemRecord::default();
     let mut in_system = false;
@@ -369,21 +395,70 @@ fn push_memory_record(records: &mut Vec<DmiMemoryRecord>, record: Option<DmiMemo
     let Some(record) = record else {
         return;
     };
-    let has_data = record.size.is_some()
+    if memory_record_has_data(&record) && record.size.as_deref() != Some("No Module Installed") {
+        records.push(record);
+    }
+}
+
+fn memory_record_has_data(record: &DmiMemoryRecord) -> bool {
+    record.size.is_some()
         || record.locator.is_some()
         || record.manufacturer.is_some()
         || record.serial.is_some()
         || record.part_number.is_some()
         || record.memory_type.is_some()
-        || record.speed.is_some();
-    if has_data && record.size.as_deref() != Some("No Module Installed") {
-        records.push(record);
-    }
+        || record.speed.is_some()
 }
 
 fn clean_memory_value(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty() && !value.eq_ignore_ascii_case("Not Specified")).then(|| value.to_string())
+}
+
+fn ddr4_spd_size(bytes: &[u8]) -> Option<u64> {
+    let density_code = bytes.get(4)? & 0x0f;
+    let organization = *bytes.get(12)?;
+    let bus = *bytes.get(13)?;
+    let sdram_width_code = organization & 0x07;
+    let rank_count = ((organization >> 3) & 0x07) + 1;
+    let bus_width_code = bus & 0x07;
+
+    if density_code > 7 || sdram_width_code > 3 || bus_width_code > 3 {
+        return None;
+    }
+
+    let sdram_mbit = 256u64 << density_code;
+    let sdram_width = 4u64 << sdram_width_code;
+    let bus_width = 8u64 << bus_width_code;
+    if bus_width < sdram_width {
+        return None;
+    }
+    Some((sdram_mbit / 8) * (bus_width / sdram_width) * u64::from(rank_count))
+}
+
+fn ddr4_spd_speed(bytes: &[u8]) -> Option<u32> {
+    let tck_mtb = u64::from(*bytes.get(18)?);
+    (tck_mtb > 0).then_some(())?;
+    let tck_ps = tck_mtb * 125;
+    u32::try_from((2_000_000 + tck_ps / 2) / tck_ps).ok()
+}
+
+fn spd_hex_string(bytes: &[u8]) -> Option<String> {
+    let value = bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>();
+    clean_memory_value(&value).filter(|value| !value.chars().all(|ch| ch == '0' || ch == 'F'))
+}
+
+fn spd_ascii_string(bytes: &[u8]) -> Option<String> {
+    let value: String = bytes
+        .iter()
+        .copied()
+        .take_while(|byte| *byte != 0x00 && *byte != 0xff)
+        .map(char::from)
+        .collect();
+    clean_memory_value(&value)
 }
 
 fn decode_dimms_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {

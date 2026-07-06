@@ -19,10 +19,10 @@ use hw_parser::{
     parse_lshw_storage, parse_lspci_nn_k, parse_nvidia_settings_videoram,
     parse_nvidia_smi_memory_csv, parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
-    parse_spd_decode_dimms, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
-    DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord,
-    HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
-    LshwStorageRecord, PciRecord,
+    parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_xrandr_query,
+    parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord,
+    GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord,
+    LshwNetworkRecord, LshwStorageRecord, PciRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -1889,6 +1889,12 @@ async fn memory_fallback_from_lshw_or_proc(
         );
     }
 
+    let spd_sysfs_records = memory_records_from_spd_eeprom_sysfs(ctx, &mut fallback.warnings).await;
+    if !spd_sysfs_records.is_empty() {
+        fallback.devices = memory_devices_from_sysfs_records(spd_sysfs_records);
+        return fallback;
+    }
+
     let sysfs_records = memory_records_from_edac_sysfs(ctx).await;
     if !sysfs_records.is_empty() {
         fallback.devices = memory_devices_from_sysfs_records(sysfs_records);
@@ -1922,6 +1928,57 @@ async fn memory_fallback_from_lshw_or_proc(
 struct SysfsMemoryRecord {
     record: DmiMemoryRecord,
     source: String,
+}
+
+async fn memory_records_from_spd_eeprom_sysfs(
+    ctx: &ProbeContext<'_>,
+    warnings: &mut Vec<ScanWarning>,
+) -> Vec<SysfsMemoryRecord> {
+    let mut paths = Vec::new();
+    for pattern in [
+        "/sys/bus/i2c/drivers/eeprom/*/eeprom",
+        "/sys/bus/i2c/drivers/ee1004/*/eeprom",
+    ] {
+        paths.extend(ctx.runner.glob(pattern).await.paths);
+    }
+    paths.sort();
+    paths.dedup();
+
+    let mut records = Vec::new();
+    for path in paths {
+        let result = ctx.runner.read_file_bytes(&path).await;
+        if !result.is_success() {
+            warnings.push(source_bytes_failure("memory", &result));
+            continue;
+        }
+
+        let Some(mut record) = parse_spd_eeprom(&result.bytes) else {
+            warnings.push(
+                ScanWarning::new(
+                    "source_empty",
+                    "raw SPD EEPROM source produced no DIMM record",
+                )
+                .with_source(result.source),
+            );
+            continue;
+        };
+        if record.locator.is_none() {
+            record.locator = spd_eeprom_locator(&path);
+        }
+        records.push(SysfsMemoryRecord {
+            record,
+            source: result.source,
+        });
+    }
+
+    records
+}
+
+fn spd_eeprom_locator(path: &Path) -> Option<String> {
+    path.parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
 }
 
 async fn memory_records_from_edac_sysfs(ctx: &ProbeContext<'_>) -> Vec<SysfsMemoryRecord> {

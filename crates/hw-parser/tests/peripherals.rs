@@ -200,6 +200,22 @@ fn parses_spd_decode_dimms_records() {
 }
 
 #[test]
+fn ignores_truncated_raw_spd_eeprom() {
+    assert!(parse_spd_eeprom(&[0x00, 0x00, 0x0c]).is_none());
+}
+
+#[test]
+fn ignores_raw_spd_eeprom_with_invalid_width_combination() {
+    let mut bytes = vec![0; 64];
+    bytes[2] = 0x0c;
+    bytes[4] = 0x05;
+    bytes[12] = 0x03;
+    bytes[13] = 0x00;
+
+    assert!(parse_spd_eeprom(&bytes).is_none());
+}
+
+#[test]
 fn parses_printer_status_and_uri() {
     let statuses = parse_lpstat_a(&hw_testdata::fixture("printer/lpstat-a.txt"));
     let uris = parse_lpstat_v(&hw_testdata::fixture("printer/lpstat-v.txt"));
