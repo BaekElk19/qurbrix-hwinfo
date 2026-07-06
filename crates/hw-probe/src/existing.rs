@@ -1235,6 +1235,9 @@ async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str
     if device.bus.is_none() {
         device = apply_storage_parent_pci_identity(ctx, device, &sysfs_path).await;
     }
+    if device.bus.is_none() {
+        device = apply_unique_storage_controller_pci_identity(ctx, device).await;
+    }
     device
 }
 
@@ -1272,6 +1275,63 @@ async fn apply_storage_parent_pci_identity(
         return device;
     }
     device
+}
+
+async fn apply_unique_storage_controller_pci_identity(
+    ctx: &ProbeContext<'_>,
+    mut device: Device,
+) -> Device {
+    if !storage_media_type_uses_pci_controller(&device) {
+        return device;
+    }
+
+    let controllers: Vec<_> = read_sysfs_pci_records(ctx)
+        .await
+        .into_iter()
+        .filter(|record| {
+            record
+                .class_id
+                .as_deref()
+                .is_some_and(|class| class.starts_with("01"))
+        })
+        .collect();
+    let [controller] = controllers.as_slice() else {
+        return device;
+    };
+
+    let path = controller.path.join("uevent");
+    let Some(uevent) = read_optional_trimmed(ctx, &path).await else {
+        return device;
+    };
+    let Some(bus) = pci_bus_from_uevent(&uevent) else {
+        return device;
+    };
+
+    let source = path.display().to_string();
+    device = device.with_bus(bus);
+    if !device
+        .sources
+        .iter()
+        .any(|evidence| evidence.source == source)
+    {
+        device = device.with_source(SourceEvidence {
+            source,
+            kind: SourceKind::Sysfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn storage_media_type_uses_pci_controller(device: &Device) -> bool {
+    let DeviceProperties::Storage(storage) = &device.properties else {
+        return false;
+    };
+    storage
+        .media_type
+        .as_deref()
+        .is_some_and(|media_type| matches!(media_type, "sata" | "ata" | "scsi"))
 }
 
 fn nvme_controller_name(name: &str) -> Option<String> {
