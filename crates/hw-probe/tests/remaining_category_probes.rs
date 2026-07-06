@@ -725,6 +725,93 @@ async fn gpu_probe_enriches_single_gpu_from_glxinfo_basic() {
 }
 
 #[tokio::test]
+async fn gpu_probe_enriches_unique_matching_gpu_from_glxinfo_basic() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics [8086:9a49]\n\tKernel driver in use: i915\n03:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484]\n\tKernel driver in use: nvidia\n",
+        )
+        .with_command(
+            "glxinfo",
+            ["-B"],
+            "OpenGL vendor string: NVIDIA Corporation\n\
+             OpenGL renderer string: NVIDIA GeForce RTX 3070/PCIe/SSE2\n\
+             OpenGL version string: 4.6.0 NVIDIA 535.154.05\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    let intel = &result.devices[0];
+    let nvidia = &result.devices[1];
+
+    match &intel.properties {
+        DeviceProperties::Gpu(gpu) => assert_eq!(gpu.renderer, None),
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(!intel
+        .sources
+        .iter()
+        .any(|source| source.source == "glxinfo -B"));
+
+    assert_eq!(nvidia.name, "NVIDIA GeForce RTX 3070/PCIe/SSE2");
+    assert_eq!(
+        nvidia.model.as_deref(),
+        Some("NVIDIA GeForce RTX 3070/PCIe/SSE2")
+    );
+    match &nvidia.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(
+                gpu.renderer.as_deref(),
+                Some("NVIDIA GeForce RTX 3070/PCIe/SSE2")
+            );
+            assert_eq!(gpu.opengl_vendor.as_deref(), Some("NVIDIA Corporation"));
+            assert_eq!(
+                gpu.opengl_version.as_deref(),
+                Some("4.6.0 NVIDIA 535.154.05")
+            );
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(nvidia
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "glxinfo -B"));
+}
+
+#[tokio::test]
+async fn gpu_probe_skips_glxinfo_for_ambiguous_matching_gpus() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484]\n\tKernel driver in use: nvidia\n04:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA106 [GeForce RTX 3060] [10de:2503]\n\tKernel driver in use: nvidia\n",
+        )
+        .with_command(
+            "glxinfo",
+            ["-B"],
+            "OpenGL vendor string: NVIDIA Corporation\n\
+             OpenGL renderer string: NVIDIA GeForce RTX/PCIe/SSE2\n\
+             OpenGL version string: 4.6.0 NVIDIA 535.154.05\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    for device in &result.devices {
+        match &device.properties {
+            DeviceProperties::Gpu(gpu) => assert_eq!(gpu.renderer, None),
+            other => panic!("expected gpu properties, got {other:?}"),
+        }
+        assert!(!device
+            .sources
+            .iter()
+            .any(|source| source.source == "glxinfo -B"));
+    }
+}
+
+#[tokio::test]
 async fn gpu_probe_reads_drm_vram_total() {
     let runner = FakeSourceRunner::new()
         .with_command(

@@ -2253,7 +2253,7 @@ impl Probe for GpuProbe {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
             fallback.devices =
                 gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &enrichments).await;
-            fallback.devices = apply_gpu_glxinfo_to_unique_device(fallback.devices, &glxinfo);
+            fallback.devices = apply_gpu_glxinfo_to_devices(fallback.devices, &glxinfo);
             return fallback;
         }
         let mut probe_result = ProbeResult::default();
@@ -2355,7 +2355,7 @@ impl Probe for GpuProbe {
                 jingjia_gpu_count == 1,
             ));
         }
-        probe_result.devices = apply_gpu_glxinfo_to_unique_device(probe_result.devices, &glxinfo);
+        probe_result.devices = apply_gpu_glxinfo_to_devices(probe_result.devices, &glxinfo);
         probe_result
     }
 }
@@ -2423,15 +2423,63 @@ async fn gpu_glxinfo_record(ctx: &ProbeContext<'_>) -> GpuGlxinfoRecord {
     }
 }
 
-fn apply_gpu_glxinfo_to_unique_device(
+fn apply_gpu_glxinfo_to_devices(
     mut devices: Vec<Device>,
     glxinfo: &GpuGlxinfoRecord,
 ) -> Vec<Device> {
-    if devices.len() != 1 {
-        return devices;
+    if devices.len() == 1 {
+        let device = devices.remove(0);
+        return vec![apply_gpu_glxinfo_enrichment(device, glxinfo)];
     }
-    let device = devices.remove(0);
-    vec![apply_gpu_glxinfo_enrichment(device, glxinfo)]
+    let Some(index) = unique_glxinfo_gpu_index(&devices, &glxinfo.record) else {
+        return devices;
+    };
+    let device = devices.remove(index);
+    devices.insert(index, apply_gpu_glxinfo_enrichment(device, glxinfo));
+    devices
+}
+
+fn unique_glxinfo_gpu_index(devices: &[Device], record: &GlxinfoBasicRecord) -> Option<usize> {
+    let mut matches = devices
+        .iter()
+        .enumerate()
+        .filter_map(|(index, device)| device_matches_glxinfo(device, record).then_some(index));
+    let index = matches.next()?;
+    matches.next().is_none().then_some(index)
+}
+
+fn device_matches_glxinfo(device: &Device, record: &GlxinfoBasicRecord) -> bool {
+    normalized_device_gpu_vendor(device)
+        .zip(normalized_glxinfo_vendor(record))
+        .is_some_and(|(device_vendor, glxinfo_vendor)| device_vendor == glxinfo_vendor)
+}
+
+fn normalized_device_gpu_vendor(device: &Device) -> Option<&'static str> {
+    if let Some(vendor) = device.bus.as_ref().and_then(|bus| match bus {
+        BusInfo::Pci { vendor_id, .. } => vendor_id.as_deref().and_then(normalize_gpu_vendor_id),
+        _ => None,
+    }) {
+        return Some(vendor);
+    }
+    if let DeviceProperties::Gpu(gpu) = &device.properties {
+        if let Some(vendor) = gpu.vendor.as_deref().and_then(normalize_gpu_vendor) {
+            return Some(vendor);
+        }
+    }
+    device
+        .vendor
+        .as_deref()
+        .and_then(normalize_gpu_vendor)
+        .or_else(|| normalize_gpu_vendor(&device.name))
+        .or_else(|| device.model.as_deref().and_then(normalize_gpu_vendor))
+}
+
+fn normalized_glxinfo_vendor(record: &GlxinfoBasicRecord) -> Option<&'static str> {
+    record
+        .vendor
+        .as_deref()
+        .and_then(normalize_gpu_vendor)
+        .or_else(|| record.renderer.as_deref().and_then(normalize_gpu_vendor))
 }
 
 fn apply_gpu_glxinfo_enrichment(mut device: Device, glxinfo: &GpuGlxinfoRecord) -> Device {
