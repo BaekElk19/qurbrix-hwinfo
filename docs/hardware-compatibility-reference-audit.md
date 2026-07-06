@@ -36,6 +36,7 @@ Current qurbrix-hwinfo has absorbed several P0/P1 compatibility gaps that were p
 Confirmed defects fixed during this audit:
 
 - `CPU MHz` from `lscpu` is now used as `current_freq_mhz` when DMI current speed is unavailable.
+- CPU family/model/stepping/bogomips/virtualization parsed from `lscpu` are now exposed through `CpuInfo`.
 - Monitor sysfs fallback now works when `xrandr --query` is missing, but does not create fake devices from empty/bad sysfs EDID.
 - sysfs EDID read failures now produce source warnings instead of being silently ignored.
 - GPU vendor normalization now uses numeric PCI vendor IDs when text is only generic `Device`.
@@ -72,7 +73,7 @@ Confirmed defects fixed during this audit:
 
 | Component | Current qurbrix implementation | Absorbed from references | Remaining gaps | Priority |
 | --- | --- | --- | --- | --- |
-| CPU | `CpuProbe` runs `lscpu`, `lshw -class processor`, `dmidecode -t 4`, optional `/proc/cpuinfo`, and optional `/proc/hardware`; parser reads extended lscpu, DMI type 4, procfs `Hardware`/`Processor` fallback fields, and Kirin `/proc/hardware` names; merge handles DMI counts/speeds and Loongson protection. | Deepin CPU three-source merge, DMI count correction, Loongson/lshw protection, Phytium DMI current-speed fallback, locale-stable command execution. Kylin `/proc/cpuinfo` `Hardware` fallback, `/proc/hardware` Kirin fallback, CPU vendor aliases, and `LANGUAGE=en` command practice are partially absorbed. | Parsed family/model/stepping/bogomips/virtualization are not exposed in `CpuInfo`; broader real-machine CPU fixture coverage is still thin. | P1/P2 |
+| CPU | `CpuProbe` runs `lscpu`, `lshw -class processor`, `dmidecode -t 4`, optional `/proc/cpuinfo`, and optional `/proc/hardware`; parser reads extended lscpu, DMI type 4, procfs `Hardware`/`Processor` fallback fields, and Kirin `/proc/hardware` names; merge handles DMI counts/speeds, exposes family/model/stepping/bogomips/virtualization in `CpuInfo`, and protects Loongson names. | Deepin CPU three-source merge, DMI count correction, Loongson/lshw protection, Phytium DMI current-speed fallback, locale-stable command execution. Kylin `/proc/cpuinfo` `Hardware` fallback, `/proc/hardware` Kirin fallback, CPU vendor aliases, and `LANGUAGE=en` command practice are partially absorbed. | Broader real-machine CPU fixture coverage is still thin. | P1/P2 |
 | Architecture/vendor normalization | `normalize_arch`, `normalize_cpu_vendor_id`, `infer_cpu_vendor_from_name`, `normalize_gpu_vendor`, `normalize_gpu_vendor_id`. | Deepin arch aliases for amd64/arm64/sw_64/loongarch; Kylin domestic CPU/GPU vendor heuristics. | Huawei/Kunpeng/HiSilicon canonical choice intentionally differs from Kylin; alias tables remain intentionally small. | P1 |
 | Monitor | `xrandr --query` for connector/resolution, `xrandr --verbose` and sysfs EDID for identity; EDID parser fills manufacturer/product/date/size/preferred mode. | Kylin xrandr verbose EDID extraction; Deepin sysfs DRM EDID parsing pattern; no `/tmp` temp file or external `edid-decode`. | No gamma/inch/maxmode fields; no `hwinfo_monitor`; ambiguous duplicate sysfs connectors are skipped rather than matched by card. | P2 |
 | GPU | `lspci -nn -k` display/VGA/3D records, driver/modules, text and numeric vendor normalization; falls back to display-class `/sys/bus/pci/devices/*` records with kernel driver data when lspci cannot run. | PCI GPU parsing and domestic GPU aliases from Kylin; driver extraction from lspci; Linux sysfs PCI display-class fallback with lightweight driver preservation. | No `lshw -C display`, `glxinfo -B`, `/sys/class/drm/card*/device`, dmesg/nvidia memory enrichment; sysfs fallback lacks human-readable device names and kernel modules. | P2/P3 |
@@ -118,7 +119,6 @@ Still weak:
 These are not fully implemented yet and should remain tracked:
 
 - P1: continue adding warning-on-empty-parse for additional parsers where command success does not mean usable data.
-- P1b: decide whether parsed CPU family/model/stepping/bogomips/virtualization should be exposed in `CpuInfo` or kept parser-internal.
 - P2: add network DBus/lshw/lspci, storage controller/lshw/hdparm enrichment, USB verbose descriptors, camera lshw/hwinfo enrichment, audio lshw/hwinfo/PCI fusion, and Bluetooth lshw/DBus enrichments.
 - P3: optional heavy display/GPU sources such as `glxinfo`, `hwinfo`, and vendor-specific tools.
 

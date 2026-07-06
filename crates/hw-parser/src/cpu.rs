@@ -49,6 +49,11 @@ pub struct MergedCpu {
     pub max_freq_mhz: Option<u32>,
     pub min_freq_mhz: Option<u32>,
     pub current_freq_mhz: Option<u32>,
+    pub family: Option<String>,
+    pub model: Option<String>,
+    pub stepping: Option<String>,
+    pub bogomips: Option<String>,
+    pub virtualization: Option<String>,
     pub flags: Vec<String>,
 }
 
@@ -265,6 +270,13 @@ pub fn merge_cpu_records(
         min_freq_mhz: lscpu.as_ref().and_then(|record| record.cpu_min_mhz),
         current_freq_mhz: dmi_current_speed_mhz
             .or_else(|| lscpu.as_ref().and_then(|record| record.cpu_mhz)),
+        family: lscpu.as_ref().and_then(|record| record.cpu_family.clone()),
+        model: lscpu.as_ref().and_then(|record| record.cpu_model.clone()),
+        stepping: lscpu.as_ref().and_then(|record| record.stepping.clone()),
+        bogomips: lscpu.as_ref().and_then(|record| record.bogomips.clone()),
+        virtualization: lscpu
+            .as_ref()
+            .and_then(|record| record.virtualization.clone()),
         flags: lscpu
             .as_ref()
             .map(|record| record.flags.clone())

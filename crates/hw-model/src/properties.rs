@@ -62,6 +62,11 @@ pub struct CpuInfo {
     pub max_freq_mhz: Option<u32>,
     pub min_freq_mhz: Option<u32>,
     pub current_freq_mhz: Option<u32>,
+    pub family: Option<String>,
+    pub model: Option<String>,
+    pub stepping: Option<String>,
+    pub bogomips: Option<String>,
+    pub virtualization: Option<String>,
     pub flags: Vec<String>,
 }
 

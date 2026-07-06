@@ -170,6 +170,11 @@ impl Probe for CpuProbe {
                 max_freq_mhz: merged.max_freq_mhz,
                 min_freq_mhz: merged.min_freq_mhz,
                 current_freq_mhz: merged.current_freq_mhz,
+                family: merged.family,
+                model: merged.model,
+                stepping: merged.stepping,
+                bogomips: merged.bogomips,
+                virtualization: merged.virtualization,
                 flags: merged.flags,
             }),
         );

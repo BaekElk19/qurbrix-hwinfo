@@ -66,7 +66,7 @@ async fn cpu_probe_outputs_cpu_device() {
         .with_command(
             "lscpu",
             std::iter::empty::<&str>(),
-            "Architecture: x86_64\nCPU(s): 8\nModel name: AMD Ryzen 7\nVendor ID: AuthenticAMD\nCore(s) per socket: 4\nSocket(s): 1\nFlags: fpu sse sse2\n",
+            "Architecture: x86_64\nCPU(s): 8\nModel name: AMD Ryzen 7\nVendor ID: AuthenticAMD\nCore(s) per socket: 4\nSocket(s): 1\nCPU family: 25\nModel: 116\nStepping: 1\nBogoMIPS: 6587.42\nVirtualization: AMD-V\nFlags: fpu sse sse2\n",
         )
         .with_command(
             "lshw",
@@ -110,6 +110,11 @@ async fn cpu_probe_outputs_cpu_device() {
             assert_eq!(cpu.threads, Some(16));
             assert_eq!(cpu.sockets, Some(1));
             assert_eq!(cpu.current_freq_mhz, Some(3300));
+            assert_eq!(cpu.family.as_deref(), Some("25"));
+            assert_eq!(cpu.model.as_deref(), Some("116"));
+            assert_eq!(cpu.stepping.as_deref(), Some("1"));
+            assert_eq!(cpu.bogomips.as_deref(), Some("6587.42"));
+            assert_eq!(cpu.virtualization.as_deref(), Some("AMD-V"));
             assert_eq!(cpu.flags, vec!["fpu", "sse", "sse2"]);
         }
         other => panic!("expected cpu properties, got {other:?}"),
