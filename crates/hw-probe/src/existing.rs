@@ -2670,12 +2670,76 @@ fn apply_gpu_glxinfo_to_devices(
 }
 
 fn unique_glxinfo_gpu_index(devices: &[Device], record: &GlxinfoBasicRecord) -> Option<usize> {
+    unique_glxinfo_gpu_model_index(devices, record)
+        .or_else(|| unique_glxinfo_gpu_vendor_index(devices, record))
+}
+
+fn unique_glxinfo_gpu_model_index(
+    devices: &[Device],
+    record: &GlxinfoBasicRecord,
+) -> Option<usize> {
+    let renderer = record.renderer.as_deref()?;
+    let renderer_tokens = gpu_match_tokens(renderer);
+    let mut matches = devices.iter().enumerate().filter_map(|(index, device)| {
+        device_matches_glxinfo_model(device, &renderer_tokens).then_some(index)
+    });
+    let index = matches.next()?;
+    matches.next().is_none().then_some(index)
+}
+
+fn unique_glxinfo_gpu_vendor_index(
+    devices: &[Device],
+    record: &GlxinfoBasicRecord,
+) -> Option<usize> {
     let mut matches = devices
         .iter()
         .enumerate()
         .filter_map(|(index, device)| device_matches_glxinfo(device, record).then_some(index));
     let index = matches.next()?;
     matches.next().is_none().then_some(index)
+}
+
+fn device_matches_glxinfo_model(device: &Device, renderer_tokens: &[String]) -> bool {
+    gpu_identity_strings(device)
+        .into_iter()
+        .any(|identity| gpu_identity_matches_renderer(&identity, renderer_tokens))
+}
+
+fn gpu_identity_strings(device: &Device) -> Vec<String> {
+    let mut identities = vec![device.name.clone()];
+    if let Some(model) = &device.model {
+        identities.push(model.clone());
+    }
+    identities
+}
+
+fn gpu_identity_matches_renderer(identity: &str, renderer_tokens: &[String]) -> bool {
+    let identity_tokens = gpu_match_tokens(identity);
+    for len in 2..=identity_tokens.len().min(5) {
+        for window in identity_tokens.windows(len) {
+            if !window
+                .iter()
+                .any(|token| token.chars().any(|ch| ch.is_ascii_digit()))
+            {
+                continue;
+            }
+            if renderer_tokens
+                .windows(window.len())
+                .any(|candidate| candidate == window)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn gpu_match_tokens(value: &str) -> Vec<String> {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_ascii_lowercase())
+        .collect()
 }
 
 fn device_matches_glxinfo(device: &Device, record: &GlxinfoBasicRecord) -> bool {
