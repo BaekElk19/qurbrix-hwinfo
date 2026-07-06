@@ -98,6 +98,26 @@ fn parses_cdrom_capabilities() {
 }
 
 #[test]
+fn parses_lshw_cdrom_records() {
+    let records = parse_lshw_cdrom(
+        "  *-cdrom\n\
+              description: DVD-RAM writer\n\
+              product: DVDRAM GP60\n\
+              vendor: HL-DT-ST\n\
+              logical name: /dev/sr0\n\
+              serial: ABC123\n\
+              configuration: ansiversion=5 status=nodisc firmware=1.00\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].logical_name.as_deref(), Some("/dev/sr0"));
+    assert_eq!(records[0].product.as_deref(), Some("DVDRAM GP60"));
+    assert_eq!(records[0].vendor.as_deref(), Some("HL-DT-ST"));
+    assert_eq!(records[0].serial.as_deref(), Some("ABC123"));
+    assert_eq!(records[0].firmware.as_deref(), Some("1.00"));
+}
+
+#[test]
 fn parses_bluetooth_and_video() {
     let controllers = parse_hciconfig(&hw_testdata::fixture("bluetooth/hciconfig-a.txt"));
     let paired =

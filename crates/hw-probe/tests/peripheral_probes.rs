@@ -1111,6 +1111,66 @@ async fn cdrom_probe_enriches_proc_drives_from_sysfs_identity() {
 }
 
 #[tokio::test]
+async fn cdrom_probe_enriches_from_lshw_cdrom_identity() {
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/sys/dev/cdrom/info",
+            "drive name:\t\tsr0\nCan read DVD:\t\t1\n",
+        )
+        .with_command(
+            "lshw",
+            ["-class", "disk"],
+            "  *-cdrom\n\
+                  description: DVD-RAM writer\n\
+                  product: DVDRAM GP60\n\
+                  vendor: HL-DT-ST\n\
+                  logical name: /dev/sr0\n\
+                  serial: ABC123\n\
+                  configuration: ansiversion=5 firmware=1.00 status=nodisc\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CdromProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "DVDRAM GP60");
+    assert_eq!(device.vendor.as_deref(), Some("HL-DT-ST"));
+    assert_eq!(device.model.as_deref(), Some("DVDRAM GP60"));
+    assert_eq!(device.serial.as_deref(), Some("ABC123"));
+    let DeviceProperties::Cdrom(info) = &device.properties else {
+        panic!("expected cdrom properties");
+    };
+    assert_eq!(info.firmware.as_deref(), Some("1.00"));
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "lshw -class disk"));
+}
+
+#[tokio::test]
+async fn cdrom_sysfs_fallback_enriches_from_lshw_cdrom_identity() {
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/class/block/sr*",
+            vec![PathBuf::from("/sys/class/block/sr0")],
+        )
+        .with_command(
+            "lshw",
+            ["-class", "disk"],
+            "  *-cdrom\n\
+                  product: DVDRAM GP60\n\
+                  vendor: HL-DT-ST\n\
+                  logical name: /dev/sr0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CdromProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "DVDRAM GP60");
+    assert_eq!(device.vendor.as_deref(), Some("HL-DT-ST"));
+    assert_eq!(device.model.as_deref(), Some("DVDRAM GP60"));
+}
+
+#[tokio::test]
 async fn cdrom_probe_uses_sysfs_when_proc_cdrom_info_parses_empty() {
     let runner = FakeSourceRunner::new()
         .with_file("/proc/sys/dev/cdrom/info", "CD-ROM information\n")
