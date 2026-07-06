@@ -410,6 +410,7 @@ async fn network_probe_outputs_network_device() {
     match &result.devices[0].properties {
         DeviceProperties::Network(network) => {
             assert_eq!(network.interface.as_deref(), Some("wlan0"));
+            assert_eq!(network.network_type.as_deref(), Some("wireless"));
             assert_eq!(network.speed_mbps, Some(867));
             assert_eq!(network.duplex.as_deref(), Some("full"));
         }
@@ -476,6 +477,12 @@ async fn network_probe_marks_ethernet_capability_from_sysfs() {
         .sources
         .iter()
         .any(|source| source.kind == SourceKind::Sysfs && source.source == "/sys/class/net/eth0"));
+    match &result.devices[0].properties {
+        DeviceProperties::Network(network) => {
+            assert_eq!(network.network_type.as_deref(), Some("ethernet"));
+        }
+        other => panic!("expected network properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]

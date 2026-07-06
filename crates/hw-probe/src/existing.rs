@@ -300,6 +300,7 @@ impl Probe for NetworkProbe {
                 net.ifname.clone(),
                 DeviceProperties::Network(NetworkInfo {
                     interface: Some(net.ifname),
+                    network_type: enrichment.network_type(),
                     mac: net.address,
                     operstate: net.operstate,
                     speed_mbps: enrichment.speed_mbps,
@@ -408,6 +409,18 @@ struct NetworkSysfsEnrichment {
     contributed: bool,
 }
 
+impl NetworkSysfsEnrichment {
+    fn network_type(&self) -> Option<String> {
+        if self.wireless {
+            Some("wireless".to_string())
+        } else if self.ethernet {
+            Some("ethernet".to_string())
+        } else {
+            None
+        }
+    }
+}
+
 async fn network_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
     let paths = ctx.runner.glob("/sys/class/net/*").await.paths;
     let mut devices = Vec::new();
@@ -429,6 +442,7 @@ async fn network_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
             ifname.to_string(),
             DeviceProperties::Network(NetworkInfo {
                 interface: Some(ifname.to_string()),
+                network_type: enrichment.network_type(),
                 mac,
                 operstate,
                 speed_mbps: enrichment.speed_mbps,

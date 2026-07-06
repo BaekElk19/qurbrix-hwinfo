@@ -117,6 +117,7 @@ pub struct MonitorInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct NetworkInfo {
     pub interface: Option<String>,
+    pub network_type: Option<String>,
     pub mac: Option<String>,
     pub operstate: Option<String>,
     pub speed_mbps: Option<u32>,
