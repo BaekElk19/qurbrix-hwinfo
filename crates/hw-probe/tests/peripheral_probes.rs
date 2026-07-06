@@ -138,11 +138,15 @@ async fn battery_probe_reads_upower() {
     let runner = FakeSourceRunner::new().with_command(
         "upower",
         ["--dump"],
-        "Device: /org/freedesktop/UPower/devices/battery_BAT0\n  native-path: BAT0\n  battery\n    state: discharging\n    capacity: 88%\n",
+        "Device: /org/freedesktop/UPower/devices/battery_BAT0\n  native-path: BAT0\n  vendor: LGC\n  battery\n    state: discharging\n    capacity: 88%\n",
     );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = BatteryProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Battery);
+    let DeviceProperties::Battery(info) = &result.devices[0].properties else {
+        panic!("expected battery properties");
+    };
+    assert_eq!(info.vendor.as_deref(), Some("LG Chem"));
 }
 
 #[tokio::test]
@@ -205,7 +209,7 @@ async fn battery_probe_uses_sysfs_when_upower_is_missing() {
     let DeviceProperties::Battery(info) = &result.devices[0].properties else {
         panic!("expected battery properties");
     };
-    assert_eq!(info.vendor.as_deref(), Some("LGC"));
+    assert_eq!(info.vendor.as_deref(), Some("LG Chem"));
     assert_eq!(info.model.as_deref(), Some("L20M4P73"));
     assert_eq!(info.serial.as_deref(), Some("ABC123"));
     assert_eq!(info.technology.as_deref(), Some("Li-ion"));

@@ -46,7 +46,7 @@ impl Probe for BatteryProbe {
                     name.clone(),
                     DeviceProperties::Battery(BatteryInfo {
                         power_type: Some("battery".to_string()),
-                        vendor: power.vendor,
+                        vendor: normalize_battery_vendor(power.vendor),
                         model: power.model,
                         serial: power.serial,
                         technology: power.technology,
@@ -100,7 +100,9 @@ async fn probe_sysfs_batteries(ctx: &ProbeContext<'_>) -> Vec<Device> {
                 name.to_string(),
                 DeviceProperties::Battery(BatteryInfo {
                     power_type: Some("battery".to_string()),
-                    vendor: read_trimmed(ctx, &path.join("manufacturer")).await,
+                    vendor: normalize_battery_vendor(
+                        read_trimmed(ctx, &path.join("manufacturer")).await,
+                    ),
                     model: read_trimmed(ctx, &path.join("model_name")).await,
                     serial: read_trimmed(ctx, &path.join("serial_number")).await,
                     technology: read_trimmed(ctx, &path.join("technology")).await,
@@ -133,6 +135,14 @@ async fn probe_sysfs_batteries(ctx: &ProbeContext<'_>) -> Vec<Device> {
         );
     }
     devices
+}
+
+fn normalize_battery_vendor(vendor: Option<String>) -> Option<String> {
+    let vendor = vendor?;
+    match vendor.trim().to_ascii_lowercase().as_str() {
+        "lgc" | "lg chem" => Some("LG Chem".to_string()),
+        _ => Some(vendor),
+    }
 }
 
 async fn read_trimmed(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {
