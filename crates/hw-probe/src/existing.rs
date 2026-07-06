@@ -2551,18 +2551,28 @@ impl Probe for MonitorProbe {
             sysfs_paths.entry(connector).or_default().push(path);
         }
         for (connector, paths) in sysfs_paths {
-            if paths.len() != 1 {
+            if paths.len() == 1 {
+                let bytes_result = ctx.runner.read_file_bytes(&paths[0]).await;
+                if bytes_result.is_success() {
+                    edids
+                        .entry(connector)
+                        .or_default()
+                        .push((bytes_result.bytes, bytes_result.source));
+                } else {
+                    warnings.push(source_bytes_failure(self.name(), &bytes_result));
+                }
                 continue;
             }
-            let path = &paths[0];
-            let bytes_result = ctx.runner.read_file_bytes(path).await;
-            if bytes_result.is_success() {
-                edids
-                    .entry(connector)
-                    .or_default()
-                    .push((bytes_result.bytes, bytes_result.source));
-            } else {
-                warnings.push(source_bytes_failure(self.name(), &bytes_result));
+
+            let mut readable = Vec::new();
+            for path in paths {
+                let bytes_result = ctx.runner.read_file_bytes(&path).await;
+                if bytes_result.is_success() {
+                    readable.push((bytes_result.bytes, bytes_result.source));
+                }
+            }
+            if readable.len() == 1 {
+                edids.entry(connector).or_default().push(readable.remove(0));
             }
         }
         if verbose_result.is_success() {

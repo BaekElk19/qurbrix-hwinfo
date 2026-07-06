@@ -1109,7 +1109,7 @@ async fn monitor_probe_skips_ambiguous_sysfs_edids_for_duplicate_normalized_conn
 }
 
 #[tokio::test]
-async fn monitor_probe_skips_ambiguous_sysfs_edids_even_when_only_one_duplicate_is_readable() {
+async fn monitor_probe_uses_unique_readable_duplicate_sysfs_edid() {
     let readable_path = PathBuf::from("/sys/class/drm/card0-DP-1/edid");
     let unreadable_path = PathBuf::from("/sys/class/drm/card1-DP-1/edid");
     let runner = FakeSourceRunner::new()
@@ -1128,8 +1128,8 @@ async fn monitor_probe_skips_ambiguous_sysfs_edids_even_when_only_one_duplicate_
     match &result.devices[0].properties {
         DeviceProperties::Monitor(monitor) => {
             assert_eq!(monitor.connector.as_deref(), Some("DP-1"));
-            assert_eq!(monitor.manufacturer, None);
-            assert_eq!(monitor.product, None);
+            assert_eq!(monitor.manufacturer.as_deref(), Some("AOC"));
+            assert_eq!(monitor.product.as_deref(), Some("AOC READABLE"));
         }
         other => panic!("expected monitor properties, got {other:?}"),
     }
