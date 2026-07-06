@@ -1,4 +1,4 @@
-use hw_parser::{parse_lspci_nn_k, parse_lsusb, parse_smartctl_json};
+use hw_parser::{parse_lspci_nn_k, parse_lsusb, parse_lsusb_verbose, parse_smartctl_json};
 
 #[test]
 fn parses_lspci_driver_and_modules() {
@@ -36,6 +36,24 @@ fn parses_lsusb_basic_records() {
         .as_deref()
         .unwrap()
         .contains("Integrated Camera"));
+}
+
+#[test]
+fn parses_lsusb_verbose_interface_descriptors() {
+    let records = parse_lsusb_verbose(
+        "Bus 001 Device 004: ID 0bda:5689 Realtek Semiconductor Corp. Integrated Camera\n\
+         Interface Descriptor:\n\
+           bInterfaceNumber        0\n\
+           bInterfaceClass        14 Video\n\
+           bInterfaceSubClass      2 Video Streaming\n\
+           bInterfaceProtocol      0\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].interface.as_deref(), Some("0"));
+    assert_eq!(records[0].class.as_deref(), Some("0e"));
+    assert_eq!(records[0].subclass.as_deref(), Some("02"));
+    assert_eq!(records[0].protocol.as_deref(), Some("00"));
 }
 
 #[test]

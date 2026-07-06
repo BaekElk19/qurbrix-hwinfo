@@ -166,6 +166,60 @@ async fn usb_probe_builds_devices() {
 }
 
 #[tokio::test]
+async fn usb_probe_enriches_interface_descriptor_from_lsusb_verbose() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsusb",
+            std::iter::empty::<&str>(),
+            "Bus 001 Device 004: ID 0bda:5689 Realtek Semiconductor Corp. Integrated Camera\n",
+        )
+        .with_command(
+            "lsusb",
+            ["-v"],
+            "Bus 001 Device 004: ID 0bda:5689 Realtek Semiconductor Corp. Integrated Camera\n\
+             Interface Descriptor:\n\
+               bInterfaceNumber        0\n\
+               bInterfaceClass        14 Video\n\
+               bInterfaceSubClass      2 Video Streaming\n\
+               bInterfaceProtocol      0\n",
+        )
+        .with_glob(
+            "/sys/bus/usb/devices/*",
+            vec![PathBuf::from("/sys/bus/usb/devices/1-2")],
+        )
+        .with_file("/sys/bus/usb/devices/1-2/busnum", "001\n")
+        .with_file("/sys/bus/usb/devices/1-2/devnum", "004\n")
+        .with_file("/sys/bus/usb/devices/1-2/bDeviceClass", "ef\n")
+        .with_file("/sys/bus/usb/devices/1-2/bDeviceSubClass", "02\n")
+        .with_file("/sys/bus/usb/devices/1-2/bDeviceProtocol", "01\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = UsbProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(
+        device.bus,
+        Some(BusInfo::Usb {
+            bus: Some("001".to_string()),
+            device: Some("004".to_string()),
+            vendor_id: Some("0bda".to_string()),
+            product_id: Some("5689".to_string()),
+            interface: Some("0".to_string()),
+            class: Some("0e".to_string()),
+        })
+    );
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "lsusb -v"));
+    let DeviceProperties::Usb(info) = &device.properties else {
+        panic!("expected usb properties");
+    };
+    assert_eq!(info.class.as_deref(), Some("0e"));
+    assert_eq!(info.subclass.as_deref(), Some("02"));
+    assert_eq!(info.protocol.as_deref(), Some("00"));
+}
+
+#[tokio::test]
 async fn usb_probe_filters_root_hubs_and_usb_hubs() {
     let runner = FakeSourceRunner::new().with_command(
         "lsusb",

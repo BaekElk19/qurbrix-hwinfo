@@ -4,7 +4,7 @@ use hw_model::{
     device_id, BusInfo, Device, DeviceKind, DeviceProperties, SourceEvidence, SourceKind,
     SourceStatus, UsbInfo,
 };
-use hw_parser::parse_lsusb;
+use hw_parser::{parse_lsusb, parse_lsusb_verbose, UsbRecord};
 use hw_source::CommandSpec;
 use std::{collections::HashMap, path::Path};
 
@@ -38,6 +38,18 @@ impl Probe for UsbProbe {
             .into_iter()
             .filter_map(|record| Some(((record.bus.clone()?, record.device.clone()?), record)))
             .collect::<HashMap<_, _>>();
+        let verbose_result = ctx
+            .runner
+            .run_command(&CommandSpec::new("lsusb", ["-v"]), ctx.timeout)
+            .await;
+        let verbose_by_key = if verbose_result.is_success() {
+            parse_lsusb_verbose(&verbose_result.stdout)
+                .into_iter()
+                .filter_map(|record| Some((usb_record_key(&record)?, record)))
+                .collect::<HashMap<_, _>>()
+        } else {
+            HashMap::new()
+        };
         let devices =
             parse_lsusb(&result.stdout)
                 .into_iter()
@@ -55,6 +67,12 @@ impl Probe for UsbProbe {
                         record.serial = record.serial.or(sysfs.serial.clone());
                         record.speed = record.speed.or(sysfs.speed.clone());
                     }
+                    let verbose = usb_record_key(&record).and_then(|key| verbose_by_key.get(&key));
+                    let verbose_contributed = if let Some(verbose) = verbose {
+                        merge_usb_verbose(&mut record, verbose)
+                    } else {
+                        false
+                    };
                     let max_power_ma = sysfs.and_then(|record| record.max_power_ma);
                     let id = device_id::usb(
                         record.bus.as_deref(),
@@ -90,7 +108,7 @@ impl Probe for UsbProbe {
                         device: record.device,
                         vendor_id: record.vendor_id,
                         product_id: record.product_id,
-                        interface: None,
+                        interface: record.interface,
                         class: record.class,
                     })
                     .with_source(SourceEvidence {
@@ -107,10 +125,73 @@ impl Probe for UsbProbe {
                             summary: None,
                         });
                     }
+                    if verbose_contributed {
+                        device = device.with_source(SourceEvidence {
+                            source: verbose_result.source.clone(),
+                            kind: SourceKind::Command,
+                            status: SourceStatus::Success,
+                            summary: None,
+                        });
+                    }
                     device
                 })
                 .collect();
         ProbeResult::with_devices(devices)
+    }
+}
+
+fn usb_record_key(record: &UsbRecord) -> Option<(String, String, String, String)> {
+    Some((
+        record.bus.clone()?,
+        record.device.clone()?,
+        record.vendor_id.clone()?,
+        record.product_id.clone()?,
+    ))
+}
+
+fn merge_usb_verbose(record: &mut UsbRecord, verbose: &UsbRecord) -> bool {
+    let mut contributed = false;
+    contributed |= set_if_missing(&mut record.interface, verbose.interface.clone());
+    if verbose.interface.is_some() {
+        contributed |= set_if_present(&mut record.class, verbose.class.clone());
+        contributed |= set_if_present(&mut record.subclass, verbose.subclass.clone());
+        contributed |= set_if_present(&mut record.protocol, verbose.protocol.clone());
+    } else {
+        contributed |= set_if_missing_or_zero(&mut record.class, verbose.class.clone());
+        contributed |= set_if_missing_or_zero(&mut record.subclass, verbose.subclass.clone());
+        contributed |= set_if_missing_or_zero(&mut record.protocol, verbose.protocol.clone());
+    }
+    contributed
+}
+
+fn set_if_missing(field: &mut Option<String>, value: Option<String>) -> bool {
+    if field.is_none() && value.is_some() {
+        *field = value;
+        true
+    } else {
+        false
+    }
+}
+
+fn set_if_missing_or_zero(field: &mut Option<String>, value: Option<String>) -> bool {
+    let should_set = field.as_deref().map(|value| value == "00").unwrap_or(true);
+    if should_set && value.is_some() {
+        *field = value;
+        true
+    } else {
+        false
+    }
+}
+
+fn set_if_present(field: &mut Option<String>, value: Option<String>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    if field.as_deref() == Some(value.as_str()) {
+        false
+    } else {
+        *field = Some(value);
+        true
     }
 }
 
