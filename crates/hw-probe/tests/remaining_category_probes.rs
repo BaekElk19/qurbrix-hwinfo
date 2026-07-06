@@ -1453,6 +1453,38 @@ async fn monitor_probe_uses_connected_duplicate_sysfs_edid() {
 }
 
 #[tokio::test]
+async fn monitor_probe_uses_enabled_duplicate_sysfs_edid_when_status_is_ambiguous() {
+    let disabled_path = PathBuf::from("/sys/class/drm/card0-DP-1/edid");
+    let enabled_path = PathBuf::from("/sys/class/drm/card1-DP-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_command("xrandr", ["--query"], "DP-1 connected 2560x1440+0+0\n")
+        .with_glob(
+            "/sys/class/drm/*/edid",
+            vec![disabled_path.clone(), enabled_path.clone()],
+        )
+        .with_file_bytes(disabled_path.clone(), monitor_test_edid("AOC DISABLED"))
+        .with_file("/sys/class/drm/card0-DP-1/status", "connected\n")
+        .with_file("/sys/class/drm/card0-DP-1/enabled", "disabled\n")
+        .with_file_bytes(enabled_path.clone(), monitor_test_edid("AOC ENABLED"))
+        .with_file("/sys/class/drm/card1-DP-1/status", "connected\n")
+        .with_file("/sys/class/drm/card1-DP-1/enabled", "enabled\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert!(result.warnings.is_empty());
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.connector.as_deref(), Some("DP-1"));
+            assert_eq!(monitor.manufacturer.as_deref(), Some("AOC"));
+            assert_eq!(monitor.product.as_deref(), Some("AOC ENABLED"));
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn monitor_probe_uses_unique_readable_duplicate_sysfs_edid() {
     let readable_path = PathBuf::from("/sys/class/drm/card0-DP-1/edid");
     let unreadable_path = PathBuf::from("/sys/class/drm/card1-DP-1/edid");

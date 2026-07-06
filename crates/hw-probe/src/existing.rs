@@ -3306,6 +3306,26 @@ impl Probe for MonitorProbe {
             if connected.len() == 1 {
                 let (bytes, source, _) = readable.swap_remove(connected[0]);
                 edids.entry(connector).or_default().push((bytes, source));
+                continue;
+            }
+
+            let mut enabled = Vec::new();
+            for (index, (_, _, path)) in readable.iter().enumerate() {
+                let Some(connector_path) = path.parent() else {
+                    continue;
+                };
+                let Some(enabled_state) =
+                    read_optional_trimmed(ctx, &connector_path.join("enabled")).await
+                else {
+                    continue;
+                };
+                if enabled_state.eq_ignore_ascii_case("enabled") {
+                    enabled.push(index);
+                }
+            }
+            if enabled.len() == 1 {
+                let (bytes, source, _) = readable.swap_remove(enabled[0]);
+                edids.entry(connector).or_default().push((bytes, source));
             }
         }
         if verbose_result.is_success() {
