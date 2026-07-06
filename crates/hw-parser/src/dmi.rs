@@ -145,6 +145,46 @@ pub fn parse_lshw_memory(input: &str) -> Vec<DmiMemoryRecord> {
     records
 }
 
+pub fn parse_spd_decode_dimms(input: &str) -> Vec<DmiMemoryRecord> {
+    let mut records = Vec::new();
+    let mut current: Option<DmiMemoryRecord> = None;
+
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if let Some(path) = trimmed.strip_prefix("Decoding EEPROM:") {
+            push_memory_record(&mut records, current.take());
+            current = Some(DmiMemoryRecord {
+                locator: clean_memory_value(path),
+                ..Default::default()
+            });
+            continue;
+        }
+
+        let Some(record) = current.as_mut() else {
+            continue;
+        };
+
+        if let Some(value) = decode_dimms_value(trimmed, "Guessing DIMM is in") {
+            record.locator = clean_memory_value(value);
+        } else if let Some(value) = decode_dimms_value(trimmed, "Fundamental Memory type") {
+            record.memory_type = clean_memory_value(value);
+        } else if let Some(value) = decode_dimms_value(trimmed, "Maximum module speed") {
+            record.speed = clean_memory_value(value);
+        } else if let Some(value) = decode_dimms_value(trimmed, "Size") {
+            record.size = clean_memory_value(value);
+        } else if let Some(value) = decode_dimms_value(trimmed, "Module Manufacturer") {
+            record.manufacturer = clean_memory_value(value);
+        } else if let Some(value) = decode_dimms_value(trimmed, "Assembly Serial Number") {
+            record.serial = clean_memory_value(value);
+        } else if let Some(value) = decode_dimms_value(trimmed, "Part Number") {
+            record.part_number = clean_memory_value(value);
+        }
+    }
+
+    push_memory_record(&mut records, current.take());
+    records
+}
+
 pub fn parse_dmidecode_system(input: &str) -> DmiSystemRecord {
     let mut record = DmiSystemRecord::default();
     let mut in_system = false;
@@ -344,6 +384,13 @@ fn push_memory_record(records: &mut Vec<DmiMemoryRecord>, record: Option<DmiMemo
 fn clean_memory_value(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty() && !value.eq_ignore_ascii_case("Not Specified")).then(|| value.to_string())
+}
+
+fn decode_dimms_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let value = line.strip_prefix(key)?;
+    value
+        .starts_with(char::is_whitespace)
+        .then_some(value.trim())
 }
 
 fn lshw_memory_type(description: &str) -> Option<String> {

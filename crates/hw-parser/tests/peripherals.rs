@@ -171,6 +171,35 @@ fn parses_lshw_memory_banks() {
 }
 
 #[test]
+fn parses_spd_decode_dimms_records() {
+    let records = parse_spd_decode_dimms(
+        "Decoding EEPROM: /sys/bus/i2c/drivers/eeprom/0-0050\n\
+         Guessing DIMM is in                              bank 1\n\
+         ---=== SPD EEPROM Information ===---\n\
+         Fundamental Memory type                         DDR4 SDRAM\n\
+         ---=== Memory Characteristics ===---\n\
+         Maximum module speed                            3200 MT/s (PC4-25600)\n\
+         Size                                            8192 MB\n\
+         ---=== Manufacturer Data ===---\n\
+         Module Manufacturer                             Samsung\n\
+         Assembly Serial Number                          12345678\n\
+         Part Number                                     M471A1K43DB1-CWE\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].locator.as_deref(), Some("bank 1"));
+    assert_eq!(records[0].manufacturer.as_deref(), Some("Samsung"));
+    assert_eq!(records[0].serial.as_deref(), Some("12345678"));
+    assert_eq!(records[0].part_number.as_deref(), Some("M471A1K43DB1-CWE"));
+    assert_eq!(records[0].memory_type.as_deref(), Some("DDR4 SDRAM"));
+    assert_eq!(
+        parse_size_to_bytes(records[0].size.as_deref()),
+        Some(8192 * 1024 * 1024)
+    );
+    assert_eq!(parse_speed_mtps(records[0].speed.as_deref()), Some(3200));
+}
+
+#[test]
 fn parses_printer_status_and_uri() {
     let statuses = parse_lpstat_a(&hw_testdata::fixture("printer/lpstat-a.txt"));
     let uris = parse_lpstat_v(&hw_testdata::fixture("printer/lpstat-v.txt"));

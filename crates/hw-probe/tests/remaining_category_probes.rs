@@ -184,6 +184,46 @@ async fn memory_probe_uses_edac_sysfs_when_command_sources_are_missing() {
 }
 
 #[tokio::test]
+async fn memory_probe_uses_spd_decode_dimms_when_command_sources_are_missing() {
+    let runner = FakeSourceRunner::new().with_command(
+        "decode-dimms",
+        std::iter::empty::<&str>(),
+        "Decoding EEPROM: /sys/bus/i2c/drivers/eeprom/0-0050\n\
+         Guessing DIMM is in                              bank 1\n\
+         ---=== SPD EEPROM Information ===---\n\
+         Fundamental Memory type                         DDR4 SDRAM\n\
+         ---=== Memory Characteristics ===---\n\
+         Maximum module speed                            3200 MT/s (PC4-25600)\n\
+         Size                                            8192 MB\n\
+         ---=== Manufacturer Data ===---\n\
+         Module Manufacturer                             Samsung\n\
+         Assembly Serial Number                          12345678\n\
+         Part Number                                     M471A1K43DB1-CWE\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.size_bytes, Some(8192 * 1024 * 1024));
+            assert_eq!(memory.vendor.as_deref(), Some("Samsung"));
+            assert_eq!(memory.memory_type.as_deref(), Some("DDR4 SDRAM"));
+            assert_eq!(memory.speed_mtps, Some(3200));
+            assert_eq!(memory.locator.as_deref(), Some("bank 1"));
+            assert_eq!(memory.serial.as_deref(), Some("12345678"));
+            assert_eq!(memory.part_number.as_deref(), Some("M471A1K43DB1-CWE"));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == "decode-dimms"
+            && source.kind == SourceKind::Command
+            && source.status == SourceStatus::Success
+    }));
+}
+
+#[tokio::test]
 async fn bios_probe_outputs_bios_and_motherboard_devices() {
     let runner = FakeSourceRunner::new().with_command(
         "dmidecode",

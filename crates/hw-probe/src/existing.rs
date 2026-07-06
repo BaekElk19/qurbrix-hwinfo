@@ -18,9 +18,9 @@ use hw_parser::{
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
     parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv, parse_proc_cpuinfo,
     parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
-    parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord,
-    DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord, HwinfoDiskRecord,
-    HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
+    parse_spd_decode_dimms, parse_speed_mtps, parse_xrandr_query, parse_xrandr_verbose,
+    DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord,
+    HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
 use std::{collections::HashMap, path::Path};
@@ -1634,6 +1634,29 @@ async fn memory_fallback_from_lshw_or_proc(
         fallback
             .warnings
             .extend(ProbeResult::source_failure("memory", &lshw_result).warnings);
+    }
+
+    let spd_result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("decode-dimms", std::iter::empty::<&str>()),
+            ctx.timeout,
+        )
+        .await;
+    if spd_result.is_success() {
+        let records = parse_spd_decode_dimms(&spd_result.stdout);
+        if !records.is_empty() {
+            fallback.devices =
+                memory_devices_from_records(records, &spd_result.source, SourceKind::Command);
+            return fallback;
+        }
+        fallback.warnings.push(
+            ScanWarning::new(
+                "source_empty",
+                "decode-dimms source produced no DIMM records",
+            )
+            .with_source(spd_result.source),
+        );
     }
 
     let sysfs_records = memory_records_from_edac_sysfs(ctx).await;
