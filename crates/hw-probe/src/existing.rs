@@ -3711,7 +3711,14 @@ impl Probe for MonitorProbe {
             if enabled.len() == 1 {
                 let (bytes, source, _) = readable.swap_remove(enabled[0]);
                 edids.entry(connector).or_default().push((bytes, source));
+                continue;
             }
+
+            edids.entry(connector).or_default().extend(
+                readable
+                    .into_iter()
+                    .map(|(bytes, source, _)| (bytes, source)),
+            );
         }
         if verbose_result.is_success() {
             for record in parse_xrandr_verbose(&verbose_result.stdout) {
@@ -3942,7 +3949,38 @@ fn apply_first_edid(
     candidates: &[(Vec<u8>, String)],
     warnings: &mut Vec<ScanWarning>,
 ) -> Option<String> {
-    for (bytes, source) in candidates {
+    for (bytes, source) in candidates
+        .iter()
+        .filter(|(_, source)| !is_sysfs_edid_source(source))
+    {
+        match parse_edid(bytes) {
+            Ok(edid) => {
+                apply_edid(info, edid);
+                return Some(source.clone());
+            }
+            Err(err) => warnings.push(
+                ScanWarning::new(
+                    "edid_parse_failed",
+                    format!("monitor EDID source '{source}' failed: {err:?}"),
+                )
+                .with_source(source.clone())
+                .with_device_id(id.to_string()),
+            ),
+        }
+    }
+
+    let sysfs_count = candidates
+        .iter()
+        .filter(|(_, source)| is_sysfs_edid_source(source))
+        .count();
+    if sysfs_count > 1 {
+        return apply_unique_resolution_matched_edid(info, id, candidates, warnings);
+    }
+
+    for (bytes, source) in candidates
+        .iter()
+        .filter(|(_, source)| is_sysfs_edid_source(source))
+    {
         match parse_edid(bytes) {
             Ok(edid) => {
                 apply_edid(info, edid);
@@ -3959,6 +3997,59 @@ fn apply_first_edid(
         }
     }
     None
+}
+
+fn apply_unique_resolution_matched_edid(
+    info: &mut MonitorInfo,
+    id: &str,
+    candidates: &[(Vec<u8>, String)],
+    warnings: &mut Vec<ScanWarning>,
+) -> Option<String> {
+    let (width, height) = info
+        .resolution
+        .as_deref()
+        .and_then(parse_monitor_resolution)?;
+    let mut matched = None;
+    for (bytes, source) in candidates
+        .iter()
+        .filter(|(_, source)| is_sysfs_edid_source(source))
+    {
+        match parse_edid(bytes) {
+            Ok(edid) if edid_preferred_mode_matches(&edid, width, height) => {
+                if matched.is_some() {
+                    return None;
+                }
+                matched = Some((edid, source.clone()));
+            }
+            Ok(_) => {}
+            Err(err) => warnings.push(
+                ScanWarning::new(
+                    "edid_parse_failed",
+                    format!("monitor EDID source '{source}' failed: {err:?}"),
+                )
+                .with_source(source.clone())
+                .with_device_id(id.to_string()),
+            ),
+        }
+    }
+    let (edid, source) = matched?;
+    apply_edid(info, edid);
+    Some(source)
+}
+
+fn parse_monitor_resolution(value: &str) -> Option<(u16, u16)> {
+    let (width, height) = value.split_once('x')?;
+    Some((width.parse().ok()?, height.parse().ok()?))
+}
+
+fn is_sysfs_edid_source(source: &str) -> bool {
+    source.starts_with("/sys/")
+}
+
+fn edid_preferred_mode_matches(edid: &hw_parser::EdidRecord, width: u16, height: u16) -> bool {
+    edid.preferred_mode
+        .as_ref()
+        .is_some_and(|mode| mode.width == width && mode.height == height)
 }
 
 fn source_bytes_failure(probe: &str, result: &SourceBytesResult) -> ScanWarning {

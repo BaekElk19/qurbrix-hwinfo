@@ -1607,6 +1607,78 @@ async fn monitor_probe_skips_ambiguous_sysfs_edids_for_duplicate_normalized_conn
 }
 
 #[tokio::test]
+async fn monitor_probe_uses_current_resolution_to_choose_duplicate_sysfs_edid() {
+    let first_path = PathBuf::from("/sys/class/drm/card0-DP-1/edid");
+    let second_path = PathBuf::from("/sys/class/drm/card1-DP-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_command("xrandr", ["--query"], "DP-1 connected 2560x1440+0+0\n")
+        .with_glob(
+            "/sys/class/drm/*/edid",
+            vec![first_path.clone(), second_path.clone()],
+        )
+        .with_file_bytes(
+            first_path,
+            monitor_test_edid_with_preferred("AOC 1080", 1920, 1080),
+        )
+        .with_file_bytes(
+            second_path,
+            monitor_test_edid_with_preferred("AOC 1440", 2560, 1440),
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert!(result.warnings.is_empty());
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.connector.as_deref(), Some("DP-1"));
+            assert_eq!(monitor.product.as_deref(), Some("AOC 1440"));
+            assert_eq!(monitor.preferred_width, Some(2560));
+            assert_eq!(monitor.preferred_height, Some(1440));
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn monitor_probe_keeps_duplicate_sysfs_edids_ambiguous_when_verbose_edid_is_invalid() {
+    let first_path = PathBuf::from("/sys/class/drm/card0-DP-1/edid");
+    let second_path = PathBuf::from("/sys/class/drm/card1-DP-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_command("xrandr", ["--query"], "DP-1 connected 2560x1440+0+0\n")
+        .with_command(
+            "xrandr",
+            ["--verbose"],
+            "DP-1 connected 2560x1440+0+0\n\tEDID:\n\t\t00ff\n",
+        )
+        .with_glob(
+            "/sys/class/drm/*/edid",
+            vec![first_path.clone(), second_path.clone()],
+        )
+        .with_file_bytes(first_path, monitor_test_edid("AOC FIRST"))
+        .with_file_bytes(second_path, monitor_test_edid("AOC SECOND"));
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert!(result.warnings.len() <= 1);
+    assert!(result
+        .warnings
+        .iter()
+        .all(|warning| warning.code == "edid_parse_failed"));
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.connector.as_deref(), Some("DP-1"));
+            assert_eq!(monitor.manufacturer, None);
+            assert_eq!(monitor.product, None);
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn monitor_probe_uses_connected_duplicate_sysfs_edid() {
     let disconnected_path = PathBuf::from("/sys/class/drm/card0-DP-1/edid");
     let connected_path = PathBuf::from("/sys/class/drm/card1-DP-1/edid");
@@ -1830,6 +1902,27 @@ fn monitor_test_edid(name: &str) -> Vec<u8> {
     descriptor[..len].copy_from_slice(&name[..len]);
     descriptor[12] = b'\n';
     edid[77..90].copy_from_slice(&descriptor);
+    let checksum = (256u16 - edid[..127].iter().map(|b| *b as u16).sum::<u16>() % 256) % 256;
+    edid[127] = checksum as u8;
+    edid
+}
+
+fn monitor_test_edid_with_preferred(name: &str, width: u16, height: u16) -> Vec<u8> {
+    let mut edid = monitor_test_edid(name);
+    let descriptor = &mut edid[54..72];
+    descriptor.fill(0);
+    let pixel_clock = 24150u16.to_le_bytes();
+    let h_blank = 160u16;
+    let v_blank = 40u16;
+    descriptor[0] = pixel_clock[0];
+    descriptor[1] = pixel_clock[1];
+    descriptor[2] = width as u8;
+    descriptor[3] = h_blank as u8;
+    descriptor[4] = ((width >> 8) as u8) << 4 | ((h_blank >> 8) as u8);
+    descriptor[5] = height as u8;
+    descriptor[6] = v_blank as u8;
+    descriptor[7] = ((height >> 8) as u8) << 4 | ((v_blank >> 8) as u8);
+    edid[127] = 0;
     let checksum = (256u16 - edid[..127].iter().map(|b| *b as u16).sum::<u16>() % 256) % 256;
     edid[127] = checksum as u8;
     edid
