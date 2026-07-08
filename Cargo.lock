@@ -159,10 +159,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hw-api"
-version = "0.1.0"
-
-[[package]]
 name = "hw-cli"
 version = "0.1.0"
 dependencies = [
@@ -187,10 +183,6 @@ dependencies = [
  "hw-source",
  "tokio",
 ]
-
-[[package]]
-name = "hw-merge"
-version = "0.1.0"
 
 [[package]]
 name = "hw-model"
@@ -242,10 +234,6 @@ dependencies = [
  "async-trait",
  "tokio",
 ]
-
-[[package]]
-name = "hw-store"
-version = "0.1.0"
 
 [[package]]
 name = "hw-testdata"

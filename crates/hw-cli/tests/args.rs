@@ -30,6 +30,11 @@ fn parses_list_kinds() {
 }
 
 #[test]
+fn sources_rejects_ignored_non_json_formats() {
+    assert!(Cli::try_parse_from(["qurbrix-hw", "sources", "--format", "jsonl"]).is_err());
+}
+
+#[test]
 fn maps_failed_scan_status_to_contract_exit_code() {
     assert_eq!(exit_code_for_status(ScanStatus::Complete), ExitCode::Ok);
     assert_eq!(exit_code_for_status(ScanStatus::Partial), ExitCode::Ok);

@@ -66,6 +66,20 @@ qurbrix-hw list-kinds
 
 `partial` 仍返回退出码 `0`，方便脚本继续消费已有结果。
 
+## 集成合约
+
+Rust 调用方直接依赖顶层 `qurbrix-hw` 库 facade。其他语言的上层程序调用 CLI，
+解析 stdout JSON；这是当前稳定的跨语言边界。
+
+面向机器调用时：
+
+- 优先使用 `qurbrix-hw scan --format json`，消费 flat 外部 schema。
+- 只有明确需要 Rust 模型形状时，才使用 `qurbrix-hw scan --format typed-json`。
+- 不要解析 `summary` 或 `table` 这类面向人的输出。
+- 不要依赖 JSON 字段顺序或空白格式。
+- 以 `schema_version` 作为兼容性标记；破坏性输出变更必须升级 schema version，
+  兼容性变更可以追加字段。
+
 ## 库用法
 
 ```rust

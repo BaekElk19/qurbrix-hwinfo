@@ -75,6 +75,22 @@ List supported device kinds:
 qurbrix-hw list-kinds
 ```
 
+## Integration Contract
+
+Rust callers should depend on the top-level `qurbrix-hw` library facade. Other
+languages should call the CLI and parse stdout JSON; this is the stable
+cross-language boundary.
+
+For machine callers:
+
+- Prefer `qurbrix-hw scan --format json` for the flat external schema.
+- Use `qurbrix-hw scan --format typed-json` only when you intentionally want the
+  Rust model shape serialized as JSON.
+- Do not parse human commands such as `summary` or `table`.
+- Treat field order and whitespace as unstable.
+- Treat `schema_version` as the compatibility marker. Breaking output changes
+  require a new schema version; compatible changes may add fields.
+
 Library usage:
 
 ```rust

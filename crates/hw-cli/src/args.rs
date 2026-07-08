@@ -27,8 +27,8 @@ pub enum Command {
         version: bool,
     },
     Sources {
-        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
-        format: OutputFormat,
+        #[arg(long, value_enum, default_value_t = SourcesFormat::Json)]
+        format: SourcesFormat,
     },
 }
 
@@ -69,6 +69,11 @@ pub enum OutputFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ListFormat {
     Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SourcesFormat {
     Json,
 }
 

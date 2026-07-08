@@ -2,6 +2,20 @@
 
 `qurbrix-hw` is script/agent-first. Structured results are written to stdout. Logs and diagnostics are written to stderr.
 
+This CLI is the stable cross-language API. Rust callers may use the top-level
+`qurbrix-hw` library facade directly; non-Rust callers should execute the CLI
+and parse stdout.
+
+Compatibility rules:
+
+- `schema_version` identifies the output contract.
+- Compatible changes may add fields, device kinds, capabilities, warnings, or
+  enum values.
+- Breaking changes to field names, field meanings, required fields, or status
+  semantics require a new `schema_version`.
+- JSON object field order and whitespace are not stable.
+- Human commands such as `summary` and `table` are not machine contracts.
+
 ## Default command
 
 ```bash
@@ -79,6 +93,21 @@ emits:
 ```
 
 `qurbrix-hw schema --version` emits only `qurbrix.hw.scan.v1`.
+
+## Sources command
+
+```bash
+qurbrix-hw sources --format json
+```
+
+emits:
+
+```json
+{"sources":[]}
+```
+
+Source introspection is reserved for future work. The command accepts only JSON
+format so unsupported machine formats are rejected instead of silently ignored.
 
 ## Exit codes
 

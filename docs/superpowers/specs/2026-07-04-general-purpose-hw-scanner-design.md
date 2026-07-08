@@ -67,10 +67,13 @@ qurbrix-hwinfo/
 │   ├── hw-collect/      # Probe orchestration, merge, warnings, status
 │   ├── hw-output/       # Flat JSON, JSONL, summary, table, schema views
 │   ├── hw-cli/          # qurbrix-hw CLI entrypoint
-│   ├── hw-testdata/     # Fixtures and snapshots
-│   └── hw-api/          # Reserved for later API/DBus work, not Phase A core
+│   └── hw-testdata/     # Fixtures and snapshots
 └── src/lib.rs           # Top-level facade that re-exports the new API
 ```
+
+Cross-language callers use the CLI JSON contract. Rust callers use the
+top-level `qurbrix-hw` library facade. No separate `hw-api`, `hw-store`, or
+`hw-merge` crate is kept without real code and a concrete caller.
 
 ### 3.1 `hw-model`
 
