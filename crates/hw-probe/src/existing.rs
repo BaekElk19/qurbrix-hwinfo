@@ -72,36 +72,84 @@ impl Probe for CpuProbe {
         let mut warnings = Vec::new();
         let lscpu = if lscpu_result.is_success() {
             let record = parse_lscpu(&lscpu_result.stdout);
-            (!record.is_empty()).then_some(record)
+            if record.is_empty() {
+                warnings.push(
+                    ScanWarning::new("source_empty", "cpu source produced no lscpu fields")
+                        .with_source(lscpu_result.source.clone()),
+                );
+                None
+            } else {
+                Some(record)
+            }
         } else {
             warnings.extend(ProbeResult::source_failure(self.name(), &lscpu_result).warnings);
             None
         };
         let lshw = if lshw_result.is_success() {
             let record = parse_lshw_processor(&lshw_result.stdout);
-            (!record.is_empty()).then_some(record)
+            if record.is_empty() {
+                warnings.push(
+                    ScanWarning::new(
+                        "source_empty",
+                        "cpu source produced no lshw processor fields",
+                    )
+                    .with_source(lshw_result.source.clone()),
+                );
+                None
+            } else {
+                Some(record)
+            }
         } else {
             warnings.extend(ProbeResult::source_failure(self.name(), &lshw_result).warnings);
             None
         };
         let dmi = if dmi_result.is_success() {
-            parse_dmidecode_processor(&dmi_result.stdout)
+            let records: Vec<_> = parse_dmidecode_processor(&dmi_result.stdout)
                 .into_iter()
                 .filter(|record| record.is_useful())
-                .collect()
+                .collect();
+            if records.is_empty() {
+                warnings.push(
+                    ScanWarning::new(
+                        "source_empty",
+                        "cpu source produced no DMI processor records",
+                    )
+                    .with_source(dmi_result.source.clone()),
+                );
+            }
+            records
         } else {
             warnings.extend(ProbeResult::source_failure(self.name(), &dmi_result).warnings);
             Vec::new()
         };
         let proc_cpuinfo = if proc_cpuinfo_result.is_success() {
             let record = parse_proc_cpuinfo(&proc_cpuinfo_result.stdout);
-            (!record.is_empty()).then_some(record)
+            if record.is_empty() {
+                warnings.push(
+                    ScanWarning::new("source_empty", "cpu source produced no proc cpuinfo fields")
+                        .with_source(proc_cpuinfo_result.source.clone()),
+                );
+                None
+            } else {
+                Some(record)
+            }
         } else {
             None
         };
         let proc_hardware = if proc_hardware_result.is_success() {
             let record = parse_proc_hardware(&proc_hardware_result.stdout);
-            (!record.is_empty()).then_some(record)
+            if record.is_empty() {
+                warnings.push(
+                    ScanWarning::new(
+                        "source_empty",
+                        "cpu source produced no proc hardware fields",
+                    )
+                    .with_source(proc_hardware_result.source.clone()),
+                );
+                None
+            } else {
+                Some(record)
+            }
         } else {
             None
         };
@@ -1072,7 +1120,9 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         let device = apply_storage_lshw_enrichment(device, &lshw);
         let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
         let device = apply_storage_hdparm_enrichment(ctx, device).await;
-        devices.push(apply_storage_smartctl(ctx, device).await);
+        devices.push(apply_storage_vendor_fallback(
+            apply_storage_smartctl(ctx, device).await,
+        ));
     }
 
     if devices.is_empty() {
@@ -1215,7 +1265,7 @@ fn storage_device_from_hwinfo(record: HwinfoDiskRecord, source: &str) -> Device 
     device.vendor = record.vendor;
     device.model = record.model;
     device.serial = record.serial;
-    device.with_source(SourceEvidence {
+    apply_storage_vendor_fallback(device).with_source(SourceEvidence {
         source: source.to_string(),
         kind: SourceKind::Command,
         status: SourceStatus::Success,
@@ -1983,10 +2033,61 @@ impl Probe for StorageProbe {
             let device = apply_storage_lshw_enrichment(device, &lshw);
             let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
             let device = apply_storage_hdparm_enrichment(ctx, device).await;
-            devices.push(apply_storage_smartctl(ctx, device).await);
+            devices.push(apply_storage_vendor_fallback(
+                apply_storage_smartctl(ctx, device).await,
+            ));
+        }
+        if devices.is_empty() {
+            return ProbeResult {
+                devices: storage_devices_from_sysfs(ctx).await,
+                warnings: vec![ScanWarning::new(
+                    "source_empty",
+                    "storage source produced no disk records",
+                )
+                .with_source(result.source)],
+                consumed: Vec::new(),
+            };
         }
         ProbeResult::with_devices(devices)
     }
+}
+
+fn apply_storage_vendor_fallback(mut device: Device) -> Device {
+    if device.vendor.is_none() {
+        device.vendor = device
+            .model
+            .as_deref()
+            .or(Some(device.name.as_str()))
+            .and_then(storage_vendor_from_model_prefix)
+            .map(str::to_string);
+    }
+    device
+}
+
+fn storage_vendor_from_model_prefix(model: &str) -> Option<&'static str> {
+    let model = model.trim().to_ascii_uppercase();
+    [
+        ("HGST HUS", "Western Digital"),
+        ("WDC", "Western Digital"),
+        ("HITACHI", "Hitachi"),
+        ("HTS", "Hitachi"),
+        ("IC", "Hitachi"),
+        ("FUJITSU", "Fujitsu"),
+        ("MP", "Fujitsu"),
+        ("TOSHIBA", "Toshiba"),
+        ("MK", "Toshiba"),
+        ("MAXTOR", "Maxtor"),
+        ("PIONEER", "Pioneer"),
+        ("PHILIPS", "Philips"),
+        ("QUANTUM", "Quantum"),
+        ("FIREBALL", "Quantum"),
+        ("FORESEE", "Foresee"),
+        ("IBM", "IBM"),
+        ("RS", "Longsys"),
+        ("ST", "Seagate"),
+    ]
+    .into_iter()
+    .find_map(|(prefix, vendor)| model.starts_with(prefix).then_some(vendor))
 }
 
 #[async_trait]
@@ -2272,6 +2373,7 @@ fn memory_device_from_record(
     source: &str,
     source_kind: SourceKind,
 ) -> Device {
+    let vendor = mem.manufacturer.clone();
     let id = mem
         .serial
         .as_ref()
@@ -2283,7 +2385,7 @@ fn memory_device_from_record(
                 mem.locator.clone().unwrap_or_else(|| idx.to_string())
             )
         });
-    Device::new(
+    let mut device = Device::new(
         id,
         DeviceKind::Memory,
         mem.locator
@@ -2303,8 +2405,9 @@ fn memory_device_from_record(
             serial: mem.serial,
             part_number: mem.part_number,
         }),
-    )
-    .with_source(SourceEvidence {
+    );
+    device.vendor = vendor;
+    device.with_source(SourceEvidence {
         source: source.to_string(),
         kind: source_kind,
         status: SourceStatus::Success,
@@ -2749,6 +2852,21 @@ impl Probe for GpuProbe {
         }
         let mut probe_result = ProbeResult::default();
         let gpus = parse_gpu_lspci(&result.stdout);
+        if gpus.is_empty() {
+            let mut fallback = ProbeResult {
+                devices: Vec::new(),
+                warnings: vec![ScanWarning::new(
+                    "source_empty",
+                    "gpu source produced no display controller records",
+                )
+                .with_source(result.source)],
+                consumed: Vec::new(),
+            };
+            fallback.devices =
+                gpu_devices_from_sysfs_pci(ctx, &mut fallback.consumed, &enrichments).await;
+            fallback.devices = apply_gpu_glxinfo_to_devices(fallback.devices, &glxinfo);
+            return fallback;
+        }
         let jingjia_gpu_count = gpus
             .iter()
             .filter(|gpu| is_jingjia_vendor_id(gpu.vendor_id.as_deref()))
@@ -3730,20 +3848,41 @@ impl Probe for MonitorProbe {
         }
 
         let mut monitors: Vec<_> = if result.is_success() {
-            parse_xrandr_query(&result.stdout)
-                .into_iter()
-                .filter(|mon| mon.connected)
-                .map(|mon| {
-                    (
-                        mon.connector,
-                        mon.resolution,
-                        mon.max_resolution,
-                        result.source.clone(),
-                        SourceKind::Command,
-                        false,
-                    )
-                })
-                .collect()
+            let records = parse_xrandr_query(&result.stdout);
+            if records.is_empty() {
+                warnings.push(
+                    ScanWarning::new("source_empty", "monitor source produced no xrandr records")
+                        .with_source(result.source.clone()),
+                );
+                edids
+                    .keys()
+                    .map(|connector| {
+                        (
+                            connector.clone(),
+                            None,
+                            None,
+                            result.source.clone(),
+                            SourceKind::Command,
+                            true,
+                        )
+                    })
+                    .collect()
+            } else {
+                records
+                    .into_iter()
+                    .filter(|mon| mon.connected)
+                    .map(|mon| {
+                        (
+                            mon.connector,
+                            mon.resolution,
+                            mon.max_resolution,
+                            result.source.clone(),
+                            SourceKind::Command,
+                            false,
+                        )
+                    })
+                    .collect()
+            }
         } else {
             warnings.extend(ProbeResult::source_failure(self.name(), &result).warnings);
             edids

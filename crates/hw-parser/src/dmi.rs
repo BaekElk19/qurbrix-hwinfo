@@ -529,6 +529,11 @@ fn spd_manufacturer_name(bytes: &[u8]) -> Option<String> {
         0x80ad | 0xad00 => "SK Hynix",
         0x802c | 0x2c00 => "Micron",
         0x859b | 0x9b00 => "Crucial",
+        0x0198 | 0x9801 => "Kingston",
+        0x0443 | 0x4304 => "Ramaxel",
+        0x04cb | 0xcb04 => "ADATA",
+        0x89cd | 0xcd89 => "Longsys",
+        0x8968 | 0x6889 => "Kimtigo",
         _ => return Some(format!("JEP106 0x{id:04X}")),
     };
     Some(name.to_string())

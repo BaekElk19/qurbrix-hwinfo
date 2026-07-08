@@ -322,7 +322,13 @@ async fn cpu_probe_ignores_family_only_dmi_for_evidence() {
     let result = CpuProbe.probe(&ctx).await;
 
     assert_eq!(result.devices.len(), 1);
-    assert!(result.warnings.is_empty());
+    assert_eq!(
+        warning_pairs(&result),
+        vec![
+            (Some("dmidecode -t 4"), "source_empty"),
+            (Some("lshw -class processor"), "source_empty"),
+        ]
+    );
     assert_eq!(result.devices[0].sources.len(), 1);
     assert_source_status(&result.devices[0], "lscpu", SourceStatus::Success);
 }
@@ -445,6 +451,64 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
 }
 
 #[tokio::test]
+async fn cpu_probe_uses_proc_cpuinfo_when_lscpu_parses_empty() {
+    let runner = FakeSourceRunner::new()
+        .with_command("lscpu", std::iter::empty::<&str>(), "")
+        .with_file(
+            "/proc/cpuinfo",
+            "processor\t: 0\n\
+             model name\t: Intel(R) Core(TM) i7-1185G7 @ 3.00GHz\n\
+             vendor_id\t: GenuineIntel\n\
+             cpu MHz\t\t: 3000.000\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(
+        warning_pairs(&result),
+        vec![
+            (Some("dmidecode -t 4"), "source_missing"),
+            (Some("lscpu"), "source_empty"),
+            (Some("lshw -class processor"), "source_missing"),
+        ]
+    );
+    assert_eq!(result.devices[0].sources.len(), 1);
+    assert_source_status(&result.devices[0], "/proc/cpuinfo", SourceStatus::Success);
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(
+                cpu.name.as_deref(),
+                Some("Intel(R) Core(TM) i7-1185G7 @ 3.00GHz")
+            );
+            assert_eq!(cpu.vendor.as_deref(), Some("Intel"));
+            assert_eq!(cpu.current_freq_mhz, Some(3000));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cpu_probe_warns_when_proc_cpuinfo_parses_empty() {
+    let runner = FakeSourceRunner::new().with_file("/proc/cpuinfo", "");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    assert_eq!(
+        warning_pairs(&result),
+        vec![
+            (Some("/proc/cpuinfo"), "source_empty"),
+            (Some("dmidecode -t 4"), "source_missing"),
+            (Some("lscpu"), "source_missing"),
+            (Some("lshw -class processor"), "source_missing"),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn cpu_probe_normalizes_vendor_from_proc_cpuinfo_samples() {
     for (path, expected_vendor, expected_architecture) in [
         ("cpu/proc-cpuinfo-intel-x86_64.txt", "Intel", None),
@@ -514,6 +578,28 @@ async fn cpu_probe_uses_proc_hardware_kirin_when_other_sources_are_missing() {
         }
         other => panic!("expected cpu properties, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn cpu_probe_warns_when_proc_hardware_parses_empty() {
+    let runner = FakeSourceRunner::new()
+        .with_file("/proc/cpuinfo", "")
+        .with_file("/proc/hardware", "");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert!(result.devices.is_empty());
+    assert_eq!(
+        warning_pairs(&result),
+        vec![
+            (Some("/proc/cpuinfo"), "source_empty"),
+            (Some("/proc/hardware"), "source_empty"),
+            (Some("dmidecode -t 4"), "source_missing"),
+            (Some("lscpu"), "source_missing"),
+            (Some("lshw -class processor"), "source_missing"),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -933,6 +1019,93 @@ async fn storage_probe_preserves_wwn_and_firmware_from_lsblk_success_path() {
     };
     assert_eq!(storage.wwn.as_deref(), Some("5002538F00000000"));
     assert_eq!(storage.firmware.as_deref(), Some("1.0A"));
+}
+
+#[tokio::test]
+async fn storage_probe_infers_longsys_vendor_from_rs_model_prefix() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lsblk",
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+        r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"RSYE3836N-480G","serial":"S1","tran":"sata"}]}"#,
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].vendor.as_deref(), Some("Longsys"));
+    assert_eq!(result.devices[0].model.as_deref(), Some("RSYE3836N-480G"));
+}
+
+#[tokio::test]
+async fn storage_probe_infers_vendor_from_kylin_disk_model_prefix() {
+    let cases = [
+        ("WDC WD10EZEX-08WN4A0", "Western Digital"),
+        ("ST1000DM010-2EP102", "Seagate"),
+        ("FORESEE 256GB SSD", "Foresee"),
+    ];
+
+    for (model, vendor) in cases {
+        let runner = FakeSourceRunner::new().with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            format!(
+                r#"{{"blockdevices":[{{"name":"sda","type":"disk","size":1024,"model":"{model}","serial":"S1","tran":"sata"}}]}}"#
+            ),
+        );
+        let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+        let result = StorageProbe.probe(&ctx).await;
+
+        assert_eq!(result.devices.len(), 1, "{model}");
+        assert_eq!(result.devices[0].vendor.as_deref(), Some(vendor), "{model}");
+        assert_eq!(result.devices[0].model.as_deref(), Some(model), "{model}");
+    }
+}
+
+#[tokio::test]
+async fn storage_probe_does_not_infer_vendor_from_kernel_name_without_model() {
+    let runner = FakeSourceRunner::new().with_command(
+        "lsblk",
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+        r#"{"blockdevices":[{"name":"st0","type":"disk","size":1024,"serial":"S1","tran":"sata"}]}"#,
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].vendor, None);
+    assert_eq!(result.devices[0].model, None);
+}
+
+#[tokio::test]
+async fn storage_probe_keeps_explicit_vendor_over_model_prefix_fallback() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"WDC WD10EZEX-08WN4A0","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_command(
+            "lshw",
+            ["-class", "disk"],
+            "  *-disk\n\
+                  description: ATA Disk\n\
+                  product: WDC WD10EZEX-08WN4A0\n\
+                  vendor: ACME Storage\n\
+                  logical name: /dev/sda\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].vendor.as_deref(), Some("ACME Storage"));
+    assert_eq!(
+        result.devices[0].model.as_deref(),
+        Some("WDC WD10EZEX-08WN4A0")
+    );
 }
 
 #[tokio::test]
@@ -1653,6 +1826,45 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn storage_probe_uses_sysfs_when_lsblk_parses_no_disks() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[]}"#,
+        )
+        .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/sda")])
+        .with_file("/sys/block/sda/size", "2097152\n")
+        .with_file("/sys/block/sda/device/vendor", "Samsung\n")
+        .with_file("/sys/block/sda/device/model", "Samsung SSD 980\n")
+        .with_file("/sys/block/sda/device/serial", "S12345\n")
+        .with_file("/sys/block/sda/queue/rotational", "0\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "storage:serial:S12345");
+    assert_eq!(result.devices[0].vendor.as_deref(), Some("Samsung"));
+    assert_eq!(result.devices[0].model.as_deref(), Some("Samsung SSD 980"));
+    assert_eq!(
+        warning_pairs(&result),
+        vec![(
+            Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"),
+            "source_empty"
+        )]
+    );
+    match &result.devices[0].properties {
+        DeviceProperties::Storage(storage) => {
+            assert_eq!(storage.device_node.as_deref(), Some("/dev/sda"));
+            assert_eq!(storage.size_bytes, Some(1_073_741_824));
+            assert_eq!(storage.media_type.as_deref(), Some("ssd"));
+        }
+        other => panic!("expected storage properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]

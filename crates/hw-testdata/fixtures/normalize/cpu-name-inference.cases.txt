@@ -1,5 +1,6 @@
 Loongson-3A5000	Loongson
 Phytium D2000/8	Phytium
+D2000/8	Phytium
 Kunpeng 920	HiSilicon
 HiSilicon Kirin 9006C	HiSilicon
 Huawei Taishan	HiSilicon

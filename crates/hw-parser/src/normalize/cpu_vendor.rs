@@ -13,7 +13,7 @@ pub fn infer_cpu_vendor_from_name(model_name: &str) -> Option<&'static str> {
 
     if name.contains("loongson") {
         Some("Loongson")
-    } else if name.contains("phytium") {
+    } else if name.contains("phytium") || name.contains("d2000") {
         Some("Phytium")
     } else if name.contains("kunpeng")
         || name.contains("hisilicon")

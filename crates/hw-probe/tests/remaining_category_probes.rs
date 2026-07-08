@@ -328,6 +328,27 @@ async fn memory_probe_uses_raw_ddr5_spd_identity_when_command_sources_are_missin
 }
 
 #[tokio::test]
+async fn memory_probe_normalizes_common_raw_spd_manufacturer_ids() {
+    let spd_path = PathBuf::from("/sys/bus/i2c/drivers/ee1004/0-0051/eeprom");
+    let mut spd = ddr5_spd_eeprom();
+    spd[512] = 0x89;
+    spd[513] = 0xcd;
+    let runner = FakeSourceRunner::new()
+        .with_glob("/sys/bus/i2c/drivers/eeprom/*/eeprom", Vec::new())
+        .with_glob(
+            "/sys/bus/i2c/drivers/ee1004/*/eeprom",
+            vec![spd_path.clone()],
+        )
+        .with_file_bytes(spd_path, spd);
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].vendor.as_deref(), Some("Longsys"));
+}
+
+#[tokio::test]
 async fn bios_probe_outputs_bios_and_motherboard_devices() {
     let runner = FakeSourceRunner::new().with_command(
         "dmidecode",
@@ -1282,6 +1303,46 @@ async fn gpu_probe_uses_sysfs_display_pci_when_lspci_is_missing() {
 }
 
 #[tokio::test]
+async fn gpu_probe_uses_sysfs_display_pci_when_lspci_parses_empty() {
+    let runner = FakeSourceRunner::new()
+        .with_command("lspci", ["-nn", "-k"], "")
+        .with_glob(
+            "/sys/bus/pci/devices/*",
+            vec![PathBuf::from("/sys/bus/pci/devices/0000:00:02.0")],
+        )
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/vendor", "0x8086\n")
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/device", "0x9a49\n")
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/class", "0x030000\n")
+        .with_file("/sys/bus/pci/devices/0000:00:02.0/uevent", "DRIVER=i915\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = GpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "gpu:pci:0000:00:02.0");
+    match &result.devices[0].properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.vendor.as_deref(), Some("Intel"));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert_eq!(
+        result.devices[0]
+            .driver
+            .as_ref()
+            .and_then(|driver| driver.name.as_deref()),
+        Some("i915")
+    );
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_empty");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("lspci -nn -k"));
+    assert_eq!(
+        result.consumed[0].id, "pci:0000:00:02.0",
+        "sysfs GPU fallback should consume its backing PCI device"
+    );
+}
+
+#[tokio::test]
 async fn gpu_sysfs_fallback_uses_lshw_display_identity() {
     let runner = FakeSourceRunner::new()
         .with_glob(
@@ -1528,6 +1589,32 @@ async fn monitor_probe_uses_sysfs_edid_when_xrandr_query_is_missing() {
     assert_eq!(result.devices[0].id, "monitor:HDMI-1");
     assert_eq!(result.warnings.len(), 1);
     assert_eq!(result.warnings[0].code, "source_missing");
+    assert_eq!(result.warnings[0].source.as_deref(), Some("xrandr --query"));
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.connector.as_deref(), Some("HDMI-1"));
+            assert_eq!(monitor.manufacturer.as_deref(), Some("AOC"));
+            assert_eq!(monitor.product.as_deref(), Some("AOC SYSFS"));
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn monitor_probe_uses_sysfs_edid_when_xrandr_query_parses_empty() {
+    let path = PathBuf::from("/sys/class/drm/card0-HDMI-A-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_command("xrandr", ["--query"], "")
+        .with_glob("/sys/class/drm/*/edid", vec![path.clone()])
+        .with_file_bytes(path.clone(), monitor_test_edid("AOC SYSFS"));
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = MonitorProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "monitor:HDMI-1");
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_empty");
     assert_eq!(result.warnings[0].source.as_deref(), Some("xrandr --query"));
     match &result.devices[0].properties {
         DeviceProperties::Monitor(monitor) => {

@@ -293,6 +293,27 @@ fn parses_raw_ddr5_spd_identity_fields() {
 }
 
 #[test]
+fn parses_common_raw_spd_manufacturer_ids() {
+    let cases = [
+        (0x01, 0x98, "Kingston"),
+        (0x04, 0x43, "Ramaxel"),
+        (0x04, 0xcb, "ADATA"),
+        (0x89, 0xcd, "Longsys"),
+        (0x89, 0x68, "Kimtigo"),
+    ];
+
+    for (count, code, vendor) in cases {
+        let mut bytes = ddr5_spd_eeprom();
+        bytes[512] = count;
+        bytes[513] = code;
+
+        let record = parse_spd_eeprom(&bytes).expect("DDR5 SPD identity record");
+
+        assert_eq!(record.manufacturer.as_deref(), Some(vendor), "{vendor}");
+    }
+}
+
+#[test]
 fn preserves_unknown_raw_spd_manufacturer_id() {
     let mut bytes = ddr5_spd_eeprom();
     bytes[512] = 0x12;
