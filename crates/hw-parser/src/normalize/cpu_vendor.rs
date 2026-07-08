@@ -1,9 +1,13 @@
 pub fn normalize_cpu_vendor_id(vendor_id: &str) -> Option<&'static str> {
-    match vendor_id.trim() {
-        "GenuineIntel" => Some("Intel"),
-        "AuthenticAMD" => Some("AMD"),
-        "HygonGenuine" => Some("Hygon"),
-        "CentaurHauls" | "Shanghai" => Some("Zhaoxin"),
+    match vendor_id.trim().to_ascii_lowercase().as_str() {
+        "genuineintel" => Some("Intel"),
+        "authenticamd" => Some("AMD"),
+        "hygongenuine" | "hygon" => Some("Hygon"),
+        "centaurhauls" | "shanghai" | "zhaoxin" => Some("Zhaoxin"),
+        "loongson" => Some("Loongson"),
+        "phytium" => Some("Phytium"),
+        "huawei" | "hisilicon" => Some("HiSilicon"),
+        "sunway" => Some("Sunway"),
         _ => None,
     }
 }

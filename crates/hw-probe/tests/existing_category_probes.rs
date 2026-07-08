@@ -173,7 +173,7 @@ async fn cpu_probe_outputs_cpu_device() {
         .with_command(
             "lscpu",
             std::iter::empty::<&str>(),
-            "Architecture: x86_64\nCPU(s): 8\nModel name: AMD Ryzen 7\nVendor ID: AuthenticAMD\nCore(s) per socket: 4\nSocket(s): 1\nCPU family: 25\nModel: 116\nStepping: 1\nBogoMIPS: 6587.42\nVirtualization: AMD-V\nL1d cache: 256 KiB (8 instances)\nL1i cache: 256 KiB (8 instances)\nL2 cache: 8 MiB (8 instances)\nL3 cache: 16 MiB (1 instance)\nFlags: fpu sse sse2\n",
+            "Architecture: x86_64\nCPU(s): 8\nOn-line CPU(s) list: 0-3,6\nModel name: AMD Ryzen 7\nVendor ID: AuthenticAMD\nCore(s) per socket: 4\nThread(s) per core: 2\nSocket(s): 1\nCPU family: 25\nModel: 116\nStepping: 1\nBogoMIPS: 6587.42\nVirtualization: AMD-V\nL1d cache: 256 KiB (8 instances)\nL1i cache: 256 KiB (8 instances)\nL2 cache: 8 MiB (8 instances)\nL3 cache: 16 MiB (1 instance)\nFlags: fpu sse sse2\n",
         )
         .with_command(
             "lshw",
@@ -190,6 +190,7 @@ async fn cpu_probe_outputs_cpu_device() {
              \tVersion: Ryzen 7 PRO 7840U\n\
              \tCurrent Speed: 3300 MHz\n\
              \tCore Count: 8\n\
+             \tCore Enabled: 8\n\
              \tThread Count: 16\n",
         );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
@@ -215,7 +216,11 @@ async fn cpu_probe_outputs_cpu_device() {
             assert_eq!(cpu.architecture.as_deref(), Some("x86_64"));
             assert_eq!(cpu.cores, Some(8));
             assert_eq!(cpu.threads, Some(16));
+            assert_eq!(cpu.threads_per_core, Some(2));
             assert_eq!(cpu.sockets, Some(1));
+            assert_eq!(cpu.enabled_cores, Some(8));
+            assert_eq!(cpu.online_threads, Some(5));
+            assert_eq!(cpu.online_cores, Some(3));
             assert_eq!(cpu.current_freq_mhz, Some(3300));
             assert_eq!(cpu.family.as_deref(), Some("25"));
             assert_eq!(cpu.model.as_deref(), Some("116"));
@@ -227,6 +232,7 @@ async fn cpu_probe_outputs_cpu_device() {
             assert_eq!(cpu.l2_cache.as_deref(), Some("8 MiB (8 instances)"));
             assert_eq!(cpu.l3_cache.as_deref(), Some("16 MiB (1 instance)"));
             assert_eq!(cpu.flags, vec!["fpu", "sse", "sse2"]);
+            assert_eq!(cpu.extensions, vec!["SSE", "SSE2"]);
         }
         other => panic!("expected cpu properties, got {other:?}"),
     }
@@ -242,6 +248,7 @@ async fn cpu_probe_uses_dmi_when_lscpu_is_missing() {
          \tSocket Designation: CPU 0\n\
          \tManufacturer: HiSilicon\n\
          \tVersion: Kunpeng 920\n\
+         \tFamily: ARMv8\n\
          \tCurrent Speed: 2400 MHz\n\
          \tCore Count: 48\n\
          \tThread Count: 48\n",
@@ -265,6 +272,7 @@ async fn cpu_probe_uses_dmi_when_lscpu_is_missing() {
         DeviceProperties::Cpu(cpu) => {
             assert_eq!(cpu.vendor.as_deref(), Some("HiSilicon"));
             assert_eq!(cpu.current_freq_mhz, Some(2400));
+            assert_eq!(cpu.family.as_deref(), Some("ARMv8"));
             assert_eq!(cpu.cores, Some(48));
             assert_eq!(cpu.threads, Some(48));
         }
@@ -331,6 +339,12 @@ async fn cpu_probe_ignores_family_only_dmi_for_evidence() {
     );
     assert_eq!(result.devices[0].sources.len(), 1);
     assert_source_status(&result.devices[0], "lscpu", SourceStatus::Success);
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.family.as_deref(), Some("Server"));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -361,6 +375,33 @@ async fn cpu_probe_infers_vendor_from_dmi_name_when_manufacturer_is_missing() {
     match &result.devices[0].properties {
         DeviceProperties::Cpu(cpu) => {
             assert_eq!(cpu.vendor.as_deref(), Some("HiSilicon"));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cpu_probe_preserves_kylin_dmi_slot_serial_and_external_clock() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "4"],
+        "Handle 0x0041, DMI type 4, 48 bytes\n\
+         Processor Information\n\
+         \tSocket Designation: CPU 0\n\
+         \tManufacturer: GenuineIntel\n\
+         \tVersion: Intel(R) Core(TM) i7-1185G7\n\
+         \tSerial Number: CPU-SERIAL-1\n\
+         \tExternal Clock: 100 MHz\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.socket_designations, vec!["CPU 0"]);
+            assert_eq!(cpu.serial_numbers, vec!["CPU-SERIAL-1"]);
+            assert_eq!(cpu.external_clock_mhz, Some(100));
         }
         other => panic!("expected cpu properties, got {other:?}"),
     }
@@ -403,6 +444,8 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
          CPU part\t: 0x660\n\
          CPU revision\t: 2\n\
          cpu MHz\t\t: 2300.000\n\
+         clflush size\t: 64\n\
+         cache size\t: 2048 KB\n\
          \n\
          processor\t: 1\n\
          BogoMIPS\t: 100.00\n\
@@ -444,6 +487,8 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
             assert_eq!(cpu.architecture.as_deref(), Some("aarch64"));
             assert_eq!(cpu.threads, Some(2));
             assert_eq!(cpu.current_freq_mhz, Some(2300));
+            assert_eq!(cpu.clflush_size_bytes, Some(64));
+            assert_eq!(cpu.l2_cache.as_deref(), Some("2048 KB"));
             assert_eq!(cpu.flags, vec!["fp", "asimd", "evtstrm", "crc32"]);
         }
         other => panic!("expected cpu properties, got {other:?}"),
@@ -484,6 +529,129 @@ async fn cpu_probe_uses_proc_cpuinfo_when_lscpu_parses_empty() {
             );
             assert_eq!(cpu.vendor.as_deref(), Some("Intel"));
             assert_eq!(cpu.current_freq_mhz, Some(3000));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cpu_probe_exposes_deepin_arm_cpu_identity_fields_from_proc_cpuinfo() {
+    let runner = FakeSourceRunner::new().with_file(
+        "/proc/cpuinfo",
+        "processor\t: 0\n\
+         BogoMIPS\t: 100.00\n\
+         Features\t: fp asimd evtstrm crc32\n\
+         CPU implementer\t: 0x70\n\
+         CPU architecture: 8\n\
+         CPU variant\t: 0x1\n\
+         CPU part\t: 0x660\n\
+         CPU revision\t: 2\n\
+         \n\
+         Hardware\t: Phytium D2000/8\n\
+         Processor\t: AArch64 Processor rev 2 (aarch64)\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.cpu_implementer.as_deref(), Some("0x70"));
+            assert_eq!(cpu.cpu_architecture.as_deref(), Some("8"));
+            assert_eq!(cpu.cpu_variant.as_deref(), Some("0x1"));
+            assert_eq!(cpu.cpu_part.as_deref(), Some("0x660"));
+            assert_eq!(cpu.cpu_revision.as_deref(), Some("2"));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cpu_probe_uses_proc_cpuinfo_topology_when_lscpu_is_missing() {
+    let runner = FakeSourceRunner::new().with_file(
+        "/proc/cpuinfo",
+        "processor\t: 0\n\
+         model name\t: Intel(R) Core(TM) i7-1185G7 @ 3.00GHz\n\
+         vendor_id\t: GenuineIntel\n\
+         physical id\t: 0\n\
+         siblings\t: 4\n\
+         cpu cores\t: 2\n\
+         \n\
+         processor\t: 1\n\
+         model name\t: Intel(R) Core(TM) i7-1185G7 @ 3.00GHz\n\
+         vendor_id\t: GenuineIntel\n\
+         physical id\t: 0\n\
+         siblings\t: 4\n\
+         cpu cores\t: 2\n\
+         \n\
+         processor\t: 2\n\
+         model name\t: Intel(R) Core(TM) i7-1185G7 @ 3.00GHz\n\
+         vendor_id\t: GenuineIntel\n\
+         physical id\t: 0\n\
+         siblings\t: 4\n\
+         cpu cores\t: 2\n\
+         \n\
+         processor\t: 3\n\
+         model name\t: Intel(R) Core(TM) i7-1185G7 @ 3.00GHz\n\
+         vendor_id\t: GenuineIntel\n\
+         physical id\t: 0\n\
+         siblings\t: 4\n\
+         cpu cores\t: 2\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_source_status(&result.devices[0], "/proc/cpuinfo", SourceStatus::Success);
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.vendor.as_deref(), Some("Intel"));
+            assert_eq!(cpu.cores, Some(2));
+            assert_eq!(cpu.threads, Some(4));
+            assert_eq!(cpu.threads_per_core, Some(2));
+            assert_eq!(cpu.sockets, Some(1));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cpu_probe_keeps_lscpu_identity_when_proc_cpuinfo_disagrees() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lscpu",
+            std::iter::empty::<&str>(),
+            "Architecture: x86_64\n\
+             CPU(s): 8\n\
+             Model name: Intel(R) Core(TM) i7-1185G7\n\
+             Vendor ID: GenuineIntel\n\
+             Core(s) per socket: 4\n\
+             Socket(s): 1\n",
+        )
+        .with_file(
+            "/proc/cpuinfo",
+            "processor\t: 0\n\
+             model name\t: Bogus Proc CPU\n\
+             vendor_id\t: AuthenticAMD\n\
+             cpu MHz\t\t: 3000.000\n\
+             flags\t\t: fpu sse sse2\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_source_status(&result.devices[0], "lscpu", SourceStatus::Success);
+    assert_source_status(&result.devices[0], "/proc/cpuinfo", SourceStatus::Success);
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.name.as_deref(), Some("Intel(R) Core(TM) i7-1185G7"));
+            assert_eq!(cpu.vendor.as_deref(), Some("Intel"));
+            assert_eq!(cpu.current_freq_mhz, Some(3000));
+            assert_eq!(cpu.flags, vec!["fpu", "sse", "sse2"]);
+            assert_eq!(cpu.extensions, vec!["SSE", "SSE2"]);
         }
         other => panic!("expected cpu properties, got {other:?}"),
     }
@@ -639,6 +807,205 @@ async fn cpu_probe_uses_cpufreq_sysfs_when_lscpu_frequency_fields_are_missing() 
             assert_eq!(cpu.max_freq_mhz, Some(2300));
             assert_eq!(cpu.min_freq_mhz, Some(800));
             assert_eq!(cpu.current_freq_mhz, Some(1800));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cpu_probe_uses_scaling_cpufreq_limits_when_cpuinfo_limits_are_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lscpu",
+            std::iter::empty::<&str>(),
+            "Architecture: aarch64\n\
+             CPU(s): 8\n\
+             Model name: Phytium D2000/8\n\
+             Vendor ID: \n\
+             Core(s) per socket: 8\n\
+             Socket(s): 1\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq",
+            "2300000\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq",
+            "800000\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.max_freq_mhz, Some(2300));
+            assert_eq!(cpu.min_freq_mhz, Some(800));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cpu_probe_uses_average_cpufreq_current_frequency() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lscpu",
+            std::iter::empty::<&str>(),
+            "Architecture: x86_64\n\
+             CPU(s): 2\n\
+             Model name: Intel(R) Core(TM) i7\n\
+             Vendor ID: GenuineIntel\n\
+             Core(s) per socket: 2\n\
+             Socket(s): 1\n",
+        )
+        .with_glob(
+            "/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq",
+            vec![
+                PathBuf::from("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
+                PathBuf::from("/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq"),
+            ],
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq",
+            "1600000\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq",
+            "2200000\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.current_freq_mhz, Some(1900));
+        }
+        other => panic!("expected cpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn cpu_probe_uses_cpu_sysfs_topology_and_cache_when_command_sources_are_missing() {
+    let cpu_paths = (0..4)
+        .map(|index| PathBuf::from(format!("/sys/devices/system/cpu/cpu{index}")))
+        .collect::<Vec<_>>();
+    let cache_paths = (0..5)
+        .map(|index| PathBuf::from(format!("/sys/devices/system/cpu/cpu0/cache/index{index}")))
+        .collect::<Vec<_>>();
+    let runner = FakeSourceRunner::new()
+        .with_glob("/sys/devices/system/cpu/cpu*", cpu_paths)
+        .with_file("/sys/devices/system/cpu/online", "0,2\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/topology/physical_package_id",
+            "0\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/topology/core_id", "0\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/topology/thread_siblings_list",
+            "0,2\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu1/topology/physical_package_id",
+            "0\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu1/topology/core_id", "1\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu1/topology/thread_siblings_list",
+            "1,3\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu2/topology/physical_package_id",
+            "0\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu2/topology/core_id", "0\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu2/topology/thread_siblings_list",
+            "0,2\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu3/topology/physical_package_id",
+            "0\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu3/topology/core_id", "1\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu3/topology/thread_siblings_list",
+            "1,3\n",
+        )
+        .with_glob("/sys/devices/system/cpu/cpu0/cache/index*", cache_paths)
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index0/level", "1\n")
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index0/type", "Data\n")
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index0/size", "32K\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index0/shared_cpu_list",
+            "0,2\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index1/level", "1\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index1/type",
+            "Instruction\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index1/size", "32K\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index1/shared_cpu_list",
+            "0,2\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index2/level", "2\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index2/type",
+            "Unified\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index2/size", "256K\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index2/shared_cpu_list",
+            "0,2\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index3/level", "3\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index3/type",
+            "Unified\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index3/size", "8M\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list",
+            "0-3\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index4/level", "4\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index4/type",
+            "Unified\n",
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cache/index4/size", "16M\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cache/index4/shared_cpu_list",
+            "0-3\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_source_status(
+        &result.devices[0],
+        "/sys/devices/system/cpu",
+        SourceStatus::Success,
+    );
+    match &result.devices[0].properties {
+        DeviceProperties::Cpu(cpu) => {
+            assert_eq!(cpu.threads, Some(4));
+            assert_eq!(cpu.online_threads, Some(2));
+            assert_eq!(cpu.online_cores, Some(1));
+            assert_eq!(cpu.cores, Some(2));
+            assert_eq!(cpu.threads_per_core, Some(2));
+            assert_eq!(cpu.sockets, Some(1));
+            assert_eq!(cpu.l1d_cache.as_deref(), Some("64 KiB"));
+            assert_eq!(cpu.l1i_cache.as_deref(), Some("64 KiB"));
+            assert_eq!(cpu.l2_cache.as_deref(), Some("512 KiB"));
+            assert_eq!(cpu.l3_cache.as_deref(), Some("8 MiB"));
+            assert_eq!(cpu.l4_cache.as_deref(), Some("16 MiB"));
         }
         other => panic!("expected cpu properties, got {other:?}"),
     }

@@ -3,4 +3,9 @@ AuthenticAMD	AMD
 HygonGenuine	Hygon
 CentaurHauls	Zhaoxin
 Shanghai	Zhaoxin
+Loongson	Loongson
+Phytium	Phytium
+HUAWEI	HiSilicon
+HiSilicon	HiSilicon
+Sunway	Sunway
 UnknownVendor Corp	<none>

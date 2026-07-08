@@ -9,14 +9,14 @@ use hw_model::{
     ScanWarning, SourceEvidence, SourceKind, SourceStatus, StorageInfo, SystemDeviceInfo,
 };
 use hw_parser::{
-    infer_cpu_vendor_from_name, lookup_pnp_manufacturer, merge_cpu_records, normalize_arch,
-    normalize_cpu_vendor_id, normalize_gpu_vendor, normalize_gpu_vendor_id, parse_dmesg_gpu_vram,
-    parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor,
-    parse_dmidecode_system, parse_edid, parse_glxinfo_basic, parse_gpu_lspci,
-    parse_hdparm_identify, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
-    parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
-    parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
-    parse_lshw_storage, parse_lspci_nn_k, parse_nvidia_settings_videoram,
+    cpu_extensions_from_flags, infer_cpu_vendor_from_name, lookup_pnp_manufacturer,
+    merge_cpu_records, normalize_arch, normalize_cpu_vendor_id, normalize_gpu_vendor,
+    normalize_gpu_vendor_id, parse_dmesg_gpu_vram, parse_dmidecode_bios_board,
+    parse_dmidecode_memory, parse_dmidecode_processor, parse_dmidecode_system, parse_edid,
+    parse_glxinfo_basic, parse_gpu_lspci, parse_hdparm_identify, parse_hwinfo_disk,
+    parse_hwinfo_monitor, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
+    parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
+    parse_lshw_processor, parse_lshw_storage, parse_lspci_nn_k, parse_nvidia_settings_videoram,
     parse_nvidia_smi_memory_csv, parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
     parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_voltage_v, parse_width_bits,
@@ -67,6 +67,7 @@ impl Probe for CpuProbe {
             .await;
         let proc_cpuinfo_result = ctx.runner.read_file(Path::new("/proc/cpuinfo")).await;
         let proc_hardware_result = ctx.runner.read_file(Path::new("/proc/hardware")).await;
+        let cpu_sysfs = read_cpu_sysfs(ctx).await;
         let cpufreq = read_cpu_cpufreq(ctx).await;
 
         let mut warnings = Vec::new();
@@ -104,11 +105,8 @@ impl Probe for CpuProbe {
             None
         };
         let dmi = if dmi_result.is_success() {
-            let records: Vec<_> = parse_dmidecode_processor(&dmi_result.stdout)
-                .into_iter()
-                .filter(|record| record.is_useful())
-                .collect();
-            if records.is_empty() {
+            let records = parse_dmidecode_processor(&dmi_result.stdout);
+            if !records.iter().any(hw_parser::DmidecodeCpuRecord::is_useful) {
                 warnings.push(
                     ScanWarning::new(
                         "source_empty",
@@ -155,15 +153,17 @@ impl Probe for CpuProbe {
         };
         let lscpu_contributed = lscpu.is_some();
         let lshw_contributed = lshw.is_some();
-        let dmi_contributed = !dmi.is_empty();
+        let dmi_contributed = dmi.iter().any(hw_parser::DmidecodeCpuRecord::is_useful);
         let proc_cpuinfo_contributed = proc_cpuinfo.is_some();
         let proc_hardware_contributed = proc_hardware.is_some();
+        let cpu_sysfs_contributed = cpu_sysfs.is_some();
         let cpufreq_contributed = cpufreq.is_some();
         if lscpu.is_none()
             && lshw.is_none()
-            && dmi.is_empty()
+            && !dmi_contributed
             && proc_cpuinfo.is_none()
             && proc_hardware.is_none()
+            && cpu_sysfs.is_none()
             && cpufreq.is_none()
         {
             if !proc_cpuinfo_result.is_success() {
@@ -181,8 +181,11 @@ impl Probe for CpuProbe {
         let lshw_vendor = lshw.as_ref().and_then(|record| record.vendor.clone());
         let mut merged = merge_cpu_records(
             merge_cpu_record_fallback(
-                merge_cpu_record_fallback(lscpu, proc_cpuinfo),
-                proc_hardware,
+                merge_cpu_record_fallback(
+                    merge_cpu_record_fallback(lscpu, proc_cpuinfo),
+                    proc_hardware,
+                ),
+                cpu_sysfs,
             ),
             lshw,
             &dmi,
@@ -223,21 +226,34 @@ impl Probe for CpuProbe {
                     .map(str::to_string)
             })
             .or_else(|| merged.vendor.clone());
+        let extensions = cpu_extensions_from_flags(&merged.flags);
         let mut device = Device::new(
             "cpu:0",
             DeviceKind::Cpu,
             merged.name.clone().unwrap_or_else(|| "CPU".to_string()),
-            DeviceProperties::Cpu(CpuInfo {
+            DeviceProperties::Cpu(Box::new(CpuInfo {
                 name: merged.name,
                 vendor,
                 architecture,
                 cores: merged.cores,
+                enabled_cores: merged.enabled_cores,
                 threads: merged.threads,
+                online_threads: merged.online_threads,
+                online_cores: merged.online_cores,
+                threads_per_core: merged.threads_per_core,
                 sockets: merged.sockets,
+                socket_designations: merged.socket_designations,
+                serial_numbers: merged.serial_numbers,
                 max_freq_mhz: merged.max_freq_mhz,
                 min_freq_mhz: merged.min_freq_mhz,
                 current_freq_mhz: merged.current_freq_mhz,
+                external_clock_mhz: merged.external_clock_mhz,
                 family: merged.family,
+                cpu_implementer: merged.cpu_implementer,
+                cpu_architecture: merged.cpu_architecture,
+                cpu_variant: merged.cpu_variant,
+                cpu_part: merged.cpu_part,
+                cpu_revision: merged.cpu_revision,
                 model: merged.model,
                 stepping: merged.stepping,
                 bogomips: merged.bogomips,
@@ -246,8 +262,11 @@ impl Probe for CpuProbe {
                 l1i_cache: merged.l1i_cache,
                 l2_cache: merged.l2_cache,
                 l3_cache: merged.l3_cache,
+                l4_cache: merged.l4_cache,
+                clflush_size_bytes: merged.clflush_size_bytes,
                 flags: merged.flags,
-            }),
+                extensions,
+            })),
         );
         for (source, contributed) in [
             (&lscpu_result, lscpu_contributed),
@@ -275,6 +294,14 @@ impl Probe for CpuProbe {
             device = device.with_source(SourceEvidence {
                 source: proc_hardware_result.source,
                 kind: SourceKind::Procfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+        if cpu_sysfs_contributed {
+            device = device.with_source(SourceEvidence {
+                source: "/sys/devices/system/cpu".to_string(),
+                kind: SourceKind::Sysfs,
                 status: SourceStatus::Success,
                 summary: None,
             });
@@ -560,6 +587,9 @@ fn merge_cpu_record_fallback(
 
     primary.architecture = primary.architecture.or(fallback.architecture);
     primary.threads = primary.threads.or(fallback.threads);
+    primary.online_threads = primary.online_threads.or(fallback.online_threads);
+    primary.online_cores = primary.online_cores.or(fallback.online_cores);
+    primary.threads_per_core = primary.threads_per_core.or(fallback.threads_per_core);
     primary.model_name = primary.model_name.or(fallback.model_name);
     primary.vendor = primary.vendor.or(fallback.vendor);
     primary.cores_per_socket = primary.cores_per_socket.or(fallback.cores_per_socket);
@@ -568,6 +598,11 @@ fn merge_cpu_record_fallback(
     primary.cpu_max_mhz = primary.cpu_max_mhz.or(fallback.cpu_max_mhz);
     primary.cpu_min_mhz = primary.cpu_min_mhz.or(fallback.cpu_min_mhz);
     primary.cpu_family = primary.cpu_family.or(fallback.cpu_family);
+    primary.cpu_implementer = primary.cpu_implementer.or(fallback.cpu_implementer);
+    primary.cpu_architecture = primary.cpu_architecture.or(fallback.cpu_architecture);
+    primary.cpu_variant = primary.cpu_variant.or(fallback.cpu_variant);
+    primary.cpu_part = primary.cpu_part.or(fallback.cpu_part);
+    primary.cpu_revision = primary.cpu_revision.or(fallback.cpu_revision);
     primary.cpu_model = primary.cpu_model.or(fallback.cpu_model);
     primary.stepping = primary.stepping.or(fallback.stepping);
     primary.bogomips = primary.bogomips.or(fallback.bogomips);
@@ -579,26 +614,302 @@ fn merge_cpu_record_fallback(
     primary.l1i_cache = primary.l1i_cache.or(fallback.l1i_cache);
     primary.l2_cache = primary.l2_cache.or(fallback.l2_cache);
     primary.l3_cache = primary.l3_cache.or(fallback.l3_cache);
+    primary.l4_cache = primary.l4_cache.or(fallback.l4_cache);
+    primary.clflush_size_bytes = primary.clflush_size_bytes.or(fallback.clflush_size_bytes);
 
     Some(primary)
 }
 
+async fn read_cpu_sysfs(ctx: &ProbeContext<'_>) -> Option<hw_parser::CpuRecord> {
+    let mut cpu_paths = ctx
+        .runner
+        .glob("/sys/devices/system/cpu/cpu*")
+        .await
+        .paths
+        .into_iter()
+        .filter(|path| cpu_index_from_sysfs_path(path).is_some())
+        .collect::<Vec<_>>();
+    cpu_paths.sort_by_key(|path| cpu_index_from_sysfs_path(path).unwrap_or(u32::MAX));
+
+    let mut record = hw_parser::CpuRecord::default();
+    if !cpu_paths.is_empty() {
+        record.threads = u32::try_from(cpu_paths.len()).ok();
+    }
+    let online_cpu_indices =
+        read_optional_trimmed(ctx, Path::new("/sys/devices/system/cpu/online"))
+            .await
+            .and_then(|value| parse_cpu_list_indices(&value));
+    if let Some(indices) = online_cpu_indices.as_ref() {
+        record.online_threads = u32::try_from(indices.len()).ok();
+    }
+
+    let mut packages = Vec::new();
+    let mut cores = Vec::new();
+    let mut online_cores = Vec::new();
+    let mut sibling_counts = Vec::new();
+    for path in &cpu_paths {
+        let cpu_index = cpu_index_from_sysfs_path(path);
+        let package = read_sysfs_cpu_package(ctx, path).await;
+        if let Some(package) = package.as_deref() {
+            push_unique_string(&mut packages, package);
+        }
+
+        let core_key = read_optional_trimmed(ctx, &path.join("topology/core_id"))
+            .await
+            .filter(|value| !value.trim().is_empty());
+        let siblings =
+            read_optional_trimmed(ctx, &path.join("topology/thread_siblings_list")).await;
+        if let Some(count) = siblings.as_deref().and_then(parse_cpu_list_count) {
+            sibling_counts.push(count);
+        }
+        let core_key = core_key.or_else(|| siblings.clone());
+        if let Some(core_key) = core_key {
+            let package = package.unwrap_or_else(|| "0".to_string());
+            let core_key = format!("{package}:{core_key}");
+            push_unique_string(&mut cores, &core_key);
+            if online_cpu_indices
+                .as_ref()
+                .zip(cpu_index)
+                .is_some_and(|(indices, cpu_index)| indices.contains(&cpu_index))
+            {
+                push_unique_string(&mut online_cores, &core_key);
+            }
+        }
+    }
+
+    if !packages.is_empty() {
+        record.sockets = u32::try_from(packages.len()).ok();
+    } else if !cores.is_empty() {
+        record.sockets = Some(1);
+    }
+    if let (Some(sockets), false) = (record.sockets, cores.is_empty()) {
+        let core_count = u32::try_from(cores.len()).ok();
+        record.cores_per_socket = core_count
+            .filter(|cores| sockets > 0 && cores % sockets == 0)
+            .map(|cores| cores / sockets);
+    }
+    record.threads_per_core = uniform_nonzero(&sibling_counts).or_else(|| {
+        record
+            .threads
+            .zip(u32::try_from(cores.len()).ok())
+            .and_then(|(threads, cores)| {
+                (cores > 0 && threads % cores == 0).then(|| threads / cores)
+            })
+            .filter(|value| *value > 0)
+    });
+    record.online_cores = u32::try_from(online_cores.len())
+        .ok()
+        .filter(|value| *value > 0)
+        .or_else(|| infer_online_cores(record.online_threads, record.threads_per_core));
+
+    if let Some(path) = cpu_paths.first() {
+        let cache = read_cpu_sysfs_cache(ctx, path, record.threads).await;
+        record.l1d_cache = cache.l1d_cache;
+        record.l1i_cache = cache.l1i_cache;
+        record.l2_cache = cache.l2_cache;
+        record.l3_cache = cache.l3_cache;
+        record.l4_cache = cache.l4_cache;
+    }
+
+    (!record.is_empty()).then_some(record)
+}
+
+async fn read_sysfs_cpu_package(ctx: &ProbeContext<'_>, cpu_path: &Path) -> Option<String> {
+    let value = read_optional_trimmed(ctx, &cpu_path.join("topology/physical_package_id")).await?;
+    match value.parse::<i32>() {
+        Ok(value) if value < 0 => Some("0".to_string()),
+        _ => Some(value),
+    }
+}
+
+async fn read_cpu_sysfs_cache(
+    ctx: &ProbeContext<'_>,
+    cpu_path: &Path,
+    threads: Option<u32>,
+) -> hw_parser::CpuRecord {
+    let pattern = format!("{}/cache/index*", cpu_path.display());
+    let mut record = hw_parser::CpuRecord::default();
+    for path in ctx.runner.glob(&pattern).await.paths {
+        let level = read_optional_trimmed(ctx, &path.join("level"))
+            .await
+            .and_then(|value| value.parse::<u32>().ok());
+        let cache_type = read_optional_trimmed(ctx, &path.join("type"))
+            .await
+            .map(|value| value.to_ascii_lowercase());
+        let Some(size) = read_optional_trimmed(ctx, &path.join("size")).await else {
+            continue;
+        };
+        let shared_cpu_list = read_optional_trimmed(ctx, &path.join("shared_cpu_list")).await;
+        let cache = total_sysfs_cache(&size, shared_cpu_list.as_deref(), threads)
+            .unwrap_or_else(|| size.clone());
+
+        match (level, cache_type.as_deref()) {
+            (Some(1), Some("data")) => record.l1d_cache = record.l1d_cache.or(Some(cache)),
+            (Some(1), Some("instruction")) => record.l1i_cache = record.l1i_cache.or(Some(cache)),
+            (Some(2), _) => record.l2_cache = record.l2_cache.or(Some(cache)),
+            (Some(3), _) => record.l3_cache = record.l3_cache.or(Some(cache)),
+            (Some(4), _) => record.l4_cache = record.l4_cache.or(Some(cache)),
+            _ => {}
+        }
+    }
+    record
+}
+
+fn cpu_index_from_sysfs_path(path: &Path) -> Option<u32> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("cpu"))
+        .filter(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+        .and_then(|suffix| suffix.parse().ok())
+}
+
+fn push_unique_string(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|seen| seen == value) {
+        values.push(value.to_string());
+    }
+}
+
+fn uniform_nonzero(values: &[u32]) -> Option<u32> {
+    let first = *values.first()?;
+    (first > 0 && values.iter().all(|value| *value == first)).then_some(first)
+}
+
+fn total_sysfs_cache(
+    size: &str,
+    shared_cpu_list: Option<&str>,
+    threads: Option<u32>,
+) -> Option<String> {
+    let bytes = parse_sysfs_cache_bytes(size)?;
+    let groups = shared_cpu_list
+        .and_then(parse_cpu_list_count)
+        .and_then(|shared| threads?.checked_div(shared))
+        .filter(|groups| *groups > 0)
+        .unwrap_or(1);
+    format_cache_bytes(bytes.checked_mul(u64::from(groups))?)
+}
+
+fn parse_cpu_list_count(value: &str) -> Option<u32> {
+    let mut count = 0u32;
+    for part in value.trim().split(',').map(str::trim) {
+        if part.is_empty() {
+            continue;
+        }
+        let add = if let Some((start, end)) = part.split_once('-') {
+            let start = start.trim().parse::<u32>().ok()?;
+            let end = end.trim().parse::<u32>().ok()?;
+            end.checked_sub(start)?.checked_add(1)?
+        } else {
+            part.parse::<u32>().ok()?;
+            1
+        };
+        count = count.checked_add(add)?;
+    }
+    (count > 0).then_some(count)
+}
+
+fn parse_cpu_list_indices(value: &str) -> Option<Vec<u32>> {
+    let mut indices = Vec::new();
+    for part in value.trim().split(',').map(str::trim) {
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((start, end)) = part.split_once('-') {
+            let start = start.trim().parse::<u32>().ok()?;
+            let end = end.trim().parse::<u32>().ok()?;
+            if end < start {
+                return None;
+            }
+            for index in start..=end {
+                if !indices.contains(&index) {
+                    indices.push(index);
+                }
+            }
+        } else {
+            let index = part.parse::<u32>().ok()?;
+            if !indices.contains(&index) {
+                indices.push(index);
+            }
+        }
+    }
+    (!indices.is_empty()).then_some(indices)
+}
+
+fn infer_online_cores(online_threads: Option<u32>, threads_per_core: Option<u32>) -> Option<u32> {
+    let online_threads = online_threads?;
+    let threads_per_core = threads_per_core?.max(1);
+    online_threads
+        .checked_add(threads_per_core.checked_sub(1)?)?
+        .checked_div(threads_per_core)
+        .filter(|value| *value > 0)
+}
+
+fn parse_sysfs_cache_bytes(value: &str) -> Option<u64> {
+    let value = value.trim();
+    let split = value
+        .find(|ch: char| !(ch.is_ascii_digit() || ch == '.'))
+        .unwrap_or(value.len());
+    let number = value.get(..split)?.parse::<f64>().ok()?;
+    let unit = value.get(split..)?.trim().to_ascii_lowercase();
+    let multiplier = match unit.as_str() {
+        "" | "b" => 1.0,
+        "k" | "kb" | "kib" => 1024.0,
+        "m" | "mb" | "mib" => 1024.0 * 1024.0,
+        "g" | "gb" | "gib" => 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some((number * multiplier).round() as u64)
+}
+
+fn format_cache_bytes(bytes: u64) -> Option<String> {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    if bytes >= GIB && bytes % GIB == 0 {
+        Some(format!("{} GiB", bytes / GIB))
+    } else if bytes >= MIB && bytes % MIB == 0 {
+        Some(format!("{} MiB", bytes / MIB))
+    } else if bytes >= KIB && bytes % KIB == 0 {
+        Some(format!("{} KiB", bytes / KIB))
+    } else if bytes > 0 {
+        Some(format!("{bytes} B"))
+    } else {
+        None
+    }
+}
+
 async fn read_cpu_cpufreq(ctx: &ProbeContext<'_>) -> Option<hw_parser::CpuRecord> {
-    let cpu_max_mhz = read_cpufreq_mhz(
+    let mut cpu_max_mhz = read_cpufreq_mhz(
         ctx,
         Path::new("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"),
     )
     .await;
-    let cpu_min_mhz = read_cpufreq_mhz(
+    if cpu_max_mhz.is_none() {
+        cpu_max_mhz = read_cpufreq_mhz(
+            ctx,
+            Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"),
+        )
+        .await;
+    }
+    let mut cpu_min_mhz = read_cpufreq_mhz(
         ctx,
         Path::new("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq"),
     )
     .await;
-    let mut cpu_mhz = read_cpufreq_mhz(
-        ctx,
-        Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
-    )
-    .await;
+    if cpu_min_mhz.is_none() {
+        cpu_min_mhz = read_cpufreq_mhz(
+            ctx,
+            Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq"),
+        )
+        .await;
+    }
+    let mut cpu_mhz = read_average_scaling_cur_freq(ctx).await;
+    if cpu_mhz.is_none() {
+        cpu_mhz = read_cpufreq_mhz(
+            ctx,
+            Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
+        )
+        .await;
+    }
     if cpu_mhz.is_none() {
         cpu_mhz = read_cpufreq_mhz(
             ctx,
@@ -614,6 +925,32 @@ async fn read_cpu_cpufreq(ctx: &ProbeContext<'_>) -> Option<hw_parser::CpuRecord
     };
 
     (!record.is_empty()).then_some(record)
+}
+
+async fn read_average_scaling_cur_freq(ctx: &ProbeContext<'_>) -> Option<u32> {
+    let glob = ctx
+        .runner
+        .glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq")
+        .await;
+    let mut total_khz = 0u64;
+    let mut count = 0u64;
+    for path in glob.paths {
+        let result = ctx.runner.read_file(&path).await;
+        if let Some(khz) = result
+            .is_success()
+            .then(|| result.stdout.trim().parse::<u64>().ok())
+            .flatten()
+            .filter(|value| *value > 0)
+        {
+            total_khz = total_khz.checked_add(khz)?;
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return None;
+    }
+    let mhz = (total_khz / count + 500) / 1000;
+    u32::try_from(mhz).ok().filter(|value| *value > 0)
 }
 
 async fn read_cpufreq_mhz(ctx: &ProbeContext<'_>, path: &Path) -> Option<u32> {
