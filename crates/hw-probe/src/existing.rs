@@ -2664,18 +2664,37 @@ impl Probe for MemoryProbe {
         }
         let records = parse_dmidecode_memory(&result.stdout);
         if records.is_empty() {
+            let dmi = parse_dmidecode_bios_board(&result.stdout);
             let fallback = ProbeResult {
                 devices: Vec::new(),
                 warnings: vec![ScanWarning::new(
                     "source_empty",
                     "memory source produced no DIMM records",
                 )
-                .with_source(result.source)],
+                .with_source(result.source.clone())],
                 consumed: Vec::new(),
             };
+            if let Some(device) = memory_array_device_from_dmi(dmi, &result.source) {
+                return ProbeResult {
+                    devices: vec![device],
+                    warnings: fallback.warnings,
+                    consumed: fallback.consumed,
+                };
+            }
             return memory_fallback_from_lshw_or_proc(ctx, fallback).await;
         }
-        let devices = memory_devices_from_records(records, &result.source, SourceKind::Command);
+        let lshw = memory_lshw_records_for_enrichment(ctx).await;
+        let mut devices = memory_devices_from_records_with_lshw_enrichment(
+            records,
+            &result.source,
+            SourceKind::Command,
+            lshw.as_ref(),
+        );
+        if let Some(device) =
+            memory_array_device_from_dmi(parse_dmidecode_bios_board(&result.stdout), &result.source)
+        {
+            devices.push(device);
+        }
         ProbeResult::with_devices(devices)
     }
 }
@@ -2743,6 +2762,32 @@ async fn memory_fallback_from_lshw_or_proc(
         return fallback;
     }
 
+    let phytium_records = memory_records_from_phytium1500a_info_sysfs(ctx).await;
+    if !phytium_records.is_empty() {
+        fallback.devices = memory_devices_from_sysfs_records(phytium_records);
+        return fallback;
+    }
+
+    if let Some((size_bytes, source)) = memory_total_from_device_tree(ctx).await {
+        let device = Device::new(
+            "memory:device-tree",
+            DeviceKind::Memory,
+            "Device Tree Memory",
+            DeviceProperties::Memory(MemoryInfo {
+                size_bytes: Some(size_bytes),
+                ..Default::default()
+            }),
+        )
+        .with_source(SourceEvidence {
+            source,
+            kind: SourceKind::Procfs,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+        fallback.devices.push(device);
+        return fallback;
+    }
+
     let proc_meminfo_result = ctx.runner.read_file(Path::new("/proc/meminfo")).await;
     if proc_meminfo_result.is_success() {
         if let Some(size_bytes) = parse_proc_meminfo_total_bytes(&proc_meminfo_result.stdout) {
@@ -2767,6 +2812,93 @@ async fn memory_fallback_from_lshw_or_proc(
     fallback
 }
 
+async fn memory_total_from_device_tree(ctx: &ProbeContext<'_>) -> Option<(u64, String)> {
+    let mut paths = ctx
+        .runner
+        .glob("/proc/device-tree/memory@*/reg")
+        .await
+        .paths;
+    paths.sort();
+    let address_cells =
+        read_device_tree_cell_count(ctx, "/proc/device-tree/#address-cells", 2).await;
+    let size_cells = read_device_tree_cell_count(ctx, "/proc/device-tree/#size-cells", 1).await;
+    if address_cells == 0 || size_cells == 0 {
+        return None;
+    }
+
+    let mut total = 0u64;
+    let mut sources = Vec::new();
+    for path in paths {
+        let result = ctx.runner.read_file_bytes(&path).await;
+        if !result.is_success() {
+            continue;
+        }
+        let size = parse_device_tree_memory_reg_size(&result.bytes, address_cells, size_cells)?;
+        total = total.checked_add(size)?;
+        sources.push(result.source);
+    }
+
+    (total > 0).then(|| {
+        let source = if sources.len() == 1 {
+            sources.remove(0)
+        } else {
+            "/proc/device-tree/memory@*/reg".to_string()
+        };
+        (total, source)
+    })
+}
+
+async fn read_device_tree_cell_count(
+    ctx: &ProbeContext<'_>,
+    path: &str,
+    default_value: usize,
+) -> usize {
+    let result = ctx.runner.read_file_bytes(Path::new(path)).await;
+    if result.is_success() {
+        parse_device_tree_u32(&result.bytes)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(default_value)
+    } else {
+        default_value
+    }
+}
+
+fn parse_device_tree_memory_reg_size(
+    bytes: &[u8],
+    address_cells: usize,
+    size_cells: usize,
+) -> Option<u64> {
+    let tuple_cells = address_cells.checked_add(size_cells)?;
+    let tuple_bytes = tuple_cells.checked_mul(4)?;
+    if tuple_bytes == 0 || bytes.len() % tuple_bytes != 0 {
+        return None;
+    }
+
+    let mut total = 0u64;
+    for tuple in bytes.chunks_exact(tuple_bytes) {
+        let size_offset = address_cells * 4;
+        let size = parse_device_tree_cell_value(&tuple[size_offset..], size_cells)?;
+        total = total.checked_add(size)?;
+    }
+    Some(total)
+}
+
+fn parse_device_tree_cell_value(bytes: &[u8], cells: usize) -> Option<u64> {
+    if cells > 2 || bytes.len() < cells * 4 {
+        return None;
+    }
+    let mut value = 0u64;
+    for chunk in bytes.chunks_exact(4).take(cells) {
+        value = (value << 32) | u64::from(parse_device_tree_u32(chunk)?);
+    }
+    Some(value)
+}
+
+fn parse_device_tree_u32(bytes: &[u8]) -> Option<u32> {
+    let bytes: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+    Some(u32::from_be_bytes(bytes))
+}
+
 struct SysfsMemoryRecord {
     record: DmiMemoryRecord,
     source: String,
@@ -2780,11 +2912,21 @@ async fn memory_records_from_spd_eeprom_sysfs(
     for pattern in [
         "/sys/bus/i2c/drivers/eeprom/*/eeprom",
         "/sys/bus/i2c/drivers/ee1004/*/eeprom",
+        "/sys/bus/nvmem/devices/*/nvmem",
     ] {
         paths.extend(ctx.runner.glob(pattern).await.paths);
     }
     paths.sort();
     paths.dedup();
+    if paths.is_empty() {
+        warnings.push(
+            ScanWarning::new(
+                "source_missing",
+                "no raw SPD EEPROM/nvmem sysfs paths found; load eeprom/ee1004/spd5118 kernel support if SPD fallback is required",
+            )
+            .with_source("raw SPD EEPROM sysfs"),
+        );
+    }
 
     let mut records = Vec::new();
     for path in paths {
@@ -2807,6 +2949,15 @@ async fn memory_records_from_spd_eeprom_sysfs(
         if record.locator.is_none() {
             record.locator = spd_eeprom_locator(&path);
         }
+        if spd_record_is_partial_ddr5(&record) {
+            warnings.push(
+                ScanWarning::new(
+                    "spd_partial",
+                    "raw DDR5 SPD EEPROM identity was decoded without size or speed",
+                )
+                .with_source(result.source.clone()),
+            );
+        }
         records.push(SysfsMemoryRecord {
             record,
             source: result.source,
@@ -2821,6 +2972,11 @@ fn spd_eeprom_locator(path: &Path) -> Option<String> {
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str())
         .map(str::to_string)
+}
+
+fn spd_record_is_partial_ddr5(record: &DmiMemoryRecord) -> bool {
+    record.memory_type.as_deref() == Some("DDR5 SDRAM")
+        && (record.size.is_none() || record.speed.is_none())
 }
 
 async fn memory_records_from_edac_sysfs(ctx: &ProbeContext<'_>) -> Vec<SysfsMemoryRecord> {
@@ -2877,19 +3033,101 @@ fn edac_size_to_dmi_size(value: String) -> Option<String> {
     }
 }
 
+async fn memory_records_from_phytium1500a_info_sysfs(
+    ctx: &ProbeContext<'_>,
+) -> Vec<SysfsMemoryRecord> {
+    let mut paths = ctx
+        .runner
+        .glob("/sys/phytium1500a_info/memory*")
+        .await
+        .paths;
+    paths.sort();
+
+    let mut records = Vec::new();
+    for path in paths {
+        let result = ctx.runner.read_file(&path).await;
+        if !result.is_success() {
+            continue;
+        }
+        let record = parse_phytium1500a_memory_info(&result.stdout);
+        if memory_record_has_data(&record) {
+            records.push(SysfsMemoryRecord {
+                record,
+                source: result.source,
+            });
+        }
+    }
+    records
+}
+
+fn parse_phytium1500a_memory_info(input: &str) -> DmiMemoryRecord {
+    let mut record = DmiMemoryRecord {
+        memory_type: Some("DDR4".to_string()),
+        data_width: Some("64 bits".to_string()),
+        ..Default::default()
+    };
+    for line in input.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = clean_phytium1500a_value(value);
+        match key.trim() {
+            "Bank Locator" => record.locator = value,
+            "Size" => record.size = value.and_then(clean_phytium1500a_size),
+            "Manufacturer ID" => record.manufacturer = value.map(|value| value.to_uppercase()),
+            _ => {}
+        }
+    }
+    record
+}
+
+fn clean_phytium1500a_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && value != "$").then(|| value.to_string())
+}
+
+fn clean_phytium1500a_size(value: String) -> Option<String> {
+    let first = value.split_whitespace().next().unwrap_or("");
+    if first.len() > 9 && first.chars().all(|ch| ch.is_ascii_digit()) {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 fn memory_record_has_data(record: &DmiMemoryRecord) -> bool {
-    record.size.is_some()
+    record.name.is_some()
+        || record.size.is_some()
         || record.locator.is_some()
         || record.manufacturer.is_some()
         || record.serial.is_some()
         || record.part_number.is_some()
         || record.memory_type.is_some()
         || record.speed.is_some()
+        || record.configured_speed.is_some()
         || record.total_width.is_some()
         || record.data_width.is_some()
         || record.minimum_voltage.is_some()
         || record.maximum_voltage.is_some()
         || record.configured_voltage.is_some()
+        || record.error_information_handle.is_some()
+        || record.form_factor.is_some()
+        || record.set.is_some()
+        || record.bank_locator.is_some()
+        || record.type_detail.is_some()
+        || record.asset_tag.is_some()
+        || record.rank.is_some()
+        || record.module_manufacturer_id.is_some()
+        || record.module_product_id.is_some()
+        || record.memory_subsystem_controller_manufacturer_id.is_some()
+        || record.memory_subsystem_controller_product_id.is_some()
+        || record.memory_technology.is_some()
+        || record.memory_operating_mode_capability.is_some()
+        || record.firmware_version.is_some()
+        || record.non_volatile_size.is_some()
+        || record.volatile_size.is_some()
+        || record.cache_size.is_some()
+        || record.logical_size.is_some()
 }
 
 fn memory_devices_from_sysfs_records(records: Vec<SysfsMemoryRecord>) -> Vec<Device> {
@@ -2907,11 +3145,159 @@ fn memory_devices_from_records(
     source: &str,
     source_kind: SourceKind,
 ) -> Vec<Device> {
+    memory_devices_from_records_with_lshw_enrichment(records, source, source_kind, None)
+}
+
+struct MemoryLshwRecords {
+    source: String,
+    records: Vec<DmiMemoryRecord>,
+}
+
+async fn memory_lshw_records_for_enrichment(ctx: &ProbeContext<'_>) -> Option<MemoryLshwRecords> {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("lshw", ["-class", "memory"]), ctx.timeout)
+        .await;
+    result.is_success().then(|| {
+        let records = parse_lshw_memory(&result.stdout);
+        (!records.is_empty()).then_some(MemoryLshwRecords {
+            source: result.source,
+            records,
+        })
+    })?
+}
+
+fn memory_devices_from_records_with_lshw_enrichment(
+    records: Vec<DmiMemoryRecord>,
+    source: &str,
+    source_kind: SourceKind,
+    lshw: Option<&MemoryLshwRecords>,
+) -> Vec<Device> {
     records
         .into_iter()
         .enumerate()
-        .map(|(idx, mem)| memory_device_from_record(mem, idx, source, source_kind))
+        .map(|(idx, mut mem)| {
+            let lshw_contributed = lshw
+                .and_then(|lshw| {
+                    matching_lshw_memory_record(&mem, &lshw.records)
+                        .map(|record| enrich_memory_record_from_lshw(&mut mem, record))
+                })
+                .unwrap_or(false);
+            let mut device = memory_device_from_record(mem, idx, source, source_kind);
+            if lshw_contributed {
+                if let Some(lshw) = lshw {
+                    device = device.with_source(SourceEvidence {
+                        source: lshw.source.clone(),
+                        kind: SourceKind::Command,
+                        status: SourceStatus::Success,
+                        summary: None,
+                    });
+                }
+            }
+            device
+        })
         .collect()
+}
+
+fn matching_lshw_memory_record<'a>(
+    dmi: &DmiMemoryRecord,
+    records: &'a [DmiMemoryRecord],
+) -> Option<&'a DmiMemoryRecord> {
+    if let Some(locator) = dmi.locator.as_deref().and_then(memory_match_key) {
+        if let Some(record) = records.iter().find(|record| {
+            record
+                .locator
+                .as_deref()
+                .and_then(memory_match_key)
+                .is_some_and(|candidate| candidate == locator)
+        }) {
+            return Some(record);
+        }
+    }
+
+    let serial = dmi.serial.as_deref().and_then(memory_match_key)?;
+    records.iter().find(|record| {
+        record
+            .serial
+            .as_deref()
+            .and_then(memory_match_key)
+            .is_some_and(|candidate| candidate == serial)
+    })
+}
+
+fn memory_match_key(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty() && value != "--").then(|| value.to_ascii_lowercase())
+}
+
+fn enrich_memory_record_from_lshw(dmi: &mut DmiMemoryRecord, lshw: &DmiMemoryRecord) -> bool {
+    let mut contributed = false;
+
+    contributed |= replace_optional_string(&mut dmi.size, lshw.size.clone());
+    contributed |= merge_optional_string(&mut dmi.name, lshw.name.clone());
+    contributed |= merge_optional_string(&mut dmi.part_number, lshw.part_number.clone());
+    if dmi.name.is_none() {
+        dmi.name = dmi.part_number.clone();
+    }
+    contributed |= merge_optional_string(&mut dmi.manufacturer, lshw.manufacturer.clone());
+    contributed |= merge_optional_string(&mut dmi.serial, lshw.serial.clone());
+    contributed |= merge_optional_string(&mut dmi.locator, lshw.locator.clone());
+    contributed |= merge_optional_string(&mut dmi.memory_type, lshw.memory_type.clone());
+    contributed |= merge_optional_string(&mut dmi.speed, lshw.speed.clone());
+    contributed |= merge_optional_string(&mut dmi.total_width, lshw.total_width.clone());
+    contributed |= merge_optional_string(&mut dmi.data_width, lshw.data_width.clone());
+    contributed |= merge_optional_string(&mut dmi.form_factor, lshw.form_factor.clone());
+
+    contributed
+}
+
+fn replace_optional_string(target: &mut Option<String>, candidate: Option<String>) -> bool {
+    if let Some(candidate) = candidate {
+        if target.as_ref() != Some(&candidate) {
+            *target = Some(candidate);
+            return true;
+        }
+    }
+    false
+}
+
+fn memory_array_device_from_dmi(dmi: DmiBiosBoardRecord, source: &str) -> Option<Device> {
+    let has_array_data = dmi.memory_array_location.is_some()
+        || dmi.memory_array_use.is_some()
+        || dmi.memory_array_error_correction_type.is_some()
+        || dmi.memory_array_maximum_capacity.is_some()
+        || dmi.memory_array_error_information_handle.is_some()
+        || dmi.memory_array_number_of_devices.is_some();
+    has_array_data.then(|| {
+        Device::new(
+            "memory:array",
+            DeviceKind::Memory,
+            dmi.memory_array_use
+                .clone()
+                .unwrap_or_else(|| "Physical Memory Array".to_string()),
+            DeviceProperties::Memory(MemoryInfo {
+                size_bytes: parse_size_to_bytes(dmi.memory_array_maximum_capacity.as_deref()),
+                memory_array_location: dmi.memory_array_location,
+                memory_array_use: dmi.memory_array_use,
+                memory_array_error_correction_type: dmi.memory_array_error_correction_type,
+                memory_array_maximum_capacity_bytes: parse_size_to_bytes(
+                    dmi.memory_array_maximum_capacity.as_deref(),
+                ),
+                memory_array_error_information_handle: dmi.memory_array_error_information_handle,
+                memory_array_number_of_devices: dmi
+                    .memory_array_number_of_devices
+                    .as_deref()
+                    .and_then(|value| value.parse().ok()),
+                ..Default::default()
+            }),
+        )
+        .with_source(SourceEvidence {
+            source: source.to_string(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        })
+    })
 }
 
 fn memory_device_from_record(
@@ -2921,6 +3307,19 @@ fn memory_device_from_record(
     source_kind: SourceKind,
 ) -> Device {
     let vendor = mem.manufacturer.clone();
+    let overview = memory_overview(
+        mem.size.as_deref(),
+        mem.part_number.as_deref().or(vendor.as_deref()),
+        mem.memory_type.as_deref(),
+        mem.speed.as_deref(),
+    );
+    let mem_info = memory_mem_info(
+        mem.form_factor.as_deref(),
+        mem.memory_type.as_deref(),
+        mem.type_detail.as_deref(),
+        mem.speed.as_deref(),
+    );
+    let rank = parse_memory_rank(mem.rank.as_deref());
     let id = mem
         .serial
         .as_ref()
@@ -2932,17 +3331,22 @@ fn memory_device_from_record(
                 mem.locator.clone().unwrap_or_else(|| idx.to_string())
             )
         });
+    let name = memory_device_name(
+        mem.name.as_deref(),
+        mem.part_number.as_deref(),
+        mem.locator.as_deref(),
+        idx,
+    );
     let mut device = Device::new(
         id,
         DeviceKind::Memory,
-        mem.locator
-            .clone()
-            .unwrap_or_else(|| format!("Memory DIMM {idx}")),
+        name,
         DeviceProperties::Memory(MemoryInfo {
             size_bytes: parse_size_to_bytes(mem.size.as_deref()),
             vendor: mem.manufacturer,
             memory_type: mem.memory_type,
             speed_mtps: parse_speed_mtps(mem.speed.as_deref()),
+            configured_speed_mtps: parse_speed_mtps(mem.configured_speed.as_deref()),
             total_width_bits: parse_width_bits(mem.total_width.as_deref()),
             data_width_bits: parse_width_bits(mem.data_width.as_deref()),
             min_voltage_v: parse_voltage_v(mem.minimum_voltage.as_deref()),
@@ -2951,6 +3355,28 @@ fn memory_device_from_record(
             locator: mem.locator,
             serial: mem.serial,
             part_number: mem.part_number,
+            error_information_handle: mem.error_information_handle,
+            form_factor: mem.form_factor,
+            set: mem.set,
+            bank_locator: mem.bank_locator,
+            type_detail: mem.type_detail,
+            asset_tag: mem.asset_tag,
+            rank,
+            module_manufacturer_id: mem.module_manufacturer_id,
+            module_product_id: mem.module_product_id,
+            memory_subsystem_controller_manufacturer_id: mem
+                .memory_subsystem_controller_manufacturer_id,
+            memory_subsystem_controller_product_id: mem.memory_subsystem_controller_product_id,
+            memory_technology: mem.memory_technology,
+            memory_operating_mode_capability: mem.memory_operating_mode_capability,
+            firmware_version: mem.firmware_version,
+            non_volatile_size_bytes: parse_size_to_bytes(mem.non_volatile_size.as_deref()),
+            volatile_size_bytes: parse_size_to_bytes(mem.volatile_size.as_deref()),
+            cache_size_bytes: parse_size_to_bytes(mem.cache_size.as_deref()),
+            logical_size_bytes: parse_size_to_bytes(mem.logical_size.as_deref()),
+            overview,
+            mem_info,
+            ..Default::default()
         }),
     );
     device.vendor = vendor;
@@ -2960,6 +3386,125 @@ fn memory_device_from_record(
         status: SourceStatus::Success,
         summary: None,
     })
+}
+
+fn memory_device_name(
+    name: Option<&str>,
+    part_number: Option<&str>,
+    locator: Option<&str>,
+    idx: usize,
+) -> String {
+    [name, part_number, locator]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| !value.is_empty() && *value != "--")
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Memory DIMM {idx}"))
+}
+
+fn parse_memory_rank(value: Option<&str>) -> Option<u32> {
+    value?.split_whitespace().next()?.parse().ok()
+}
+
+fn memory_overview(
+    size: Option<&str>,
+    vendor: Option<&str>,
+    memory_type: Option<&str>,
+    speed: Option<&str>,
+) -> Option<String> {
+    let normalized_size;
+    let size = size?.trim();
+    if size.is_empty() {
+        return None;
+    }
+    let size = match normalize_memory_display_size(size) {
+        Some(value) => {
+            normalized_size = value;
+            normalized_size.as_str()
+        }
+        None => size,
+    };
+    let details = join_present([vendor, memory_type, speed]);
+    Some(if details.is_empty() {
+        size.to_string()
+    } else {
+        format!("{size}({details})")
+    })
+}
+
+fn normalize_memory_display_size(value: &str) -> Option<String> {
+    normalize_memory_display_size_for_arch(value, std::env::consts::ARCH)
+}
+
+fn normalize_memory_display_size_for_arch(value: &str, arch: &str) -> Option<String> {
+    let first = value.split_whitespace().next()?;
+    let (number, unit) = match first.parse::<u64>() {
+        Ok(number) => (number, value.split_whitespace().nth(1)?),
+        Err(_) => {
+            let split = first.find(|ch: char| !ch.is_ascii_digit())?;
+            if split == 0 {
+                return None;
+            }
+            (first[..split].parse::<u64>().ok()?, &first[split..])
+        }
+    };
+    match unit {
+        "GiB" => Some(format!("{number} GB")),
+        "MiB" => {
+            let mut gib = (number + 512) / 1024;
+            if arch == "sw_64" && gib % 2 != 0 {
+                gib += 1;
+            }
+            (gib > 0).then(|| format!("{gib} GB"))
+        }
+        "MB" => {
+            let gib = (number + 512) / 1024;
+            (gib > 0).then(|| format!("{gib} GB"))
+        }
+        _ => None,
+    }
+}
+
+fn memory_mem_info(
+    form_factor: Option<&str>,
+    memory_type: Option<&str>,
+    type_detail: Option<&str>,
+    speed: Option<&str>,
+) -> Option<String> {
+    let value = join_present([form_factor, memory_type, type_detail, speed]);
+    (!value.is_empty()).then_some(value)
+}
+
+fn join_present<const N: usize>(parts: [Option<&str>; N]) -> String {
+    parts
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && *part != "--")
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+
+    #[test]
+    fn sw64_memory_display_size_rounds_odd_gb_to_even() {
+        assert_eq!(
+            normalize_memory_display_size_for_arch("15 GiB", "sw_64").as_deref(),
+            Some("15 GB")
+        );
+        assert_eq!(
+            normalize_memory_display_size_for_arch("15360 MiB", "sw_64").as_deref(),
+            Some("16 GB")
+        );
+        assert_eq!(
+            normalize_memory_display_size_for_arch("15 GiB", "x86_64").as_deref(),
+            Some("15 GB")
+        );
+    }
 }
 
 #[async_trait]

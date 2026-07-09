@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DmiMemoryRecord {
+    pub name: Option<String>,
     pub size: Option<String>,
     pub locator: Option<String>,
     pub manufacturer: Option<String>,
@@ -9,11 +10,30 @@ pub struct DmiMemoryRecord {
     pub part_number: Option<String>,
     pub memory_type: Option<String>,
     pub speed: Option<String>,
+    pub configured_speed: Option<String>,
     pub total_width: Option<String>,
     pub data_width: Option<String>,
     pub minimum_voltage: Option<String>,
     pub maximum_voltage: Option<String>,
     pub configured_voltage: Option<String>,
+    pub error_information_handle: Option<String>,
+    pub form_factor: Option<String>,
+    pub set: Option<String>,
+    pub bank_locator: Option<String>,
+    pub type_detail: Option<String>,
+    pub asset_tag: Option<String>,
+    pub rank: Option<String>,
+    pub module_manufacturer_id: Option<String>,
+    pub module_product_id: Option<String>,
+    pub memory_subsystem_controller_manufacturer_id: Option<String>,
+    pub memory_subsystem_controller_product_id: Option<String>,
+    pub memory_technology: Option<String>,
+    pub memory_operating_mode_capability: Option<String>,
+    pub firmware_version: Option<String>,
+    pub non_volatile_size: Option<String>,
+    pub volatile_size: Option<String>,
+    pub cache_size: Option<String>,
+    pub logical_size: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -76,11 +96,7 @@ pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
     let mut current: Option<DmiMemoryRecord> = None;
     for line in input.lines().chain(std::iter::once("")) {
         if line.trim() == "Memory Device" {
-            if let Some(record) = current.take() {
-                if record.size.as_deref() != Some("No Module Installed") {
-                    records.push(record);
-                }
-            }
+            push_memory_record(&mut records, current.take());
             current = Some(DmiMemoryRecord::default());
             continue;
         }
@@ -92,27 +108,32 @@ pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
         };
         let value = value.trim();
         match key {
-            "Size" => record.size = Some(value.to_string()),
+            "Size" => record.size = clean_memory_size(value),
             "Locator" => record.locator = clean_memory_value(value),
             "Bank Locator" => {
+                record.bank_locator = clean_memory_value(value);
                 if record.locator.is_none() {
-                    record.locator = clean_memory_value(value);
+                    record.locator = record.bank_locator.clone();
                 }
             }
             "Manufacturer" => record.manufacturer = clean_memory_value(value),
-            "Manufacturer ID" | "Module Manufacturer ID" => {
+            "Manufacturer ID" => {
+                if record.module_manufacturer_id.is_none() {
+                    record.module_manufacturer_id = clean_memory_value(value);
+                }
                 if record.manufacturer.is_none() {
                     record.manufacturer =
                         clean_memory_value(value).map(|value| value.to_uppercase());
                 }
             }
-            "Serial Number" => record.serial = Some(value.to_string()),
-            "Part Number" => record.part_number = Some(value.to_string()),
+            "Serial Number" => record.serial = clean_memory_serial(value),
+            "Part Number" => record.part_number = clean_memory_value(value),
             "Type" => record.memory_type = clean_memory_type(value),
             "Speed" => record.speed = clean_memory_value(value),
             "Configured Memory Speed" => {
+                record.configured_speed = clean_memory_value(value);
                 if record.speed.is_none() {
-                    record.speed = clean_memory_value(value);
+                    record.speed = record.configured_speed.clone();
                 }
             }
             "Total Width" => record.total_width = clean_memory_value(value),
@@ -120,26 +141,67 @@ pub fn parse_dmidecode_memory(input: &str) -> Vec<DmiMemoryRecord> {
             "Minimum Voltage" => record.minimum_voltage = clean_memory_value(value),
             "Maximum Voltage" => record.maximum_voltage = clean_memory_value(value),
             "Configured Voltage" => record.configured_voltage = clean_memory_value(value),
+            "Error Information Handle" => {
+                record.error_information_handle = clean_memory_value(value)
+            }
+            "Form Factor" => record.form_factor = clean_memory_value(value),
+            "Set" => record.set = clean_memory_value(value),
+            "Type Detail" => record.type_detail = clean_memory_value(value),
+            "Asset Tag" => record.asset_tag = clean_memory_value(value),
+            "Rank" => record.rank = clean_memory_value(value),
+            "Module Manufacturer ID" => {
+                record.module_manufacturer_id = clean_memory_value(value);
+                if record.manufacturer.is_none() {
+                    record.manufacturer = record
+                        .module_manufacturer_id
+                        .as_ref()
+                        .map(|value| value.to_uppercase());
+                }
+            }
+            "Module Product ID" => record.module_product_id = clean_memory_value(value),
+            "Memory Subsystem Controller Manufacturer ID" => {
+                record.memory_subsystem_controller_manufacturer_id = clean_memory_value(value)
+            }
+            "Memory Subsystem Controller Product ID" => {
+                record.memory_subsystem_controller_product_id = clean_memory_value(value)
+            }
+            "Memory Technology" => record.memory_technology = clean_memory_value(value),
+            "Memory Operating Mode Capability" => {
+                record.memory_operating_mode_capability = clean_memory_value(value)
+            }
+            "Firmware Version" => record.firmware_version = clean_memory_value(value),
+            "Non-Volatile Size" => record.non_volatile_size = clean_memory_value(value),
+            "Volatile Size" => record.volatile_size = clean_memory_value(value),
+            "Cache Size" => record.cache_size = clean_memory_value(value),
+            "Logical Size" => record.logical_size = clean_memory_value(value),
             _ => {}
         }
     }
-    if let Some(record) = current.take() {
-        if record.size.as_deref() != Some("No Module Installed") {
-            records.push(record);
-        }
-    }
+    push_memory_record(&mut records, current.take());
     records
 }
 
 pub fn parse_lshw_memory(input: &str) -> Vec<DmiMemoryRecord> {
     let mut records = Vec::new();
     let mut current: Option<DmiMemoryRecord> = None;
+    let mut current_is_bank = false;
 
     for line in input.lines().chain(std::iter::once("")) {
         let trimmed = line.trim();
-        if trimmed.starts_with("*-bank") {
-            push_memory_record(&mut records, current.take());
+        if trimmed.starts_with("*-memory") {
+            if current_is_bank {
+                push_memory_record(&mut records, current.take());
+            }
             current = Some(DmiMemoryRecord::default());
+            current_is_bank = false;
+            continue;
+        }
+        if trimmed.starts_with("*-bank") {
+            if current_is_bank {
+                push_memory_record(&mut records, current.take());
+            }
+            current = Some(DmiMemoryRecord::default());
+            current_is_bank = true;
             continue;
         }
 
@@ -152,22 +214,37 @@ pub fn parse_lshw_memory(input: &str) -> Vec<DmiMemoryRecord> {
         let value = value.trim();
         match key.trim() {
             "description" => {
+                if record.name.is_none() {
+                    record.name = clean_memory_value(value);
+                }
+                if record.form_factor.is_none() {
+                    record.form_factor = lshw_memory_form_factor(value);
+                }
                 record.memory_type = lshw_memory_type(value);
                 if record.speed.is_none() {
                     record.speed = lshw_clock_speed(value);
                 }
             }
-            "product" => record.part_number = clean_memory_value(value),
+            "product" => {
+                record.part_number = clean_memory_value(value);
+                record.name = record.part_number.clone();
+            }
             "vendor" => record.manufacturer = clean_memory_value(value),
             "serial" => record.serial = clean_memory_value(value),
             "slot" => record.locator = clean_memory_value(value),
             "size" => record.size = clean_memory_value(value),
             "clock" => record.speed = lshw_clock_speed(value),
+            "width" => {
+                record.total_width = clean_memory_value(value);
+                record.data_width = record.total_width.clone();
+            }
             _ => {}
         }
     }
 
-    push_memory_record(&mut records, current.take());
+    if current_is_bank || records.is_empty() {
+        push_memory_record(&mut records, current.take());
+    }
     records
 }
 
@@ -457,18 +534,38 @@ fn push_memory_record(records: &mut Vec<DmiMemoryRecord>, record: Option<DmiMemo
 }
 
 fn memory_record_has_data(record: &DmiMemoryRecord) -> bool {
-    record.size.is_some()
+    record.name.is_some()
+        || record.size.is_some()
         || record.locator.is_some()
         || record.manufacturer.is_some()
         || record.serial.is_some()
         || record.part_number.is_some()
         || record.memory_type.is_some()
         || record.speed.is_some()
+        || record.configured_speed.is_some()
         || record.total_width.is_some()
         || record.data_width.is_some()
         || record.minimum_voltage.is_some()
         || record.maximum_voltage.is_some()
         || record.configured_voltage.is_some()
+        || record.error_information_handle.is_some()
+        || record.form_factor.is_some()
+        || record.set.is_some()
+        || record.bank_locator.is_some()
+        || record.type_detail.is_some()
+        || record.asset_tag.is_some()
+        || record.rank.is_some()
+        || record.module_manufacturer_id.is_some()
+        || record.module_product_id.is_some()
+        || record.memory_subsystem_controller_manufacturer_id.is_some()
+        || record.memory_subsystem_controller_product_id.is_some()
+        || record.memory_technology.is_some()
+        || record.memory_operating_mode_capability.is_some()
+        || record.firmware_version.is_some()
+        || record.non_volatile_size.is_some()
+        || record.volatile_size.is_some()
+        || record.cache_size.is_some()
+        || record.logical_size.is_some()
 }
 
 fn clean_memory_value(value: &str) -> Option<String> {
@@ -477,6 +574,22 @@ fn clean_memory_value(value: &str) -> Option<String> {
         && !value.eq_ignore_ascii_case("Not Specified")
         && !value.eq_ignore_ascii_case("Unknown"))
     .then(|| value.to_string())
+}
+
+fn clean_memory_serial(value: &str) -> Option<String> {
+    clean_memory_value(value).filter(|value| value != "0")
+}
+
+fn clean_memory_size(value: &str) -> Option<String> {
+    let value = clean_memory_value(value)?;
+    if value == "No Module Installed" {
+        return Some(value);
+    }
+    let first = value.split_whitespace().next().unwrap_or("");
+    if first.len() > 9 && first.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some(value)
 }
 
 fn clean_memory_type(value: &str) -> Option<String> {
@@ -534,6 +647,18 @@ fn spd_manufacturer_name(bytes: &[u8]) -> Option<String> {
         0x04cb | 0xcb04 => "ADATA",
         0x89cd | 0xcd89 => "Longsys",
         0x8968 | 0x6889 => "Kimtigo",
+        0x830b | 0x0b83 => "Nanya",
+        0x80da | 0xda80 => "Winbond",
+        0x04c8 | 0xc804 => "Powerchip",
+        0x899b | 0x9b89 => "YMTC",
+        0x8a91 | 0x918a => "CXMT",
+        0x8a8f | 0x8f8a => "UNIC",
+        0x86c8 | 0xc886 => "GigaDevice",
+        0x0746 | 0x4607 | 0x0813 | 0x1308 => "Gloway",
+        0x081a | 0x1a08 => "UniIC",
+        0x8a02 | 0x028a => "KingSpec",
+        0x89f7 | 0xf789 => "Netac",
+        0x8ab1 | 0xb18a => "Biwin",
         _ => return Some(format!("JEP106 0x{id:04X}")),
     };
     Some(name.to_string())
@@ -561,6 +686,19 @@ fn lshw_memory_type(description: &str) -> Option<String> {
         .split_whitespace()
         .map(|token| token.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
         .find(|token| token.to_ascii_uppercase().starts_with("DDR"))
+        .map(str::to_string)
+}
+
+fn lshw_memory_form_factor(description: &str) -> Option<String> {
+    description
+        .split_whitespace()
+        .map(|token| token.trim_matches(|c: char| !c.is_ascii_alphanumeric()))
+        .find(|token| {
+            matches!(
+                token.to_ascii_uppercase().as_str(),
+                "DIMM" | "SODIMM" | "SO-DIMM" | "RDIMM" | "LRDIMM"
+            )
+        })
         .map(str::to_string)
 }
 
