@@ -38,9 +38,16 @@ pub struct DmiMemoryRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DmiBiosBoardRecord {
+    pub smbios_version: Option<String>,
     pub bios_vendor: Option<String>,
     pub bios_version: Option<String>,
     pub bios_release_date: Option<String>,
+    pub bios_address: Option<String>,
+    pub bios_runtime_size: Option<String>,
+    pub bios_rom_size: Option<String>,
+    pub bios_characteristics: Vec<String>,
+    pub bios_revision: Option<String>,
+    pub firmware_revision: Option<String>,
     pub bios_language_description_format: Option<String>,
     pub bios_installable_languages: Vec<String>,
     pub bios_currently_installed_language: Option<String>,
@@ -49,6 +56,9 @@ pub struct DmiBiosBoardRecord {
     pub board_version: Option<String>,
     pub board_serial: Option<String>,
     pub board_asset_tag: Option<String>,
+    pub chipset_family: Option<String>,
+    pub board_features: Vec<String>,
+    pub board_type: Option<String>,
     pub board_location_in_chassis: Option<String>,
     pub board_chassis_handle: Option<String>,
     pub chassis_manufacturer: Option<String>,
@@ -56,6 +66,7 @@ pub struct DmiBiosBoardRecord {
     pub chassis_version: Option<String>,
     pub chassis_serial: Option<String>,
     pub chassis_asset_tag: Option<String>,
+    pub chassis_lock: Option<String>,
     pub chassis_boot_up_state: Option<String>,
     pub chassis_power_supply_state: Option<String>,
     pub chassis_thermal_state: Option<String>,
@@ -381,8 +392,15 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
     let mut record = DmiBiosBoardRecord::default();
     let mut section = "";
     let mut collecting_installable_languages = false;
+    let mut collecting_bios_characteristics = false;
+    let mut collecting_board_features = false;
     for line in input.lines() {
         let trimmed = line.trim();
+        if record.smbios_version.is_none() {
+            if let Some(version) = parse_smbios_version_line(trimmed) {
+                record.smbios_version = Some(version);
+            }
+        }
         if trimmed == "BIOS Information"
             || trimmed == "BIOS Language Information"
             || trimmed == "Base Board Information"
@@ -391,6 +409,26 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
         {
             section = trimmed;
             collecting_installable_languages = false;
+            collecting_bios_characteristics = false;
+            collecting_board_features = false;
+            continue;
+        }
+        if section == "BIOS Information"
+            && collecting_bios_characteristics
+            && line.starts_with(char::is_whitespace)
+            && !trimmed.is_empty()
+            && !trimmed.contains(':')
+        {
+            record.bios_characteristics.push(trimmed.to_string());
+            continue;
+        }
+        if section == "Base Board Information"
+            && collecting_board_features
+            && line.starts_with(char::is_whitespace)
+            && !trimmed.is_empty()
+            && !trimmed.contains(':')
+        {
+            record.board_features.push(trimmed.to_string());
             continue;
         }
         if section == "BIOS Language Information"
@@ -407,10 +445,18 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
         };
         let value = value.trim().to_string();
         collecting_installable_languages = false;
+        collecting_bios_characteristics = false;
+        collecting_board_features = false;
         match (section, key) {
             ("BIOS Information", "Vendor") => record.bios_vendor = Some(value),
             ("BIOS Information", "Version") => record.bios_version = Some(value),
             ("BIOS Information", "Release Date") => record.bios_release_date = Some(value),
+            ("BIOS Information", "Address") => record.bios_address = Some(value),
+            ("BIOS Information", "Runtime Size") => record.bios_runtime_size = Some(value),
+            ("BIOS Information", "ROM Size") => record.bios_rom_size = Some(value),
+            ("BIOS Information", "Characteristics") => collecting_bios_characteristics = true,
+            ("BIOS Information", "BIOS Revision") => record.bios_revision = Some(value),
+            ("BIOS Information", "Firmware Revision") => record.firmware_revision = Some(value),
             ("BIOS Language Information", "Language Description Format") => {
                 record.bios_language_description_format = Some(value)
             }
@@ -425,6 +471,8 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
             ("Base Board Information", "Version") => record.board_version = Some(value),
             ("Base Board Information", "Serial Number") => record.board_serial = Some(value),
             ("Base Board Information", "Asset Tag") => record.board_asset_tag = Some(value),
+            ("Base Board Information", "Features") => collecting_board_features = true,
+            ("Base Board Information", "Type") => record.board_type = Some(value),
             ("Base Board Information", "Location In Chassis") => {
                 record.board_location_in_chassis = Some(value)
             }
@@ -436,6 +484,7 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
             ("Chassis Information", "Version") => record.chassis_version = Some(value),
             ("Chassis Information", "Serial Number") => record.chassis_serial = Some(value),
             ("Chassis Information", "Asset Tag") => record.chassis_asset_tag = Some(value),
+            ("Chassis Information", "Lock") => record.chassis_lock = Some(value),
             ("Chassis Information", "Boot-up State") => record.chassis_boot_up_state = Some(value),
             ("Chassis Information", "Power Supply State") => {
                 record.chassis_power_supply_state = Some(value)
@@ -473,6 +522,12 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
         }
     }
     record
+}
+
+fn parse_smbios_version_line(value: &str) -> Option<String> {
+    let rest = value.strip_prefix("SMBIOS ")?;
+    let version = rest.strip_suffix(" present.")?;
+    (!version.trim().is_empty()).then(|| version.trim().to_string())
 }
 
 pub fn parse_size_to_bytes(value: Option<&str>) -> Option<u64> {

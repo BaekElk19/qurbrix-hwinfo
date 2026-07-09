@@ -1,6 +1,7 @@
 use hw_parser::{
-    parse_hdparm_identify, parse_hwinfo_disk, parse_lshw_disk, parse_lshw_storage,
-    parse_lspci_nn_k, parse_lsusb, parse_lsusb_verbose, parse_smartctl_json,
+    parse_dmidecode_bios_board, parse_hdparm_identify, parse_hwinfo_disk, parse_lshw_disk,
+    parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k, parse_lsusb,
+    parse_lsusb_verbose, parse_smartctl_json,
 };
 
 #[test]
@@ -22,6 +23,62 @@ fn parses_lspci_driver_and_modules() {
     assert_eq!(
         records[0].kernel_modules,
         vec!["snd_hda_intel", "snd_soc_avs"]
+    );
+}
+
+#[test]
+fn parses_deepin_bios_board_detail_fields() {
+    let record = parse_dmidecode_bios_board(
+        "# dmidecode 3.5\n\
+         SMBIOS 3.4.0 present.\n\
+         BIOS Information\n\
+         \tVendor: LENOVO\n\
+         \tVersion: N2IET98W\n\
+         \tRelease Date: 01/01/2026\n\
+         \tAddress: 0xE0000\n\
+         \tRuntime Size: 128 kB\n\
+         \tROM Size: 16 MB\n\
+         \tCharacteristics:\n\
+         \t\tPCI is supported\n\
+         \t\tBIOS is upgradeable\n\
+         \tBIOS Revision: 1.23\n\
+         \tFirmware Revision: 4.56\n\
+         Base Board Information\n\
+         \tManufacturer: LENOVO\n\
+         \tProduct Name: 20XX\n\
+         \tFeatures:\n\
+         \t\tBoard is a hosting board\n\
+         \t\tBoard is replaceable\n\
+         \tType: Motherboard\n",
+    );
+
+    assert_eq!(record.smbios_version.as_deref(), Some("3.4.0"));
+    assert_eq!(record.bios_address.as_deref(), Some("0xE0000"));
+    assert_eq!(record.bios_runtime_size.as_deref(), Some("128 kB"));
+    assert_eq!(record.bios_rom_size.as_deref(), Some("16 MB"));
+    assert_eq!(
+        record.bios_characteristics,
+        ["PCI is supported", "BIOS is upgradeable"]
+    );
+    assert_eq!(record.bios_revision.as_deref(), Some("1.23"));
+    assert_eq!(record.firmware_revision.as_deref(), Some("4.56"));
+    assert_eq!(
+        record.board_features,
+        ["Board is a hosting board", "Board is replaceable"]
+    );
+    assert_eq!(record.board_type.as_deref(), Some("Motherboard"));
+}
+
+#[test]
+fn parses_host_bridge_chipset_family_from_lspci() {
+    let chipset = parse_lspci_host_bridge_chipset(
+        "00:00.0 Host bridge [0600]: Intel Corporation Device [8086:9a14] (rev 01)\n\
+         00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics [8086:9a49]\n",
+    );
+
+    assert_eq!(
+        chipset.as_deref(),
+        Some("Intel Corporation Device [8086:9a14]")
     );
 }
 

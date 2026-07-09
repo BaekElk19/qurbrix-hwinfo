@@ -1,0 +1,10 @@
+Loongson Technology Corporation	Loongson
+Phytium Technology Co., Ltd.	Phytium
+Hygon Information Technology Co., Ltd.	Hygon
+Shanghai Zhaoxin Semiconductor Co., Ltd.	Zhaoxin
+Huawei Kunpeng Board	HiSilicon
+Sunway Mainboard	Sunway
+Biostar Microtech Int'l Corp	BIOSTAR
+Colorful Technology And Development Co.,LTD	Colorful
+LENOVO	Lenovo
+unknown vendor	<none>

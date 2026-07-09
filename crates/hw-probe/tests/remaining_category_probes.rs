@@ -950,6 +950,92 @@ async fn bios_probe_preserves_baseboard_extended_fields() {
 }
 
 #[tokio::test]
+async fn bios_probe_preserves_deepin_bios_and_chipset_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "dmidecode",
+            ["-t", "0,1,2,3"],
+            "# dmidecode 3.5\n\
+             SMBIOS 3.4.0 present.\n\
+             BIOS Information\n\
+             \tVendor: LENOVO\n\
+             \tVersion: N2IET98W\n\
+             \tRelease Date: 01/01/2026\n\
+             \tAddress: 0xE0000\n\
+             \tRuntime Size: 128 kB\n\
+             \tROM Size: 16 MB\n\
+             \tCharacteristics:\n\
+             \t\tPCI is supported\n\
+             \t\tBIOS is upgradeable\n\
+             \tBIOS Revision: 1.23\n\
+             \tFirmware Revision: 4.56\n\
+             Base Board Information\n\
+             \tManufacturer: LENOVO\n\
+             \tProduct Name: 20XX\n\
+             \tSerial Number: BOARD123\n\
+             \tFeatures:\n\
+             \t\tBoard is a hosting board\n\
+             \t\tBoard is replaceable\n\
+             \tType: Motherboard\n",
+        )
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "00:00.0 Host bridge [0600]: Intel Corporation Device [8086:9a14] (rev 01)\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    let bios = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Bios)
+        .expect("expected bios device");
+    assert!(bios.sources.iter().any(|source| {
+        source.kind == SourceKind::Command && source.source == "dmidecode -t 0,1,2,3"
+    }));
+    match &bios.properties {
+        DeviceProperties::Bios(info) => {
+            assert_eq!(info.smbios_version.as_deref(), Some("3.4.0"));
+            assert_eq!(info.address.as_deref(), Some("0xE0000"));
+            assert_eq!(info.runtime_size.as_deref(), Some("128 kB"));
+            assert_eq!(info.rom_size.as_deref(), Some("16 MB"));
+            assert_eq!(
+                info.characteristics,
+                ["PCI is supported", "BIOS is upgradeable"]
+            );
+            assert_eq!(info.bios_revision.as_deref(), Some("1.23"));
+            assert_eq!(info.firmware_revision.as_deref(), Some("4.56"));
+        }
+        other => panic!("expected bios properties, got {other:?}"),
+    }
+
+    let board = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Motherboard)
+        .expect("expected motherboard device");
+    assert!(board
+        .sources
+        .iter()
+        .any(|source| { source.kind == SourceKind::Command && source.source == "lspci -nn -k" }));
+    match &board.properties {
+        DeviceProperties::Motherboard(info) => {
+            assert_eq!(
+                info.chipset_family.as_deref(),
+                Some("Intel Corporation Device [8086:9a14]")
+            );
+            assert_eq!(
+                info.board_features,
+                ["Board is a hosting board", "Board is replaceable"]
+            );
+            assert_eq!(info.board_type.as_deref(), Some("Motherboard"));
+        }
+        other => panic!("expected motherboard properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn bios_probe_preserves_chassis_information_fields() {
     let runner = FakeSourceRunner::new().with_command(
         "dmidecode",
@@ -967,6 +1053,7 @@ async fn bios_probe_preserves_chassis_information_fields() {
              \tVersion: ThinkPad\n\
              \tSerial Number: CHASSIS123\n\
              \tAsset Tag: ASSET456\n\
+             \tLock: Present\n\
              \tBoot-up State: Safe\n\
              \tPower Supply State: Safe\n\
              \tThermal State: Safe\n\
@@ -987,11 +1074,12 @@ async fn bios_probe_preserves_chassis_information_fields() {
         .expect("expected motherboard device");
     match &board.properties {
         DeviceProperties::Motherboard(info) => {
-            assert_eq!(info.chassis_manufacturer.as_deref(), Some("LENOVO"));
+            assert_eq!(info.chassis_manufacturer.as_deref(), Some("Lenovo"));
             assert_eq!(info.chassis_type.as_deref(), Some("Notebook"));
             assert_eq!(info.chassis_version.as_deref(), Some("ThinkPad"));
             assert_eq!(info.chassis_serial.as_deref(), Some("CHASSIS123"));
             assert_eq!(info.chassis_asset_tag.as_deref(), Some("ASSET456"));
+            assert_eq!(info.chassis_lock.as_deref(), Some("Present"));
             assert_eq!(info.chassis_boot_up_state.as_deref(), Some("Safe"));
             assert_eq!(info.chassis_power_supply_state.as_deref(), Some("Safe"));
             assert_eq!(info.chassis_thermal_state.as_deref(), Some("Safe"));
@@ -1157,7 +1245,7 @@ async fn bios_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
     }));
     match &bios.properties {
         DeviceProperties::Bios(info) => {
-            assert_eq!(info.vendor.as_deref(), Some("LENOVO"));
+            assert_eq!(info.vendor.as_deref(), Some("Lenovo"));
             assert_eq!(info.version.as_deref(), Some("N2IET98W"));
             assert_eq!(info.release_date.as_deref(), Some("01/01/2026"));
         }
@@ -1175,16 +1263,83 @@ async fn bios_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
     }));
     match &board.properties {
         DeviceProperties::Motherboard(info) => {
-            assert_eq!(info.manufacturer.as_deref(), Some("LENOVO"));
+            assert_eq!(info.manufacturer.as_deref(), Some("Lenovo"));
             assert_eq!(info.product_name.as_deref(), Some("20XX"));
             assert_eq!(info.version.as_deref(), Some("SDK0T76530 WIN"));
             assert_eq!(info.serial.as_deref(), Some("BOARD123"));
             assert_eq!(info.asset_tag.as_deref(), Some("ASSET456"));
-            assert_eq!(info.chassis_manufacturer.as_deref(), Some("LENOVO"));
+            assert_eq!(info.chassis_manufacturer.as_deref(), Some("Lenovo"));
             assert_eq!(info.chassis_type.as_deref(), Some("Notebook"));
             assert_eq!(info.chassis_version.as_deref(), Some("ThinkPad"));
             assert_eq!(info.chassis_serial.as_deref(), Some("CHASSIS123"));
             assert_eq!(info.chassis_asset_tag.as_deref(), Some("CHASSET456"));
+        }
+        other => panic!("expected motherboard properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn bios_probe_uses_sysfs_dmi_when_dmidecode_succeeds_with_empty_output() {
+    let runner = FakeSourceRunner::new()
+        .with_command("dmidecode", ["-t", "0,1,2,3"], "")
+        .with_file("/sys/class/dmi/id/bios_vendor", "LENOVO\n")
+        .with_file("/sys/class/dmi/id/bios_version", "N2IET98W\n")
+        .with_file("/sys/class/dmi/id/board_vendor", "LENOVO\n")
+        .with_file("/sys/class/dmi/id/board_name", "20XX\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    assert_eq!(result.warnings.len(), 1);
+    assert_eq!(result.warnings[0].code, "source_empty");
+    assert!(result.devices.iter().any(|device| {
+        device.kind == DeviceKind::Bios
+            && device
+                .sources
+                .iter()
+                .any(|source| source.source == "/sys/class/dmi/id")
+    }));
+}
+
+#[tokio::test]
+async fn bios_probe_normalizes_domestic_board_vendors() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "0,1,2,3"],
+        "BIOS Information\n\
+         \tVendor: Huawei Technologies Co., Ltd.\n\
+         \tVersion: 1.0.0\n\
+         Base Board Information\n\
+         \tManufacturer: Biostar Microtech Int'l Corp\n\
+         \tProduct Name: H310MHP\n\
+         Chassis Information\n\
+         \tManufacturer: Colorful Technology And Development Co.,LTD\n\
+         \tType: Desktop\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BiosProbe.probe(&ctx).await;
+
+    let bios = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Bios)
+        .expect("expected bios device");
+    match &bios.properties {
+        DeviceProperties::Bios(info) => {
+            assert_eq!(info.vendor.as_deref(), Some("HiSilicon"));
+        }
+        other => panic!("expected bios properties, got {other:?}"),
+    }
+
+    let board = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Motherboard)
+        .expect("expected motherboard device");
+    match &board.properties {
+        DeviceProperties::Motherboard(info) => {
+            assert_eq!(info.manufacturer.as_deref(), Some("BIOSTAR"));
+            assert_eq!(info.chassis_manufacturer.as_deref(), Some("Colorful"));
         }
         other => panic!("expected motherboard properties, got {other:?}"),
     }

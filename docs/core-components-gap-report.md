@@ -24,13 +24,13 @@
 | 零部件 | vs Deepin 完成度 | vs Kylin 完成度 | 主要缺口摘要 |
 |---|---|---|---|
 | CPU | 约 82% | 约 95% | per-logical-CPU 明细树、PANGU M900 特判、`isHwPlatform` 语义、Overview 文案；Phytium 1500a `/sys/phytium1500a_info` 兜底 |
-| 主板 / BIOS | 约 65-70% | 约 95% | SMBIOS Version、BIOS ROM/Runtime/Address/Characteristics/Revision、Chipset Family、国产 vendor 归一化、Board Features/Type/Chassis Lock |
+| 主板 / BIOS | 约 100% | 约 105%（已超） | 已补 SMBIOS Version、BIOS ROM/Runtime/Address/Characteristics/Revision、Chipset Family、国产 vendor 归一化、Board Features/Type/Chassis Lock；保留 devicetree/fwupd/mokutil 等超参考增强为后续项 |
 | 内存 | 约 98% | 约 98% | 已达到 1.0 试用口径；剩余为真机 fixture 覆盖和保守匹配尾部风险，不阻塞上线 |
 | SSD / 存储 | 约 100% | 约 140%（已超） | 按本地 Deepin/Kylin 对齐口径已补 UFS `spec_version`、SATA Speed / RotationRate 文本、`/proc/bootdevice/cid` + `unique_number` 兜底、VID_PID / PhysID / Modalias、Capabilities、国产品牌前缀、容量展示归一、USB 桥接盘 `smartctl -d sat` 重试、PCI controller 父子链接 |
 | 显卡 | 约 60-65% | 约 130%（已超） | `/sys/kernel/debug/gc/total_mem`（Vivante GC / 飞腾）、景嘉微 JJW dmesg 正则、显示接口 connector 归并、位宽/时钟/IRQ/Capabilities/IOPort/MemAddress、EGL/GLSL、xrandr 分辨率写回 GpuInfo |
 | 显示器 | 约 65-70% | 约 110%（已超） | 多 DTD 尺寸解析 + base-vs-DTD 交叉校验、大端 EDID、Interface 分类字段、Aspect Ratio、全支持模式 @Hz 列表、0xFE Alphanumeric Name |
 
-综合基线（简单平均）：**vs Deepin ≈ 73%，vs Kylin ≈ 111%**。qurbrix 已经普遍超越 Kylin
+综合基线（简单平均）：**vs Deepin ≈ 84%，vs Kylin ≈ 113%**。qurbrix 已经普遍超越 Kylin
 的采集广度（Kylin 本身仅走 lscpu/dmidecode/lsblk/lshw display 等基础通道），主拉齐工作
 集中在 Deepin 侧：国产 SoC 特判、per-logical/per-DIMM 细粒度模型、UI 展示字段（Overview、
 Aspect Ratio、Interface 分类）与国产厂商归一化。
@@ -100,33 +100,36 @@ qurbrix `CpuInfo` 已覆盖 34 字段（`crates/hw-model/src/properties.rs:87-12
 | `dmidecode -t 3`（Chassis） | Y | N | Y |
 | `dmidecode -t 13`（BIOS Language） | Y | N | Y (`enrich_dmi_bios_language`, `existing.rs:2814-2848`) |
 | `dmidecode -t 16`（Physical Memory Array） | Y | N | Y（归到 BIOS 设备，`existing.rs:2850-2892`） |
-| `lspci` host bridge → Chipset Family | Y (`CmdTool.cpp:916-932`) | N | **N** |
-| `SMBIOS x.y.z present` 版本正则 | Y | N | **N** |
+| `lspci` ISA Subsystem / host bridge → Chipset Family | Y (`CmdTool.cpp:916-932`) | N | Y（优先 ISA/LPC bridge `Subsystem:`，缺失时回退 host bridge 描述） |
+| `SMBIOS x.y.z present` 版本正则 | Y | N | Y |
 | `/sys/class/dmi/id` sysfs 回退 | N | N | Y (`existing.rs:2955-2998`) |
 | `/sys/firmware/efi` 判 UEFI + SecureBoot | N | N | Y (`existing.rs:2910-2953`) |
 
 ### 2.2 字段差距
 
-- 缺失：**SMBIOS Version、BIOS ROM Size / Runtime Size / Address / Characteristics / BIOS Revision /
-  Firmware Revision**（Deepin `DeviceBios.cpp:227-231`）、**Chipset Family**（Deepin lspci host bridge）、
-  **Board Features / Board Type**、**Chassis Lock**、**国产平台厂商归一化**（Loongson/Phytium/Hygon/Zhaoxin/Kunpeng/兆芯）
-- 部分覆盖：Chassis 后半部字段（bot_up/power_supply/thermal/security/oem/height/power_cords/
-  contained_elements/sku_number）在 sysfs fallback 路径下被硬置 `None`（`existing.rs:2974-2982`），无 root/无 dmidecode 时丢失
+- 已补：**SMBIOS Version、BIOS ROM Size / Runtime Size / Address / Characteristics / BIOS Revision /
+  Firmware Revision**（Deepin `DeviceBios.cpp:227-231`）、**Chipset Family**（Deepin lspci ISA bridge `Subsystem:`，
+  qurbrix 同时兼容 host bridge 回退）、**Board Features / Board Type**、**Chassis Lock**、
+  **国产平台厂商归一化**（Loongson/Phytium/Hygon/Zhaoxin/Kunpeng/Sunway/BIOSTAR/Colorful 等）。
+- 已修复风险：主命令 `dmidecode` 成功但 stdout 为空时，若 `/sys/class/dmi/id` 有可用数据，会主动回退到 sysfs DMI，
+  不再直接返回空设备。
+- 保守项：Chassis 后半部字段（boot_up/power_supply/thermal/security/oem/height/power_cords/
+  contained_elements/sku_number）在 sysfs fallback 路径下仍只能采集内核实际暴露的有限字段；这些字段本身没有 sysfs 标准来源，
+  无 root/无 dmidecode 时保持空值而不伪造。
 - 优势项：UEFI/SecureBoot 采集在两个参考项目中都缺，是 qurbrix 独占
 
 ### 2.3 backlog
 
-- **P0**：SMBIOS Version、BIOS ROM/Runtime/Address/Characteristics/Revision 六字段、Chipset Family
-- **P1**：国产芯片/主板厂商归一化字典（Loongson/Phytium/Hygon/Zhaoxin/Kunpeng/Sunway/BIOSTAR/七彩虹）；
-  Chassis Lock / Board Features / Board Type；sysfs Chassis fallback 完整化
+- **P0/P1**：本地 Deepin/Kylin 对齐主项已完成：SMBIOS Version、BIOS ROM/Runtime/Address/Characteristics/
+  BIOS Revision/Firmware Revision、Chipset Family、国产芯片/主板厂商归一化字典、Chassis Lock、
+  Board Features / Board Type、empty dmidecode sysfs fallback。
 - **P2**：architecture 分支 fallback（`/proc/device-tree/model`、`/sys/firmware/devicetree`）；
   mokutil / fwupd 交叉校验；DMI type 11/12 采集
 
 ### 2.4 风险
 
-- `existing.rs:2789` 的 `dmi == Default::default()` 判空过严：主命令 `is_success()` 为 true 但 stdout 空时会走
-  empty 分支返回空 devices。建议 stdout 为空时主动 fallback 到 `read_sysfs_dmi`。
-- `BiosProbe` 与 `SystemProbe` 各自跑 `dmidecode`，可合并到一次 `-t 0,1,2,3,13,16`。
+- `BiosProbe` 与 `SystemProbe` 各自跑 `dmidecode`，后续可做命令缓存或一次 `-t 0,1,2,3,13,16` 采集来减少开销；
+  这属于性能/结构优化，不影响本地 Deepin/Kylin 字段对齐。
 
 ---
 
@@ -383,14 +386,14 @@ size_cm / diagonal_inches / gamma / preferred_width/height/refresh_hz。
 3. **显卡国产 vendor 白名单扩展**（摩尔线程 VID `1ed5` / 沐曦 `1eb1` / 海光 `1d17` / 华为 Ascend `19e5` / 壁仞 Biren）
 4. **存储 vendor 前缀表扩展**（YMTC / ZhiTai / Gloway / KingSpec / KINGSTON / SanDisk / SAMSUNG / MICRON / SK Hynix / NETAC / RAMAXEL / BIWIN / CXMT）
 5. **存储 UFS 检测**（`/sys/block/*/device/spec_version`）+ RotationRate / SATA Speed 字段
-6. **主板 SMBIOS Version + BIOS ROM/Runtime/Address/Characteristics/Revision + Chipset Family**（Deepin 主 BIOS 面板全字段）
+6. **已完成：主板 SMBIOS Version + BIOS ROM/Runtime/Address/Characteristics/Revision + Chipset Family**（Deepin 主 BIOS 面板全字段）
 7. **显示器 EDID 多 DTD 尺寸解析 + base-vs-DTD 交叉校验**（Deepin `parseDTDs` 全面对齐）
 8. **显示器 Interface 分类**（HDMI/VGA/DP/eDP 从 connector 派生）
 9. **内存 DIMM Rank / Form Factor / Type Detail / Asset Tag + Module/Subsystem ID 独立字段**
 
 ### P1（国产兼容 + Deepin 常用展示字段）
 
-10. **主板/CPU 国产厂商归一化字典**（Loongson / Phytium / Hygon / Zhaoxin / Kunpeng / Sunway / BIOSTAR）
+10. **已完成主板侧：主板/CPU 国产厂商归一化字典**（Loongson / Phytium / Hygon / Zhaoxin / Kunpeng / Sunway / BIOSTAR；CPU 侧此前已覆盖）
 11. **CPU `isHwPlatform` runtime 判断 + DMI Version 覆盖 name**（Kunpeng 环境 name 展示）
 12. **CPU Phytium 1500a `/sys/phytium1500a_info` 兜底**
 13. **CPU frequency-range 展示语义 + Overview 文案生成**
@@ -400,7 +403,7 @@ size_cm / diagonal_inches / gamma / preferred_width/height/refresh_hz。
 17. **显卡 glxinfo 扩展 EGL / GLSL**
 18. **显示器 Aspect Ratio（GCD）+ 全支持模式列表（每模式 @Hz）+ Monitor name 0xFE 兼容**
 19. **已移出 1.0 必做：内存 JEP106 全量友好名表**（本地 Deepin/Kylin 未实现；当前常见表 + 原始码保留已足够对齐）
-20. **主板 Chassis Lock / Board Features / Board Type + sysfs Chassis fallback 完整化**
+20. **已完成字段侧：主板 Chassis Lock / Board Features / Board Type**；sysfs Chassis fallback 受内核暴露字段限制，保持保守空值
 
 ### P2（长尾）
 

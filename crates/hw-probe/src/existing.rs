@@ -10,19 +10,21 @@ use hw_model::{
 };
 use hw_parser::{
     cpu_extensions_from_flags, infer_cpu_vendor_from_name, lookup_pnp_manufacturer,
-    merge_cpu_records, normalize_arch, normalize_cpu_vendor_id, normalize_gpu_vendor,
-    normalize_gpu_vendor_id, parse_dmesg_gpu_vram, parse_dmidecode_bios_board,
-    parse_dmidecode_memory, parse_dmidecode_processor, parse_dmidecode_system, parse_edid,
-    parse_glxinfo_basic, parse_gpu_lspci, parse_hdparm_identify, parse_hwinfo_disk,
-    parse_hwinfo_monitor, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
-    parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
-    parse_lshw_processor, parse_lshw_storage, parse_lspci_nn_k, parse_nvidia_settings_videoram,
-    parse_nvidia_smi_memory_csv, parse_phytium1500a_info, parse_proc_cpuinfo, parse_proc_hardware,
-    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
-    parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_voltage_v, parse_width_bits,
-    parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord,
-    DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord,
-    LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord, LshwStorageRecord, PciRecord,
+    merge_cpu_records, normalize_arch, normalize_board_vendor, normalize_cpu_vendor_id,
+    normalize_gpu_vendor, normalize_gpu_vendor_id, parse_dmesg_gpu_vram,
+    parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor,
+    parse_dmidecode_system, parse_edid, parse_glxinfo_basic, parse_gpu_lspci,
+    parse_hdparm_identify, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
+    parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
+    parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
+    parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k,
+    parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv, parse_phytium1500a_info,
+    parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes,
+    parse_smartctl_json, parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps,
+    parse_voltage_v, parse_width_bits, parse_xrandr_query, parse_xrandr_verbose,
+    DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord,
+    HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
+    LshwStorageRecord, PciRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind, SourceResult};
 use std::{collections::HashMap, path::Path};
@@ -3811,12 +3813,33 @@ impl Probe for BiosProbe {
                     runtime,
                     None,
                     None,
+                    None,
                 );
             }
             return fallback;
         }
         let mut dmi = parse_dmidecode_bios_board(&result.stdout);
         if dmi == Default::default() {
+            if let Some(dmi) = read_sysfs_dmi(ctx).await {
+                let runtime = read_bios_runtime_info(ctx).await;
+                return ProbeResult {
+                    devices: bios_board_devices(
+                        dmi,
+                        "/sys/class/dmi/id",
+                        SourceKind::Sysfs,
+                        runtime,
+                        None,
+                        None,
+                        None,
+                    ),
+                    warnings: vec![ScanWarning::new(
+                        "source_empty",
+                        "bios source produced no DMI records; used sysfs fallback",
+                    )
+                    .with_source(result.source)],
+                    consumed: Vec::new(),
+                };
+            }
             return ProbeResult {
                 devices: Vec::new(),
                 warnings: vec![ScanWarning::new(
@@ -3829,6 +3852,7 @@ impl Probe for BiosProbe {
         }
         let bios_language_source = enrich_dmi_bios_language(ctx, &mut dmi).await;
         let memory_array_source = enrich_dmi_memory_array(ctx, &mut dmi).await;
+        let chipset_source = enrich_dmi_chipset_family(ctx, &mut dmi).await;
         let runtime = read_bios_runtime_info(ctx).await;
         ProbeResult::with_devices(bios_board_devices(
             dmi,
@@ -3837,6 +3861,7 @@ impl Probe for BiosProbe {
             runtime,
             bios_language_source,
             memory_array_source,
+            chipset_source,
         ))
     }
 }
@@ -3921,6 +3946,28 @@ async fn enrich_dmi_memory_array(
     })
 }
 
+async fn enrich_dmi_chipset_family(
+    ctx: &ProbeContext<'_>,
+    dmi: &mut DmiBiosBoardRecord,
+) -> Option<SourceEvidence> {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return None;
+    }
+
+    let chipset = parse_lspci_host_bridge_chipset(&result.stdout)?;
+    dmi.chipset_family = Some(chipset);
+    Some(SourceEvidence {
+        source: result.source,
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    })
+}
+
 fn merge_optional_string(target: &mut Option<String>, candidate: Option<String>) -> bool {
     if target.is_none() && candidate.is_some() {
         *target = candidate;
@@ -3992,8 +4039,6 @@ async fn read_sysfs_dmi(ctx: &ProbeContext<'_>) -> Option<DmiBiosBoardRecord> {
         board_version: read_sysfs_dmi_value(ctx, "board_version").await,
         board_serial: read_sysfs_dmi_value(ctx, "board_serial").await,
         board_asset_tag: read_sysfs_dmi_value(ctx, "board_asset_tag").await,
-        board_location_in_chassis: None,
-        board_chassis_handle: None,
         chassis_manufacturer: read_sysfs_dmi_value(ctx, "chassis_vendor").await,
         chassis_type: read_sysfs_dmi_value(ctx, "chassis_type")
             .await
@@ -4001,24 +4046,7 @@ async fn read_sysfs_dmi(ctx: &ProbeContext<'_>) -> Option<DmiBiosBoardRecord> {
         chassis_version: read_sysfs_dmi_value(ctx, "chassis_version").await,
         chassis_serial: read_sysfs_dmi_value(ctx, "chassis_serial").await,
         chassis_asset_tag: read_sysfs_dmi_value(ctx, "chassis_asset_tag").await,
-        chassis_boot_up_state: None,
-        chassis_power_supply_state: None,
-        chassis_thermal_state: None,
-        chassis_security_status: None,
-        chassis_oem_information: None,
-        chassis_height: None,
-        chassis_power_cords: None,
-        chassis_contained_elements: None,
-        chassis_sku_number: None,
-        bios_language_description_format: None,
-        bios_installable_languages: Vec::new(),
-        bios_currently_installed_language: None,
-        memory_array_location: None,
-        memory_array_use: None,
-        memory_array_error_correction_type: None,
-        memory_array_maximum_capacity: None,
-        memory_array_error_information_handle: None,
-        memory_array_number_of_devices: None,
+        ..Default::default()
     };
 
     if dmi == Default::default() {
@@ -4085,6 +4113,14 @@ fn normalize_sysfs_chassis_type(value: String) -> String {
     }
 }
 
+fn normalize_board_vendor_option(vendor: Option<String>) -> Option<String> {
+    vendor.map(|value| {
+        normalize_board_vendor(&value)
+            .map(str::to_string)
+            .unwrap_or(value)
+    })
+}
+
 fn bios_board_devices(
     dmi: DmiBiosBoardRecord,
     source: &str,
@@ -4092,7 +4128,11 @@ fn bios_board_devices(
     runtime: BiosRuntimeInfo,
     bios_language_source: Option<SourceEvidence>,
     memory_array_source: Option<SourceEvidence>,
+    chipset_source: Option<SourceEvidence>,
 ) -> Vec<Device> {
+    let bios_vendor = normalize_board_vendor_option(dmi.bios_vendor);
+    let board_manufacturer = normalize_board_vendor_option(dmi.board_manufacturer);
+    let chassis_manufacturer = normalize_board_vendor_option(dmi.chassis_manufacturer);
     let mut bios = Device::new(
         "bios:0",
         DeviceKind::Bios,
@@ -4100,9 +4140,16 @@ fn bios_board_devices(
             .clone()
             .unwrap_or_else(|| "BIOS".to_string()),
         DeviceProperties::Bios(BiosInfo {
-            vendor: dmi.bios_vendor,
+            vendor: bios_vendor,
             version: dmi.bios_version,
             release_date: dmi.bios_release_date,
+            smbios_version: dmi.smbios_version,
+            rom_size: dmi.bios_rom_size,
+            runtime_size: dmi.bios_runtime_size,
+            address: dmi.bios_address,
+            characteristics: dmi.bios_characteristics,
+            bios_revision: dmi.bios_revision,
+            firmware_revision: dmi.firmware_revision,
             firmware_type: runtime.firmware_type,
             secure_boot: runtime.secure_boot,
             language_description_format: dmi.bios_language_description_format,
@@ -4137,18 +4184,22 @@ fn bios_board_devices(
             .clone()
             .unwrap_or_else(|| "Motherboard".to_string()),
         DeviceProperties::Motherboard(Box::new(MotherboardInfo {
-            manufacturer: dmi.board_manufacturer,
+            manufacturer: board_manufacturer,
             product_name: dmi.board_product_name,
             version: dmi.board_version,
             serial: dmi.board_serial,
             asset_tag: dmi.board_asset_tag,
+            chipset_family: dmi.chipset_family,
+            board_features: dmi.board_features,
+            board_type: dmi.board_type,
             location_in_chassis: dmi.board_location_in_chassis,
             chassis_handle: dmi.board_chassis_handle,
-            chassis_manufacturer: dmi.chassis_manufacturer,
+            chassis_manufacturer,
             chassis_type: dmi.chassis_type,
             chassis_version: dmi.chassis_version,
             chassis_serial: dmi.chassis_serial,
             chassis_asset_tag: dmi.chassis_asset_tag,
+            chassis_lock: dmi.chassis_lock,
             chassis_boot_up_state: dmi.chassis_boot_up_state,
             chassis_power_supply_state: dmi.chassis_power_supply_state,
             chassis_thermal_state: dmi.chassis_thermal_state,
@@ -4173,6 +4224,11 @@ fn bios_board_devices(
         summary: None,
     });
     let board = if let Some(source) = memory_array_source {
+        board.with_source(source)
+    } else {
+        board
+    };
+    let board = if let Some(source) = chipset_source {
         board.with_source(source)
     } else {
         board

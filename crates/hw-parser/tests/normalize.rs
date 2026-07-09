@@ -1,6 +1,6 @@
 use hw_parser::normalize::{
-    infer_cpu_vendor_from_name, normalize_arch, normalize_cpu_vendor_id, normalize_gpu_vendor,
-    normalize_gpu_vendor_id,
+    infer_cpu_vendor_from_name, normalize_arch, normalize_board_vendor, normalize_cpu_vendor_id,
+    normalize_gpu_vendor, normalize_gpu_vendor_id,
 };
 use hw_testdata::fixture;
 
@@ -94,6 +94,20 @@ fn normalizes_gpu_vendor_ids() {
     for case in cases("normalize/gpu-vendor-id.cases.txt") {
         assert_eq!(
             normalize_gpu_vendor_id(&case.input).map(str::to_string),
+            case.expected,
+            "{}:{} {}",
+            case.path,
+            case.line,
+            case.input
+        );
+    }
+}
+
+#[test]
+fn normalizes_board_vendors() {
+    for case in cases("normalize/board-vendor.cases.txt") {
+        assert_eq!(
+            normalize_board_vendor(&case.input).map(str::to_string),
             case.expected,
             "{}:{} {}",
             case.path,
