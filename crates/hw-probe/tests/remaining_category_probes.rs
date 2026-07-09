@@ -1479,7 +1479,11 @@ async fn gpu_probe_enriches_human_readable_lshw_display_fields() {
                   product: Jingjia JM9 Series Graphics Adapter\n\
                   vendor: Jingjia Micro\n\
                   bus info: pci@0000:03:00.0\n\
-                  configuration: driver=jm9 latency=0\n",
+                  width: 64 bits\n\
+                  clock: 33MHz\n\
+                  capabilities: pm pciexpress msi vga_controller bus_master cap_list rom\n\
+                  configuration: driver=jm9 latency=0 irq=141\n\
+                  resources: irq:141 memory:fc000000-fcffffff memory:d0000000-dfffffff ioport:f000(size=256)\n",
         );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = GpuProbe.probe(&ctx).await;
@@ -1504,6 +1508,26 @@ async fn gpu_probe_enriches_human_readable_lshw_display_fields() {
     match &device.properties {
         DeviceProperties::Gpu(gpu) => {
             assert_eq!(gpu.vendor.as_deref(), Some("Jingjia Micro"));
+            assert_eq!(gpu.memory_bus_width_bits, Some(64));
+            assert_eq!(gpu.clock_mhz, Some(33));
+            assert_eq!(gpu.irq.as_deref(), Some("141"));
+            assert_eq!(
+                gpu.capabilities,
+                vec![
+                    "pm",
+                    "pciexpress",
+                    "msi",
+                    "vga_controller",
+                    "bus_master",
+                    "cap_list",
+                    "rom"
+                ]
+            );
+            assert_eq!(gpu.io_port.as_deref(), Some("f000(size=256)"));
+            assert_eq!(
+                gpu.mem_address.as_deref(),
+                Some("fc000000-fcffffff; d0000000-dfffffff")
+            );
         }
         other => panic!("expected gpu properties, got {other:?}"),
     }
@@ -1522,7 +1546,10 @@ async fn gpu_probe_enriches_single_gpu_from_glxinfo_basic() {
             ["-B"],
             "OpenGL vendor string: Intel\n\
              OpenGL renderer string: Mesa Intel(R) UHD Graphics 620 (KBL GT2)\n\
-             OpenGL version string: 4.6 (Compatibility Profile) Mesa 23.1.9\n",
+             OpenGL version string: 4.6 (Compatibility Profile) Mesa 23.1.9\n\
+             OpenGL shading language version string: 4.60\n\
+             EGL version string: 1.5\n\
+             EGL client APIs: OpenGL OpenGL_ES\n",
         );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = GpuProbe.probe(&ctx).await;
@@ -1548,9 +1575,61 @@ async fn gpu_probe_enriches_single_gpu_from_glxinfo_basic() {
                 gpu.opengl_version.as_deref(),
                 Some("4.6 (Compatibility Profile) Mesa 23.1.9")
             );
+            assert_eq!(gpu.glsl_version.as_deref(), Some("4.60"));
+            assert_eq!(gpu.egl_version.as_deref(), Some("1.5"));
+            assert_eq!(gpu.egl_client_apis.as_deref(), Some("OpenGL OpenGL_ES"));
         }
         other => panic!("expected gpu properties, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn gpu_probe_attaches_xrandr_connectors_and_resolution_to_unique_gpu() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "00:02.0 VGA compatible controller [0300]: Intel Corporation UHD Graphics [8086:9a49]\n\tKernel driver in use: i915\n",
+        )
+        .with_command(
+            "xrandr",
+            ["--query"],
+            "eDP-1 connected primary 1920x1080+0+0\n\
+                1920x1080     60.00*+\n\
+             HDMI-1 connected 1920x1080+1920+0\n\
+                2560x1440     60.00+\n\
+                1920x1080     60.00*\n\
+             DP-1 disconnected\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.current_resolution.as_deref(), Some("1920x1080"));
+            assert_eq!(gpu.max_resolution.as_deref(), Some("2560x1440"));
+            assert_eq!(gpu.connectors.len(), 3);
+            assert_eq!(gpu.connectors[0].connector, "eDP-1");
+            assert_eq!(gpu.connectors[0].interface.as_deref(), Some("eDP"));
+            assert!(gpu.connectors[0].connected);
+            assert!(gpu.connectors[0].primary);
+            assert_eq!(gpu.connectors[1].connector, "HDMI-1");
+            assert_eq!(gpu.connectors[1].interface.as_deref(), Some("HDMI"));
+            assert_eq!(
+                gpu.connectors[1].max_resolution.as_deref(),
+                Some("2560x1440")
+            );
+            assert_eq!(gpu.connectors[2].connector, "DP-1");
+            assert_eq!(gpu.connectors[2].interface.as_deref(), Some("DP"));
+            assert!(!gpu.connectors[2].connected);
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "xrandr --query"));
 }
 
 #[tokio::test]
@@ -1815,6 +1894,35 @@ async fn gpu_probe_reads_nvidia_settings_memory_for_unique_nvidia_gpu() {
 }
 
 #[tokio::test]
+async fn gpu_probe_reads_nvidia_settings_memory_interface_for_unique_nvidia_gpu() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484]\n\tKernel driver in use: nvidia\n",
+        )
+        .with_command(
+            "nvidia-settings",
+            ["-q", "GPUMemoryInterface"],
+            "Attribute 'GPUMemoryInterface' (deepin:0.0): 256.\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.memory_bus_width_bits, Some(256));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device.sources.iter().any(|source| {
+        source.kind == SourceKind::Command
+            && source.source == "nvidia-settings -q GPUMemoryInterface"
+    }));
+}
+
+#[tokio::test]
 async fn gpu_probe_skips_nvidia_settings_memory_for_multiple_nvidia_gpus() {
     let runner = FakeSourceRunner::new()
         .with_command(
@@ -1872,6 +1980,93 @@ async fn gpu_probe_reads_deepin_sysfs_gpu_info_vram_total() {
 }
 
 #[tokio::test]
+async fn gpu_probe_preserves_deepin_pci_vid_pid_phys_id_and_modalias() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 22 [1002:73df]\n\tKernel driver in use: amdgpu\n",
+        )
+        .with_file(
+            "/sys/bus/pci/devices/0000:03:00.0/modalias",
+            "pci:v00001002d000073DFsv00001462sd00003870bc03sc00i00\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.vid_pid.as_deref(), Some("1002/73df/1462/3870"));
+            assert_eq!(gpu.phys_id.as_deref(), Some("1002/73df/1462/3870"));
+            assert_eq!(
+                gpu.modalias.as_deref(),
+                Some("pci:v00001002d000073DFsv00001462sd00003870bc03sc00i00")
+            );
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn gpu_probe_preserves_deepin_gddr_capacity_from_gpu_info() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "03:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 22 [1002:73df]\n\tKernel driver in use: amdgpu\n",
+        )
+        .with_file(
+            "/sys/bus/pci/devices/0000:03:00.0/gpu-info",
+            "VRAM total size: 200000000\nGDDR capacity: 8 GB\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.memory_bytes, Some(8_589_934_592));
+            assert_eq!(gpu.gddr_capacity.as_deref(), Some("8 GB"));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn gpu_probe_enriches_unique_gpu_from_kylin_hw990_gpuinfo() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "00:01.0 Display controller [0380]: Device [1234:5678]\n",
+        )
+        .with_command_status(
+            "gpuinfo",
+            std::iter::empty::<&str>(),
+            "integrated graphics controller\nGPU vendor: ARM\nGPU type: Mali-G76\n",
+            1,
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "Mali-G76");
+    assert_eq!(device.vendor.as_deref(), Some("ARM Mali"));
+    assert_eq!(device.model.as_deref(), Some("Mali-G76"));
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.vendor.as_deref(), Some("ARM Mali"));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Command && source.source == "gpuinfo"));
+}
+
+#[tokio::test]
 async fn gpu_probe_reads_jingjia_proc_gpuinfo_memory_size() {
     let runner = FakeSourceRunner::new()
         .with_command(
@@ -1894,6 +2089,30 @@ async fn gpu_probe_reads_jingjia_proc_gpuinfo_memory_size() {
         .sources
         .iter()
         .any(|source| source.kind == SourceKind::Procfs && source.source == "/proc/gpuinfo_0"));
+}
+
+#[tokio::test]
+async fn gpu_probe_reads_vivante_debug_gc_total_mem_for_unique_gpu() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lspci",
+            ["-nn", "-k"],
+            "00:01.0 Display controller [0380]: Vivante Corporation GC Series Graphics Adapter [1234:5678]\n",
+        )
+        .with_file("/sys/kernel/debug/gc/total_mem", "2048 MB\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = GpuProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    match &device.properties {
+        DeviceProperties::Gpu(gpu) => {
+            assert_eq!(gpu.memory_bytes, Some(2048 * 1024 * 1024));
+        }
+        other => panic!("expected gpu properties, got {other:?}"),
+    }
+    assert!(device.sources.iter().any(|source| {
+        source.kind == SourceKind::Sysfs && source.source == "/sys/kernel/debug/gc/total_mem"
+    }));
 }
 
 #[tokio::test]
@@ -2105,6 +2324,7 @@ async fn monitor_probe_uses_sysfs_edid_when_xrandr_verbose_is_missing() {
             );
             assert_eq!(monitor.product.as_deref(), Some("AOC TEST"));
             assert_eq!(monitor.manufactured_year, Some(2022));
+            assert_eq!(monitor.production_date.as_deref(), Some("2022-03"));
         }
         other => panic!("expected monitor properties, got {other:?}"),
     }
@@ -2128,6 +2348,32 @@ async fn monitor_probe_reports_xrandr_max_resolution() {
         DeviceProperties::Monitor(monitor) => {
             assert_eq!(monitor.resolution.as_deref(), Some("1920x1080"));
             assert_eq!(monitor.max_resolution.as_deref(), Some("2560x1440"));
+        }
+        other => panic!("expected monitor properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn monitor_probe_reports_interface_aspect_ratio_and_supported_modes() {
+    let runner = FakeSourceRunner::new().with_command(
+        "xrandr",
+        ["--query"],
+        "HDMI-1 connected primary 2560x1080+0+0\n\
+           2560x1080     59.98*+\n\
+           1920x1080     60.00\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MonitorProbe.probe(&ctx).await;
+
+    match &result.devices[0].properties {
+        DeviceProperties::Monitor(monitor) => {
+            assert_eq!(monitor.interface.as_deref(), Some("HDMI"));
+            assert_eq!(monitor.raw_interface.as_deref(), Some("HDMI-1"));
+            assert_eq!(monitor.aspect_ratio.as_deref(), Some("21:9"));
+            assert_eq!(
+                monitor.support_resolutions,
+                vec!["2560x1080@59.98Hz", "1920x1080@60Hz"]
+            );
         }
         other => panic!("expected monitor properties, got {other:?}"),
     }

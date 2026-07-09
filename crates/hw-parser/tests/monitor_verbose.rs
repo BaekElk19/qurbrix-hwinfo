@@ -38,6 +38,26 @@ fn parse_xrandr_query_extracts_first_mode_as_max_resolution() {
 }
 
 #[test]
+fn parse_xrandr_query_extracts_all_supported_modes_with_refresh_rates() {
+    let records = parse_xrandr_query(
+        "HDMI-1 connected primary 1920x1080+0+0\n\
+           2560x1440     59.95 +\n\
+           1920x1080     60.00* 59.94\n\
+           1280x720      60.00\n",
+    );
+
+    assert_eq!(
+        records[0].support_resolutions,
+        vec![
+            "2560x1440@59.95Hz",
+            "1920x1080@60Hz",
+            "1920x1080@59.94Hz",
+            "1280x720@60Hz",
+        ]
+    );
+}
+
+#[test]
 fn parse_xrandr_verbose_extracts_edid_bytes_by_connector() {
     let records = parse_xrandr_verbose(
         "HDMI-1 connected primary 1920x1080+0+0\n\

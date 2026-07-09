@@ -27,13 +27,12 @@
 | 主板 / BIOS | 约 100% | 约 105%（已超） | 已补 SMBIOS Version、BIOS ROM/Runtime/Address/Characteristics/Revision、Chipset Family、国产 vendor 归一化、Board Features/Type/Chassis Lock；保留 devicetree/fwupd/mokutil 等超参考增强为后续项 |
 | 内存 | 约 98% | 约 98% | 已达到 1.0 试用口径；剩余为真机 fixture 覆盖和保守匹配尾部风险，不阻塞上线 |
 | SSD / 存储 | 约 100% | 约 140%（已超） | 按本地 Deepin/Kylin 对齐口径已补 UFS `spec_version`、SATA Speed / RotationRate 文本、`/proc/bootdevice/cid` + `unique_number` 兜底、VID_PID / PhysID / Modalias、Capabilities、国产品牌前缀、容量展示归一、USB 桥接盘 `smartctl -d sat` 重试、PCI controller 父子链接 |
-| 显卡 | 约 60-65% | 约 130%（已超） | `/sys/kernel/debug/gc/total_mem`（Vivante GC / 飞腾）、景嘉微 JJW dmesg 正则、显示接口 connector 归并、位宽/时钟/IRQ/Capabilities/IOPort/MemAddress、EGL/GLSL、xrandr 分辨率写回 GpuInfo |
-| 显示器 | 约 65-70% | 约 110%（已超） | 多 DTD 尺寸解析 + base-vs-DTD 交叉校验、大端 EDID、Interface 分类字段、Aspect Ratio、全支持模式 @Hz 列表、0xFE Alphanumeric Name |
+| 显卡 | 约 100% | 约 145%（已超） | 按本地 Deepin/Kylin 对齐口径已补 `/sys/kernel/debug/gc/total_mem`（Vivante GC / 飞腾）、景嘉微 JJW dmesg、显示接口 connector 归并、位宽/时钟/IRQ/Capabilities/IOPort/MemAddress、EGL/GLSL、xrandr 分辨率写回 GpuInfo、PhysID/Modalias/VID_PID、GDDR capacity、Kylin HW990 `gpuinfo` |
+| 显示器 | 约 100% | 约 120%（已超） | 已补多 DTD 尺寸解析 + base-vs-DTD 交叉校验、大端 EDID、Interface 分类字段、Aspect Ratio、全支持模式 @Hz 列表、0xFE Alphanumeric Name；保留 CEA-861 / ddcutil / EDID 指纹去重为超参考增强 |
 
-综合基线（简单平均）：**vs Deepin ≈ 84%，vs Kylin ≈ 113%**。qurbrix 已经普遍超越 Kylin
+综合基线（简单平均）：**vs Deepin ≈ 96%，vs Kylin ≈ 118%**。qurbrix 已经普遍超越 Kylin
 的采集广度（Kylin 本身仅走 lscpu/dmidecode/lsblk/lshw display 等基础通道），主拉齐工作
-集中在 Deepin 侧：国产 SoC 特判、per-logical/per-DIMM 细粒度模型、UI 展示字段（Overview、
-Aspect Ratio、Interface 分类）与国产厂商归一化。
+集中在 Deepin 侧：CPU 国产 SoC 特判、per-logical-CPU 细粒度模型与 CPU Overview 文案。
 
 ---
 
@@ -255,55 +254,58 @@ Kylin 补丁 `debian/patches/0049-73.patch:10382-10404` 已引入 `gloway/changx
 |---|---|---|---|
 | `lspci -nn -k`（class 03） | Y | N | Y (`gpu.rs:31-43`) |
 | sysfs PCI class 0x03 fallback | N | N | Y (`existing.rs:3977-4070`) |
-| `lshw -class display` | Y | Y (`cpuinfo.py:1846`) | Y (部分字段，`gpu.rs:143-149`) |
+| `lshw -class display` | Y | Y (`cpuinfo.py:1846`) | Y（product/vendor/bus/driver/width/clock/irq/capabilities/ioport/memory） |
 | `/sys/class/drm/*/device/mem_info_vram_total` | 未直接用 | N | Y |
 | `/sys/bus/pci/devices/*/gpu-info`（Deepin `VRAM total size` 16 进制） | Y | N | Y (`parse_depin_gpu_info_vram_total`) |
 | `/proc/gpuinfo_0`（景嘉微 JJW） | Y | N | Y (`parse_proc_gpuinfo_memory_size`) |
 | `dmesg` 通用 VRAM 正则 | Y | N | Y |
-| `dmesg` JJW 专用正则 `VRAM Size N M` | Y (`CmdTool.cpp:513`) | N | **N** |
+| `dmesg` JJW 专用正则 `VRAM Size N M` | Y (`CmdTool.cpp:513`) | N | Y |
 | `nvidia-smi` CSV | Y | N | Y (`existing.rs:3816-3843`) |
 | `nvidia-settings -q VideoRam` | Y | N | Y (仅唯一 NVIDIA 场景) |
-| `nvidia-settings -q GPUMemoryInterface`（位宽） | Y (`CmdTool.cpp:740`) | N | **N** |
-| `glxinfo -B` renderer/vendor/version | Y | N | Y (`apply_gpu_glxinfo_enrichment`) |
-| `/sys/kernel/debug/gc/total_mem`（Vivante GC / FT-DTM） | Y (`customgpuinfo/main.cpp:52-96`) | N | **N** |
+| `nvidia-settings -q GPUMemoryInterface`（位宽） | Y (`CmdTool.cpp:740`) | N | Y（唯一 NVIDIA GPU 场景） |
+| `glxinfo -B` renderer/vendor/version/EGL/GLSL | Y | N | Y (`apply_gpu_glxinfo_enrichment`) |
+| `/sys/kernel/debug/gc/total_mem`（Vivante GC / FT-DTM） | Y (`customgpuinfo/main.cpp:52-96`) | N | Y（唯一 GPU 场景，权限不足时降级） |
 | root privileged DBus helper (customgpuinfo) | Y | N | 架构差异 |
-| Kylin `Judgment_HW990` + `gpuinfo` | N | Y (`cpuinfo.py:1881-1901`) | **N**（未捕获 GPU vendor / GPU type 键） |
+| Kylin `Judgment_HW990` + `gpuinfo` | N | Y (`cpuinfo.py:1881-1901`) | Y（唯一 GPU 场景捕获 GPU vendor / GPU type） |
 
 ### 5.2 字段差距
 
-qurbrix `GpuInfo`（`properties.rs:165-174`）：vendor/renderer/opengl_vendor/opengl_version/memory_bytes/
-current_resolution/max_resolution。
+qurbrix `GpuInfo` 已覆盖：vendor/renderer/opengl_vendor/opengl_version/glsl_version/egl_version/
+egl_client_apis/memory_bytes/memory_bus_width_bits/irq/clock_mhz/capabilities/io_port/mem_address/
+vid_pid/phys_id/modalias/gddr_capacity/current_resolution/max_resolution/connectors。
 
-关键缺口（对齐 Deepin `DeviceGpu.h:117-140`）：
+已补齐的 Deepin `DeviceGpu.h:117-140` 主展示项：
 
-- **显示接口聚合**：DP/HDMI/VGA/eDP/DVI/DigitalOutput/DisplayOutput 七种接口（Deepin xrandr 归并）
-- **Width（位宽）**：`GPUMemoryInterface` / lshw `width`
-- **Clock / IRQ / Capabilities / IOPort / MemAddress**：lshw 全采集，qurbrix `LshwDisplayRecord` 只取 4 字段
-- **EGL / GLSL version**：Deepin 独立字段（`DeviceInfo.cpp:1263,1282,1283`），qurbrix 仅 opengl_version
-- **GDDR capacity 独立字段**：Deepin 单独展示（合并到 memory_bytes 无法分列）
-- **PhysID / Modalias / VID_PID**：Deepin `DeviceGpu::setHwinfoInfo` 全部记录
-- **Current/Min/Max Resolution 挂到 GPU**：模型有字段但 GpuProbe 无写回逻辑（xrandr 结果只落到 Monitor）
+- **显示接口聚合**：xrandr connector 归并到 `GpuInfo.connectors`，含 HDMI/DP/eDP/VGA/DVI interface 分类
+- **Width（位宽）**：`nvidia-settings -q GPUMemoryInterface` 与 lshw `width`
+- **Clock / IRQ / Capabilities / IOPort / MemAddress**：lshw display 全采集并写回 `GpuInfo`
+- **EGL / GLSL version**：glxinfo 扩展 `egl_version` / `egl_client_apis` / `glsl_version`
+- **Current/Max Resolution 挂到 GPU**：唯一 GPU 场景下 xrandr 写回 `GpuInfo`
+- **GDDR capacity 独立字段**：从 Deepin `gpu-info` 读取并保留展示字段
+- **PhysID / Modalias / VID_PID**：对齐 Deepin `DeviceGpu::setHwinfoInfo`，`PhysID` 跟随 `VID_PID`
+- **Kylin HW990 `gpuinfo`**：唯一 GPU 场景捕获 `GPU vendor` / `GPU type`（ARM Mali 等）
 
 ### 5.3 国产厂商识别
 
-qurbrix `normalize_gpu_vendor{,_id}`（`hw-parser/src/normalize/gpu_vendor.rs:1-52`）：VID `0731=Jingjia`；
+qurbrix `normalize_gpu_vendor{,_id}`（`hw-parser/src/normalize/gpu_vendor.rs`）：VID `0731=Jingjia`、
+`1ed5=Moore Threads`、`1eb1=Muxi`、`1d17=Hygon`、`19e5=Huawei Ascend`；
 关键字 NVIDIA / AMD / Intel / Matrox / ASPEED / VMware / VirtIO / Loongson / Jingjia / Zhaoxin /
-Moore Threads / Innosilicon / WDE。
+Moore Threads / Muxi / Biren / Hygon / Huawei Ascend / ARM Mali / Kunpeng / Innosilicon / WDE。
 
-未覆盖：**摩尔线程 VID `1ed5`**、**沐曦 MXN VID `1eb1`**、**壁仞 Biren**、**海光 Hygon DCU VID `1d17`**、
-**华为 Ascend VID `19e5` 相关**、**龙芯完整型号**、**ARM Mali**（Kylin HW990 分支）。
+剩余：龙芯完整型号细分需要真实机样本继续收敛，不影响本地 Deepin/Kylin 对齐主项。
 
 ### 5.4 backlog
 
-- **P0**：`/sys/kernel/debug/gc/total_mem` Vivante GC 显存解析（飞腾 D2000 + FT-DTM / 华为 990 板必备）；
-  dmesg JJW 专用正则 `VRAM Size N M`；vendor 白名单展开（VID `1ed5` / `1eb1` / `1d17` / `19e5`，
-  `hygon`/`mxn`/`biren`/`ascend`/`kunpeng` 关键字）
-- **P1**：`GpuInfo` 新增 `memory_bus_width_bits` / `irq` / `clock_mhz` / `capabilities` / `io_port` /
-  `mem_address` / `connectors: Vec<Connector>`；`LshwDisplayRecord` 增补 width/clock/irq/capabilities/ioport/memory 键；
-  glxinfo 扩展 EGL / EGL client APIs / GLSL；xrandr 分辨率写回 `GpuInfo`；`/sys/class/drm/card*-<CONN>/status`
-  按 GPU 归并 connector
-- **P2**：Modalias / PhysID 输出；Kylin HW990 `gpuinfo` 兼容（ARM Mali GPU vendor / GPU type）；
-  `gddr_capacity` 与 `memory_bytes` 双份显存字段
+- **P0/P1 已完成**：`/sys/kernel/debug/gc/total_mem` Vivante GC 显存解析；dmesg JJW 专用正则
+  `VRAM Size N M`；国产 vendor 白名单展开（VID `1ed5` / `1eb1` / `1d17` / `19e5`，`hygon`/`mxn`/
+  `biren`/`ascend`/`mali`/`kunpeng` 关键字）；`GpuInfo` 新增 `memory_bus_width_bits` / `irq` /
+  `clock_mhz` / `capabilities` / `io_port` / `mem_address` / `connectors`；`LshwDisplayRecord`
+  增补 width/clock/irq/capabilities/ioport/memory 键；glxinfo 扩展 EGL / EGL client APIs / GLSL；
+  唯一 GPU 场景 xrandr 分辨率与 connector 写回 `GpuInfo`。
+- **P2（超参考增强）**：多 GPU 下 `/sys/class/drm/card*-<CONN>/status` 按 GPU 精确归并 connector；
+  龙芯/国产 GPU 真实机型号 fixture 继续补样本。注意：本地 Deepin 的 `setGpuInfoFromXrandr` 会把同一份
+  xrandr map 应用到所有 GPU，并未做 PCI 级 connector 精确归属；qurbrix 当前唯一 GPU 写回、多 GPU 保守跳过，
+  是避免误挂的保守策略。
 
 ### 5.5 风险
 
@@ -311,7 +313,8 @@ Moore Threads / Innosilicon / WDE。
 - Deepin `setDmesgInfo` 用 `HwinfoToLshw`(busID 后缀) 匹配 VRAM 归属；qurbrix 用完整 PCI 地址粒度更细，
   但 dmesg 中景嘉微行无 domain:bus 前缀时需右对齐匹配
 - glxinfo 只在"唯一 GPU"或"vendor 匹配唯一"时应用，多卡异构（Intel 核显 + NVIDIA）会漏（Deepin 也没做）
-- `normalize_gpu_vendor` 关键字 `wuhan digital engineering → WDE` 存疑，同时对 Hygon（海光 DCU）完全缺失
+- `normalize_gpu_vendor` 关键字 `wuhan digital engineering → WDE` 存疑；Hygon/Muxi/Biren/Ascend/Mali 等已补基础识别，
+  后续仍建议用真实国产 GPU 机器 fixture 校验型号展示口径
 
 ---
 
@@ -336,20 +339,21 @@ Deepin `DeviceMonitor` 字段：Model / DisplayInput / VGA/HDMI/DVI 开关 / Int
 ScreenSize (含 inch 格式化) / **AspectRatio（GCD 计算+21:9 兜底）** / MainScreen / CurrentResolution /
 SerialNumber / ProductionWeek / **SupportResolution（xrandr 全模式列表带 @Hz）** / RefreshRate / Width / Height。
 
-qurbrix `MonitorInfo`（`properties.rs:176-195`）：connector / resolution / max_resolution / size_mm /
-production_date / manufacturer_name / product / product_code / serial / manufactured_year / manufactured_week /
-size_cm / diagonal_inches / gamma / preferred_width/height/refresh_hz。
+qurbrix `MonitorInfo` 已覆盖 connector / interface / raw_interface / resolution / max_resolution /
+support_resolutions / aspect_ratio / size_mm / production_date / manufacturer_name / product / product_code /
+serial / manufactured_year / manufactured_week / size_cm / diagonal_inches / gamma /
+preferred_width/height/refresh_hz。
 
-关键缺口：
+阶段性已补：
 
-- **多 DTD 尺寸解析**：Deepin `parseDTDs` 遍历 4 个 DTD 块（`EDIDParser.cpp:304-397`），
-  qurbrix `edid.rs:62` 仅解析 base 0x15/0x16
-- **DTD 尺寸与 base 交叉校验**：|diff|<10mm 用 DTD 值，否则 base（`EDIDParser.cpp:216-222`）
-- **大端 EDID 支持**：Deepin `:56-70`；qurbrix 只处理小端
-- **Monitor name 0xFE Alphanumeric Data String** 兼容（Deepin `:266`）
-- **Interface 分类**：HDMI/VGA/DP/eDP 正则动态提取（Deepin `:437`）；qurbrix 只有原始 connector 字符串
-- **Aspect Ratio**：GCD + 21:9/32:9 兜底（Deepin `:501-553`）
-- **全支持模式列表**（每模式带 @Hz）：Deepin `:618-676`；qurbrix 仅 max_resolution 首模式
+- **多 DTD 尺寸解析**：遍历 base block 4 个 DTD 块（0x36/0x48/0x5A/0x6C），pixel_clock=0 跳过
+- **DTD 尺寸与 base 交叉校验**：|diff|<10mm 用 DTD mm 值，否则回退 base 0x15/0x16 cm 值
+- **大端 EDID 支持**：兼容 Deepin 所称相邻字节对交换的 `ff00ffffffff00ff` header 输入
+- **Monitor name 0xFE Alphanumeric Data String**：当 0xFC name 缺失时使用 0xFE 文本
+- **Interface 分类**：从 connector 派生 HDMI/VGA/DP/eDP/DVI，并保留 raw_interface 原始 connector
+- **Aspect Ratio**：按分辨率 GCD 计算，并对 21:9 / 32:9 超宽比例做近似归一
+- **全支持模式列表**：解析 xrandr mode 行的每个刷新率，输出 `分辨率@Hz`
+- **Production Date**：按 EDID year/week 生成 `YYYY-MM` 展示字段
 
 优势项（qurbrix 独占）：
 
@@ -359,16 +363,13 @@ size_cm / diagonal_inches / gamma / preferred_width/height/refresh_hz。
 
 ### 6.3 backlog
 
-- **P0**：EDID 多 DTD 遍历（0x36/0x48/0x5A/0x6C）+ pixel_clock=0 跳过；base vs DTD 尺寸交叉校验；
-  Interface 分类字段（从 connector 前缀派生）
-- **P1**：Aspect Ratio（GCD + 21:9/32:9 兜底）；完整支持模式列表（解析每 mode 行的 `Rate1 Rate2 *+`）；
-  Monitor name 0xFE 兼容；`production_date` 正规化为 `YYYY-MM`
-- **P2**：EDID 大小端模式检测；CEA-861 扩展块解析；ddcutil 集成读取亮度/输入源；EDID 三元组指纹去重
-  兜底残留的多可读 connector
+- **P0/P1**：本地 Deepin/Kylin 对齐主项已完成：EDID 多 DTD 遍历、base vs DTD 尺寸交叉校验、
+  Interface 分类、Aspect Ratio、完整支持模式列表、Monitor name 0xFE 兼容、`production_date` 正规化。
+- **P2（超参考增强）**：CEA-861 扩展块解析；ddcutil 集成读取亮度/输入源；EDID 三元组指纹去重兜底残留的多可读 connector
 
 ### 6.4 风险
 
-- qurbrix EDID 解析器严格只处理 128 字节 base block，扩展块字节完全丢弃
+- qurbrix EDID 解析器仍只消费 128 字节 base block，扩展块字节暂不参与 CEA-861 模式/音频能力解析
 - `MonitorInfo.manufacturer_name` 需确认是否内置 PNP → 长厂商名映射表，否则与 hwinfo `Vendor` 冲突
 - 重复 connector 策略是净优势，补齐 P0/P1 时勿改弱
 - 不建议引入 Kylin 的 `edid-decode` shell out（`/tmp` 写文件的多用户/权限风险）
@@ -382,13 +383,13 @@ size_cm / diagonal_inches / gamma / preferred_width/height/refresh_hz。
 ### P0（Deepin 平价 + 国产 SoC 必需）
 
 1. **CPU per-logical-CPU 明细树 + 每核当前频率**（对应 Deepin `LoadCpuInfoThread` 三层结构）
-2. **显卡 `/sys/kernel/debug/gc/total_mem` Vivante GC 显存**（飞腾 D2000 + FT-DTM / 华为 990 板核心指标）
-3. **显卡国产 vendor 白名单扩展**（摩尔线程 VID `1ed5` / 沐曦 `1eb1` / 海光 `1d17` / 华为 Ascend `19e5` / 壁仞 Biren）
+2. **已完成：显卡 `/sys/kernel/debug/gc/total_mem` Vivante GC 显存**（飞腾 D2000 + FT-DTM / 华为 990 板核心指标）
+3. **已完成：显卡国产 vendor 白名单扩展**（摩尔线程 VID `1ed5` / 沐曦 `1eb1` / 海光 `1d17` / 华为 Ascend `19e5` / 壁仞 Biren）
 4. **存储 vendor 前缀表扩展**（YMTC / ZhiTai / Gloway / KingSpec / KINGSTON / SanDisk / SAMSUNG / MICRON / SK Hynix / NETAC / RAMAXEL / BIWIN / CXMT）
 5. **存储 UFS 检测**（`/sys/block/*/device/spec_version`）+ RotationRate / SATA Speed 字段
 6. **已完成：主板 SMBIOS Version + BIOS ROM/Runtime/Address/Characteristics/Revision + Chipset Family**（Deepin 主 BIOS 面板全字段）
-7. **显示器 EDID 多 DTD 尺寸解析 + base-vs-DTD 交叉校验**（Deepin `parseDTDs` 全面对齐）
-8. **显示器 Interface 分类**（HDMI/VGA/DP/eDP 从 connector 派生）
+7. **已完成：显示器 EDID 多 DTD 尺寸解析 + base-vs-DTD 交叉校验**（Deepin `parseDTDs` 全面对齐）
+8. **已完成：显示器 Interface 分类**（HDMI/VGA/DP/eDP 从 connector 派生）
 9. **内存 DIMM Rank / Form Factor / Type Detail / Asset Tag + Module/Subsystem ID 独立字段**
 
 ### P1（国产兼容 + Deepin 常用展示字段）
@@ -398,21 +399,22 @@ size_cm / diagonal_inches / gamma / preferred_width/height/refresh_hz。
 12. **CPU Phytium 1500a `/sys/phytium1500a_info` 兜底**
 13. **CPU frequency-range 展示语义 + Overview 文案生成**
 14. **存储嵌入式 Serial 兜底**（`/proc/bootdevice/cid` + `/sys/.../unique_number`）+ VID_PID / Modalias / Capabilities
-15. **显卡 `GpuInfo` 新增 memory_bus_width_bits / irq / clock_mhz / capabilities / io_port / mem_address / connectors**
-16. **显卡 xrandr 分辨率写回 GpuInfo**；`/sys/class/drm/card*-<CONN>/status` 按 GPU 归并 connector
-17. **显卡 glxinfo 扩展 EGL / GLSL**
-18. **显示器 Aspect Ratio（GCD）+ 全支持模式列表（每模式 @Hz）+ Monitor name 0xFE 兼容**
+15. **已完成：显卡 `GpuInfo` 新增 memory_bus_width_bits / irq / clock_mhz / capabilities / io_port / mem_address / connectors**
+16. **已完成唯一 GPU 场景：显卡 xrandr 分辨率写回 GpuInfo**；多 GPU PCI 精确归属作为超参考增强保留为 P2
+17. **已完成：显卡 glxinfo 扩展 EGL / GLSL**
+18. **已完成：显示器 Aspect Ratio（GCD）+ 全支持模式列表（每模式 @Hz）+ Monitor name 0xFE 兼容 + EDID 大小端检测**
 19. **已移出 1.0 必做：内存 JEP106 全量友好名表**（本地 Deepin/Kylin 未实现；当前常见表 + 原始码保留已足够对齐）
 20. **已完成字段侧：主板 Chassis Lock / Board Features / Board Type**；sysfs Chassis fallback 受内核暴露字段限制，保持保守空值
+21. **已完成：显卡** Modalias / PhysID 输出；Kylin HW990 `gpuinfo` ARM Mali 兼容；`gddr_capacity` 独立字段
 
 ### P2（长尾）
 
-21. **CPU** Extensions 扩展 AVX/AES/SHA/VMX/SVM；Cache 结构化 `CacheEntry`；三源计数不一致 warning
-22. **主板** UEFI 变量 / fwupd / mokutil 交叉校验；DMI type 11/12
-23. **内存** NVDIMM 系列字段；`dmidecode -t 16` 冗余映射到 memory 类别；MiB/GiB→GB UI 归一
-24. **存储** `checkDiskSize` 定制机型容量归一（可能与"精确 bytes"策略冲突）；USB 桥接盘 `smartctl -d sat` 重试
-25. **显卡** Modalias / PhysID 输出；Kylin HW990 `gpuinfo` ARM Mali 兼容；`gddr_capacity` 独立字段
-26. **显示器** EDID 大小端检测；CEA-861 扩展块；ddcutil 亮度/输入源；EDID 三元组指纹去重
+22. **CPU** Extensions 扩展 AVX/AES/SHA/VMX/SVM；Cache 结构化 `CacheEntry`；三源计数不一致 warning
+23. **主板** UEFI 变量 / fwupd / mokutil 交叉校验；DMI type 11/12
+24. **内存** NVDIMM 系列字段；`dmidecode -t 16` 冗余映射到 memory 类别；MiB/GiB→GB UI 归一
+25. **存储** `checkDiskSize` 定制机型容量归一（可能与"精确 bytes"策略冲突）；USB 桥接盘 `smartctl -d sat` 重试
+26. **显卡** 多 GPU 下 `/sys/class/drm/card*-<CONN>/status` 按 GPU 精确归并 connector（超参考增强）
+27. **显示器** CEA-861 扩展块；ddcutil 亮度/输入源；EDID 三元组指纹去重
 
 ---
 

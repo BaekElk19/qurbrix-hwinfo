@@ -13,6 +13,10 @@ pub fn normalize_gpu_vendor_id(vendor_id: &str) -> Option<&'static str> {
         "15ad" => Some("VMware"),
         "1af4" => Some("VirtIO"),
         "0731" => Some("Jingjia Micro"),
+        "1ed5" => Some("Moore Threads"),
+        "1eb1" => Some("Muxi"),
+        "1d17" => Some("Hygon"),
+        "19e5" => Some("Huawei Ascend"),
         _ => None,
     }
 }
@@ -42,6 +46,18 @@ pub fn normalize_gpu_vendor(vendor: &str) -> Option<&'static str> {
         Some("Zhaoxin")
     } else if vendor.contains("moore threads") || vendor.contains("mthreads") {
         Some("Moore Threads")
+    } else if vendor.contains("mxn") || vendor.contains("muxi") {
+        Some("Muxi")
+    } else if vendor.contains("biren") {
+        Some("Biren")
+    } else if vendor.contains("hygon") {
+        Some("Hygon")
+    } else if vendor.contains("ascend") {
+        Some("Huawei Ascend")
+    } else if vendor.contains("mali") {
+        Some("ARM Mali")
+    } else if vendor.contains("kunpeng") {
+        Some("Kunpeng")
     } else if vendor.contains("innosilicon") {
         Some("Innosilicon")
     } else if vendor.contains("wuhan digital engineering") {

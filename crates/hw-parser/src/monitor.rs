@@ -7,6 +7,7 @@ pub struct XrandrMonitorRecord {
     pub primary: bool,
     pub resolution: Option<String>,
     pub max_resolution: Option<String>,
+    pub support_resolutions: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +47,7 @@ pub fn parse_xrandr_query(input: &str) -> Vec<XrandrMonitorRecord> {
                 primary,
                 resolution,
                 max_resolution: None,
+                support_resolutions: Vec::new(),
             });
             continue;
         }
@@ -53,6 +55,11 @@ pub fn parse_xrandr_query(input: &str) -> Vec<XrandrMonitorRecord> {
         if let Some(record) = records.last_mut() {
             if record.connected && record.max_resolution.is_none() {
                 record.max_resolution = parse_mode_resolution(first);
+            }
+            if record.connected {
+                record
+                    .support_resolutions
+                    .extend(parse_mode_refreshes(line));
             }
         }
     }
@@ -237,4 +244,29 @@ fn parse_mode_resolution(value: &str) -> Option<String> {
         && width.chars().all(|c| c.is_ascii_digit())
         && height.chars().all(|c| c.is_ascii_digit()))
     .then(|| value.to_string())
+}
+
+fn parse_mode_refreshes(line: &str) -> Vec<String> {
+    let mut parts = line.split_whitespace();
+    let Some(resolution) = parts.next().and_then(parse_mode_resolution) else {
+        return Vec::new();
+    };
+    parts
+        .filter_map(|part| {
+            let rate = part.trim_end_matches(['*', '+']);
+            if rate.is_empty() || !rate.chars().all(|ch| ch.is_ascii_digit() || ch == '.') {
+                return None;
+            }
+            Some(format!("{resolution}@{}Hz", normalize_refresh_rate(rate)))
+        })
+        .collect()
+}
+
+fn normalize_refresh_rate(rate: &str) -> String {
+    let trimmed = rate.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }

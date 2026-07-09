@@ -11,6 +11,12 @@ JJM GPU	Jingjia Micro
 Zhaoxin	Zhaoxin
 Moore Threads Technology	Moore Threads
 MThreads S80	Moore Threads
+MXN MUSA GPU	Muxi
+Biren BR100	Biren
+Hygon DCU	Hygon
+Huawei Ascend 910	Huawei Ascend
+ARM Mali-G76	ARM Mali
+Kunpeng 920 integrated GPU	Kunpeng
 Innosilicon Fantasy	Innosilicon
 Wuhan Digital Engineering Institute	WDE
 Unknown GPU Vendor	<none>

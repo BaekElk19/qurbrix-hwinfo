@@ -41,6 +41,12 @@ fn write_dtd(
     edid[offset + 7] = (((height >> 8) as u8) << 4) | ((v_blank >> 8) as u8 & 0x0f);
 }
 
+fn write_dtd_size(edid: &mut [u8], offset: usize, width_mm: u16, height_mm: u16) {
+    edid[offset + 12] = width_mm as u8;
+    edid[offset + 13] = height_mm as u8;
+    edid[offset + 14] = (((width_mm >> 8) as u8) << 4) | ((height_mm >> 8) as u8 & 0x0f);
+}
+
 fn update_checksum(edid: &mut [u8]) {
     let checksum = (256u16 - edid[..127].iter().map(|b| *b as u16).sum::<u16>() % 256) % 256;
     edid[127] = checksum as u8;
@@ -63,6 +69,30 @@ fn parse_edid_extracts_identity_and_timing() {
 }
 
 #[test]
+fn parse_edid_uses_matching_dtd_physical_size() {
+    let mut bytes = sample_edid();
+    write_dtd_size(&mut bytes, 54, 521, 319);
+    update_checksum(&mut bytes);
+
+    let edid = parse_edid(&bytes).unwrap();
+
+    assert_eq!(edid.size_mm, Some((521, 319)));
+    assert_eq!(edid.size_cm, Some((52, 32)));
+}
+
+#[test]
+fn parse_edid_keeps_base_size_when_dtd_physical_size_disagrees() {
+    let mut bytes = sample_edid();
+    write_dtd_size(&mut bytes, 54, 600, 340);
+    update_checksum(&mut bytes);
+
+    let edid = parse_edid(&bytes).unwrap();
+
+    assert_eq!(edid.size_mm, Some((520, 320)));
+    assert_eq!(edid.size_cm, Some((52, 32)));
+}
+
+#[test]
 fn parse_edid_keeps_standard_dtd_dimensions() {
     let mut bytes = sample_edid();
     write_dtd(&mut bytes, 54, 29, 800, 0, 1056, 0);
@@ -72,6 +102,32 @@ fn parse_edid_keeps_standard_dtd_dimensions() {
 
     assert_eq!(mode.width, 800);
     assert_eq!(mode.height, 1056);
+}
+
+#[test]
+fn parse_edid_uses_alphanumeric_data_string_as_name_fallback() {
+    let mut bytes = sample_edid();
+    bytes[75] = 0xfe;
+    bytes[77..90].copy_from_slice(b"AOC ALT     \n");
+    update_checksum(&mut bytes);
+
+    let edid = parse_edid(&bytes).unwrap();
+
+    assert_eq!(edid.name.as_deref(), Some("AOC ALT"));
+}
+
+#[test]
+fn parse_edid_accepts_pair_swapped_big_endian_bytes() {
+    let bytes = sample_edid()
+        .chunks(2)
+        .flat_map(|chunk| [chunk[1], chunk[0]])
+        .collect::<Vec<_>>();
+
+    let edid = parse_edid(&bytes).unwrap();
+
+    assert_eq!(edid.manufacturer.as_deref(), Some("AOC"));
+    assert_eq!(edid.name.as_deref(), Some("AOC TEST"));
+    assert_eq!(edid.size_mm, Some((520, 320)));
 }
 
 #[test]

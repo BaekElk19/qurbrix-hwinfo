@@ -244,7 +244,31 @@ pub struct GpuInfo {
     pub renderer: Option<String>,
     pub opengl_vendor: Option<String>,
     pub opengl_version: Option<String>,
+    pub glsl_version: Option<String>,
+    pub egl_version: Option<String>,
+    pub egl_client_apis: Option<String>,
     pub memory_bytes: Option<u64>,
+    pub memory_bus_width_bits: Option<u32>,
+    pub irq: Option<String>,
+    pub clock_mhz: Option<u32>,
+    pub capabilities: Vec<String>,
+    pub io_port: Option<String>,
+    pub mem_address: Option<String>,
+    pub vid_pid: Option<String>,
+    pub phys_id: Option<String>,
+    pub modalias: Option<String>,
+    pub gddr_capacity: Option<String>,
+    pub current_resolution: Option<String>,
+    pub max_resolution: Option<String>,
+    pub connectors: Vec<GpuConnectorInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GpuConnectorInfo {
+    pub connector: String,
+    pub interface: Option<String>,
+    pub connected: bool,
+    pub primary: bool,
     pub current_resolution: Option<String>,
     pub max_resolution: Option<String>,
 }
@@ -252,8 +276,12 @@ pub struct GpuInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct MonitorInfo {
     pub connector: Option<String>,
+    pub interface: Option<String>,
+    pub raw_interface: Option<String>,
     pub resolution: Option<String>,
     pub max_resolution: Option<String>,
+    pub support_resolutions: Vec<String>,
+    pub aspect_ratio: Option<String>,
     pub size_mm: Option<(u32, u32)>,
     pub production_date: Option<String>,
     pub manufacturer: Option<String>,

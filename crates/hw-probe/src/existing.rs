@@ -5,8 +5,9 @@ use crate::{
 use async_trait::async_trait;
 use hw_model::{
     device_id, BiosInfo, BusInfo, CpuInfo, Device, DeviceKind, DeviceProperties, DeviceRef,
-    DriverInfo, DriverStatus, GpuInfo, MemoryInfo, MonitorInfo, MotherboardInfo, NetworkInfo,
-    ScanWarning, SourceEvidence, SourceKind, SourceStatus, StorageInfo, SystemDeviceInfo,
+    DriverInfo, DriverStatus, GpuConnectorInfo, GpuInfo, MemoryInfo, MonitorInfo, MotherboardInfo,
+    NetworkInfo, ScanWarning, SourceEvidence, SourceKind, SourceStatus, StorageInfo,
+    SystemDeviceInfo,
 };
 use hw_parser::{
     cpu_extensions_from_flags, infer_cpu_vendor_from_name, lookup_pnp_manufacturer,
@@ -18,13 +19,14 @@ use hw_parser::{
     parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
     parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k,
-    parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv, parse_phytium1500a_info,
-    parse_proc_cpuinfo, parse_proc_hardware, parse_proc_meminfo_total_bytes, parse_size_to_bytes,
-    parse_smartctl_json, parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps,
-    parse_voltage_v, parse_width_bits, parse_xrandr_query, parse_xrandr_verbose,
-    DmesgGpuVramRecord, DmiBiosBoardRecord, DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord,
-    HwinfoDiskRecord, HwinfoMonitorRecord, LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord,
-    LshwStorageRecord, PciRecord,
+    parse_nvidia_settings_memory_interface, parse_nvidia_settings_videoram,
+    parse_nvidia_smi_memory_csv, parse_phytium1500a_info, parse_proc_cpuinfo, parse_proc_hardware,
+    parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
+    parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_voltage_v, parse_width_bits,
+    parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord,
+    DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord,
+    LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord, LshwStorageRecord, PciRecord,
+    XrandrMonitorRecord,
 };
 use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind, SourceResult};
 use std::{collections::HashMap, path::Path};
@@ -4252,15 +4254,24 @@ impl Probe for GpuProbe {
         let dmesg = gpu_dmesg_records(ctx).await;
         let nvidia_smi = gpu_nvidia_smi_records(ctx).await;
         let nvidia_settings = gpu_nvidia_settings_record(ctx).await;
+        let nvidia_settings_memory_interface =
+            gpu_nvidia_settings_memory_interface_record(ctx).await;
         let glxinfo = gpu_glxinfo_record(ctx).await;
         let proc_gpuinfo = gpu_proc_gpuinfo_record(ctx).await;
+        let debug_gc_total_mem = gpu_debug_gc_total_mem_record(ctx).await;
+        let xrandr = gpu_xrandr_record(ctx).await;
+        let kylin_gpuinfo = gpu_kylin_gpuinfo_record(ctx).await;
         let enrichments = GpuEnrichmentSources {
             lshw: &lshw,
             drm: &drm,
             dmesg: &dmesg,
             nvidia_smi: &nvidia_smi,
             nvidia_settings: &nvidia_settings,
+            nvidia_settings_memory_interface: &nvidia_settings_memory_interface,
             proc_gpuinfo: &proc_gpuinfo,
+            debug_gc_total_mem: &debug_gc_total_mem,
+            xrandr: &xrandr,
+            kylin_gpuinfo: &kylin_gpuinfo,
         };
         let result = ctx
             .runner
@@ -4290,6 +4301,7 @@ impl Probe for GpuProbe {
             fallback.devices = apply_gpu_glxinfo_to_devices(fallback.devices, &glxinfo);
             return fallback;
         }
+        let unique_gpu_count = gpus.len() == 1;
         let jingjia_gpu_count = gpus
             .iter()
             .filter(|gpu| is_jingjia_vendor_id(gpu.vendor_id.as_deref()))
@@ -4332,6 +4344,12 @@ impl Probe for GpuProbe {
                 })
                 .or_else(|| gpu.vendor.clone())
                 .or_else(|| gpu.device.clone());
+            let vid_pid = gpu_vid_pid(
+                gpu.vendor_id.as_deref(),
+                gpu.device_id.as_deref(),
+                gpu.subsystem_vendor_id.as_deref(),
+                gpu.subsystem_device_id.as_deref(),
+            );
             probe_result.consumed.push(DeviceRef { id: pci_id });
             let sysfs_gpu_info = gpu_sysfs_gpu_info_record(ctx, &gpu.address).await;
             let device = Device::new(
@@ -4367,24 +4385,53 @@ impl Probe for GpuProbe {
                 status: SourceStatus::Success,
                 summary: None,
             });
-            probe_result.devices.push(apply_gpu_proc_gpuinfo_enrichment(
-                apply_gpu_memory_enrichment(
-                    apply_gpu_drm_enrichment(
-                        apply_gpu_lshw_enrichment(
-                            apply_gpu_dmesg_enrichment(device, &dmesg),
-                            &lshw,
+            probe_result.devices.push(apply_gpu_xrandr_enrichment(
+                apply_gpu_kylin_gpuinfo_enrichment(
+                    apply_gpu_pci_detail_enrichment(
+                        ctx,
+                        apply_gpu_memory_bus_width_enrichment(
+                            apply_gpu_proc_gpuinfo_enrichment(
+                                apply_gpu_memory_enrichment(
+                                    apply_gpu_drm_enrichment(
+                                        apply_gpu_lshw_enrichment(
+                                            apply_gpu_dmesg_enrichment(device, &dmesg),
+                                            &lshw,
+                                        ),
+                                        &drm,
+                                    ),
+                                    sysfs_gpu_info
+                                        .as_ref()
+                                        .or_else(|| gpu_nvidia_smi_record(&nvidia_smi, &address))
+                                        .or_else(|| {
+                                            unique_nvidia_settings_record(
+                                                &nvidia_settings,
+                                                use_nvidia_settings,
+                                            )
+                                        })
+                                        .or_else(|| {
+                                            unique_gpu_memory_record(
+                                                &debug_gc_total_mem,
+                                                unique_gpu_count,
+                                            )
+                                        }),
+                                ),
+                                &proc_gpuinfo,
+                                jingjia_gpu_count == 1,
+                            ),
+                            unique_nvidia_settings_memory_interface_record(
+                                &nvidia_settings_memory_interface,
+                                use_nvidia_settings,
+                            ),
                         ),
-                        &drm,
-                    ),
-                    sysfs_gpu_info
-                        .as_ref()
-                        .or_else(|| gpu_nvidia_smi_record(&nvidia_smi, &address))
-                        .or_else(|| {
-                            unique_nvidia_settings_record(&nvidia_settings, use_nvidia_settings)
-                        }),
+                        &address,
+                        vid_pid,
+                    )
+                    .await,
+                    &kylin_gpuinfo,
+                    unique_gpu_count,
                 ),
-                &proc_gpuinfo,
-                jingjia_gpu_count == 1,
+                &xrandr,
+                unique_gpu_count,
             ));
         }
         probe_result.devices = apply_gpu_glxinfo_to_devices(probe_result.devices, &glxinfo);
@@ -4420,8 +4467,30 @@ struct GpuGlxinfoRecord {
     record: GlxinfoBasicRecord,
 }
 
+#[derive(Default)]
+struct GpuXrandrRecord {
+    source: String,
+    connectors: Vec<GpuConnectorInfo>,
+    current_resolution: Option<String>,
+    max_resolution: Option<String>,
+}
+
+#[derive(Default)]
+struct KylinGpuinfoRecord {
+    source: String,
+    vendor: Option<String>,
+    product: Option<String>,
+}
+
 struct GpuMemoryRecord {
     memory_bytes: u64,
+    gddr_capacity: Option<String>,
+    source: String,
+    kind: SourceKind,
+}
+
+struct GpuMemoryBusWidthRecord {
+    width_bits: u32,
     source: String,
     kind: SourceKind,
 }
@@ -4432,7 +4501,11 @@ struct GpuEnrichmentSources<'a> {
     dmesg: &'a GpuDmesgRecords,
     nvidia_smi: &'a GpuNvidiaSmiRecords,
     nvidia_settings: &'a Option<GpuMemoryRecord>,
+    nvidia_settings_memory_interface: &'a Option<GpuMemoryBusWidthRecord>,
     proc_gpuinfo: &'a Option<GpuMemoryRecord>,
+    debug_gc_total_mem: &'a Option<GpuMemoryRecord>,
+    xrandr: &'a GpuXrandrRecord,
+    kylin_gpuinfo: &'a KylinGpuinfoRecord,
 }
 
 struct GpuDrmRecord {
@@ -4453,6 +4526,202 @@ async fn gpu_glxinfo_record(ctx: &ProbeContext<'_>) -> GpuGlxinfoRecord {
         source: result.source,
         record: parse_glxinfo_basic(&result.stdout),
     }
+}
+
+async fn gpu_xrandr_record(ctx: &ProbeContext<'_>) -> GpuXrandrRecord {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("xrandr", ["--query"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return GpuXrandrRecord::default();
+    }
+    gpu_xrandr_record_from_query(result.source, parse_xrandr_query(&result.stdout))
+}
+
+async fn gpu_kylin_gpuinfo_record(ctx: &ProbeContext<'_>) -> KylinGpuinfoRecord {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("gpuinfo", std::iter::empty::<&str>()),
+            ctx.timeout,
+        )
+        .await;
+    if result.stdout.trim().is_empty() {
+        return KylinGpuinfoRecord::default();
+    }
+    let mut record = KylinGpuinfoRecord {
+        source: result.source,
+        ..Default::default()
+    };
+    for line in result.stdout.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        match key.trim() {
+            "GPU vendor" => record.vendor = Some(value.to_string()),
+            "GPU type" => record.product = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    record
+}
+
+fn gpu_xrandr_record_from_query(
+    source: String,
+    records: Vec<XrandrMonitorRecord>,
+) -> GpuXrandrRecord {
+    let connectors = records
+        .iter()
+        .map(|record| GpuConnectorInfo {
+            connector: record.connector.clone(),
+            interface: gpu_connector_interface(&record.connector),
+            connected: record.connected,
+            primary: record.primary,
+            current_resolution: record.resolution.clone(),
+            max_resolution: record.max_resolution.clone(),
+        })
+        .collect::<Vec<_>>();
+    let current_resolution = records
+        .iter()
+        .find(|record| record.connected && record.primary)
+        .or_else(|| records.iter().find(|record| record.connected))
+        .and_then(|record| record.resolution.clone());
+    let max_resolution = records
+        .iter()
+        .filter(|record| record.connected)
+        .filter_map(|record| {
+            let resolution = record
+                .max_resolution
+                .as_deref()
+                .or(record.resolution.as_deref())?;
+            Some((resolution_area(resolution)?, resolution.to_string()))
+        })
+        .max_by_key(|(area, _)| *area)
+        .map(|(_, resolution)| resolution);
+    GpuXrandrRecord {
+        source,
+        connectors,
+        current_resolution,
+        max_resolution,
+    }
+}
+
+fn apply_gpu_xrandr_enrichment(
+    mut device: Device,
+    xrandr: &GpuXrandrRecord,
+    use_for_device: bool,
+) -> Device {
+    if !use_for_device {
+        return device;
+    }
+    let mut contributed = false;
+    if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+        if gpu.current_resolution.is_none() && xrandr.current_resolution.is_some() {
+            gpu.current_resolution = xrandr.current_resolution.clone();
+            contributed = true;
+        }
+        if gpu.max_resolution.is_none() && xrandr.max_resolution.is_some() {
+            gpu.max_resolution = xrandr.max_resolution.clone();
+            contributed = true;
+        }
+        if gpu.connectors.is_empty() && !xrandr.connectors.is_empty() {
+            gpu.connectors = xrandr.connectors.clone();
+            contributed = true;
+        }
+    }
+    if contributed
+        && !xrandr.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == xrandr.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: xrandr.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn apply_gpu_kylin_gpuinfo_enrichment(
+    mut device: Device,
+    record: &KylinGpuinfoRecord,
+    use_for_device: bool,
+) -> Device {
+    if !use_for_device || (record.vendor.is_none() && record.product.is_none()) {
+        return device;
+    }
+    let mut contributed = false;
+    if let Some(product) = record.product.clone() {
+        device.name = product.clone();
+        device.model = Some(product);
+        contributed = true;
+    }
+    let vendor = record
+        .product
+        .as_deref()
+        .and_then(normalize_gpu_vendor)
+        .map(str::to_string)
+        .or_else(|| {
+            record
+                .vendor
+                .as_deref()
+                .and_then(normalize_gpu_vendor)
+                .map(str::to_string)
+        })
+        .or_else(|| record.vendor.clone());
+    if let Some(vendor) = vendor {
+        device.vendor = Some(vendor.clone());
+        if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+            gpu.vendor = Some(vendor);
+        }
+        contributed = true;
+    }
+    if contributed
+        && !record.source.is_empty()
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == record.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: record.source.clone(),
+            kind: SourceKind::Command,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn gpu_connector_interface(connector: &str) -> Option<String> {
+    let upper = connector.to_ascii_uppercase();
+    if upper.starts_with("HDMI") {
+        Some("HDMI".to_string())
+    } else if upper.starts_with("EDP") {
+        Some("eDP".to_string())
+    } else if upper.starts_with("DP") || upper.starts_with("DISPLAYPORT") {
+        Some("DP".to_string())
+    } else if upper.starts_with("VGA") {
+        Some("VGA".to_string())
+    } else if upper.starts_with("DVI") {
+        Some("DVI".to_string())
+    } else {
+        None
+    }
+}
+
+fn resolution_area(resolution: &str) -> Option<u64> {
+    let (width, height) = resolution.split_once('x')?;
+    Some(width.parse::<u64>().ok()? * height.parse::<u64>().ok()?)
 }
 
 fn apply_gpu_glxinfo_to_devices(
@@ -4606,6 +4875,18 @@ fn apply_gpu_glxinfo_enrichment(mut device: Device, glxinfo: &GpuGlxinfoRecord) 
             gpu.opengl_version = record.version.clone();
             contributed = true;
         }
+        if gpu.glsl_version.is_none() && record.glsl_version.is_some() {
+            gpu.glsl_version = record.glsl_version.clone();
+            contributed = true;
+        }
+        if gpu.egl_version.is_none() && record.egl_version.is_some() {
+            gpu.egl_version = record.egl_version.clone();
+            contributed = true;
+        }
+        if gpu.egl_client_apis.is_none() && record.egl_client_apis.is_some() {
+            gpu.egl_client_apis = record.egl_client_apis.clone();
+            contributed = true;
+        }
     }
 
     if contributed
@@ -4638,6 +4919,7 @@ async fn gpu_sysfs_gpu_info_record(
     }
     Some(GpuMemoryRecord {
         memory_bytes: parse_deepin_gpu_info_vram_total(&result.stdout)?,
+        gddr_capacity: parse_deepin_gpu_info_gddr_capacity(&result.stdout),
         source: result.source,
         kind: SourceKind::Sysfs,
     })
@@ -4650,9 +4932,42 @@ async fn gpu_proc_gpuinfo_record(ctx: &ProbeContext<'_>) -> Option<GpuMemoryReco
     }
     Some(GpuMemoryRecord {
         memory_bytes: parse_proc_gpuinfo_memory_size(&result.stdout)?,
+        gddr_capacity: None,
         source: result.source,
         kind: SourceKind::Procfs,
     })
+}
+
+async fn gpu_debug_gc_total_mem_record(ctx: &ProbeContext<'_>) -> Option<GpuMemoryRecord> {
+    let path = Path::new("/sys/kernel/debug/gc/total_mem");
+    let result = ctx.runner.read_file(path).await;
+    if !result.is_success() {
+        return None;
+    }
+    Some(GpuMemoryRecord {
+        memory_bytes: parse_gpu_debug_gc_total_mem(&result.stdout)?,
+        gddr_capacity: None,
+        source: result.source,
+        kind: SourceKind::Sysfs,
+    })
+}
+
+fn parse_gpu_debug_gc_total_mem(input: &str) -> Option<u64> {
+    let line = input.lines().find(|line| !line.trim().is_empty())?;
+    let mut parts = line.split_whitespace();
+    let value = parts.next()?.parse::<f64>().ok()?;
+    let unit = parts
+        .next()
+        .unwrap_or("B")
+        .trim_matches(|ch| ch == '(' || ch == ')');
+    let multiplier = match unit.to_ascii_lowercase().as_str() {
+        "kb" | "kib" => 1024.0,
+        "mb" | "mib" => 1024.0 * 1024.0,
+        "gb" | "gib" => 1024.0 * 1024.0 * 1024.0,
+        "b" => 1.0,
+        _ => return None,
+    };
+    Some((value * multiplier) as u64)
 }
 
 fn parse_deepin_gpu_info_vram_total(input: &str) -> Option<u64> {
@@ -4663,6 +4978,16 @@ fn parse_deepin_gpu_info_vram_total(input: &str) -> Option<u64> {
         }
         let value = value.trim().trim_start_matches("0x");
         u64::from_str_radix(value, 16).ok()
+    })
+}
+
+fn parse_deepin_gpu_info_gddr_capacity(input: &str) -> Option<String> {
+    input.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case("GDDR capacity")
+            .then(|| value.trim().to_string())
+            .filter(|value| !value.is_empty())
     })
 }
 
@@ -4699,6 +5024,10 @@ fn apply_gpu_memory_enrichment(mut device: Device, record: Option<&GpuMemoryReco
             gpu.memory_bytes = Some(record.memory_bytes);
             contributed = true;
         }
+        if gpu.gddr_capacity.is_none() && record.gddr_capacity.is_some() {
+            gpu.gddr_capacity = record.gddr_capacity.clone();
+            contributed = true;
+        }
     }
 
     if contributed
@@ -4716,6 +5045,111 @@ fn apply_gpu_memory_enrichment(mut device: Device, record: Option<&GpuMemoryReco
     }
 
     device
+}
+
+async fn apply_gpu_pci_detail_enrichment(
+    ctx: &ProbeContext<'_>,
+    mut device: Device,
+    address: &str,
+    vid_pid: Option<String>,
+) -> Device {
+    let modalias = read_optional_trimmed(
+        ctx,
+        &Path::new("/sys/bus/pci/devices")
+            .join(address)
+            .join("modalias"),
+    )
+    .await;
+    let vid_pid = modalias
+        .as_deref()
+        .and_then(gpu_vid_pid_from_modalias)
+        .or(vid_pid);
+    let mut contributed = false;
+    if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+        if gpu.vid_pid.is_none() && vid_pid.is_some() {
+            gpu.vid_pid = vid_pid.clone();
+            gpu.phys_id = gpu.phys_id.take().or(vid_pid);
+            contributed = true;
+        }
+        if gpu.modalias.is_none() && modalias.is_some() {
+            gpu.modalias = modalias;
+            contributed = true;
+        }
+    }
+    if contributed {
+        let source = format!("/sys/bus/pci/devices/{address}");
+        if !device
+            .sources
+            .iter()
+            .any(|source_evidence| source_evidence.source == source)
+        {
+            device = device.with_source(SourceEvidence {
+                source,
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+    }
+    device
+}
+
+fn gpu_vid_pid(
+    vendor_id: Option<&str>,
+    device_id: Option<&str>,
+    subsystem_vendor_id: Option<&str>,
+    subsystem_device_id: Option<&str>,
+) -> Option<String> {
+    let vendor_id = vendor_id?;
+    let device_id = device_id?;
+    Some(
+        [
+            Some(vendor_id),
+            Some(device_id),
+            subsystem_vendor_id,
+            subsystem_device_id,
+        ]
+        .into_iter()
+        .flatten()
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("/"),
+    )
+}
+
+fn gpu_vid_pid_from_modalias(modalias: &str) -> Option<String> {
+    let (_, after_vendor_marker) = modalias.split_once(":v")?;
+    let vendor = after_vendor_marker.get(..8)?;
+    let (_, after_device_marker) = after_vendor_marker.get(8..)?.split_once('d')?;
+    let device = after_device_marker.get(..8)?;
+    let subsystem_vendor = after_device_marker
+        .get(8..)
+        .and_then(|tail| tail.split_once("sv"))
+        .and_then(|(_, tail)| tail.get(..8));
+    let subsystem_device = after_device_marker
+        .get(8..)
+        .and_then(|tail| tail.split_once("sd"))
+        .and_then(|(_, tail)| tail.get(..8));
+    Some(
+        [
+            Some(vendor),
+            Some(device),
+            subsystem_vendor,
+            subsystem_device,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|value| value.trim_start_matches('0').to_ascii_lowercase())
+        .map(|value| {
+            if value.is_empty() {
+                "0".to_string()
+            } else {
+                value
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/"),
+    )
 }
 
 fn device_is_jingjia_gpu(device: &Device) -> bool {
@@ -4826,6 +5260,32 @@ fn apply_gpu_lshw_enrichment(mut device: Device, lshw: &GpuLshwDisplayRecords) -
         contributed |= driver != original;
         device.driver = Some(driver);
     }
+    if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+        if gpu.memory_bus_width_bits.is_none() && record.width_bits.is_some() {
+            gpu.memory_bus_width_bits = record.width_bits;
+            contributed = true;
+        }
+        if gpu.clock_mhz.is_none() && record.clock_mhz.is_some() {
+            gpu.clock_mhz = record.clock_mhz;
+            contributed = true;
+        }
+        if gpu.irq.is_none() && record.irq.is_some() {
+            gpu.irq = record.irq.clone();
+            contributed = true;
+        }
+        if gpu.capabilities.is_empty() && !record.capabilities.is_empty() {
+            gpu.capabilities = record.capabilities.clone();
+            contributed = true;
+        }
+        if gpu.io_port.is_none() && record.io_port.is_some() {
+            gpu.io_port = record.io_port.clone();
+            contributed = true;
+        }
+        if gpu.mem_address.is_none() && record.mem_address.is_some() {
+            gpu.mem_address = record.mem_address.clone();
+            contributed = true;
+        }
+    }
     if contributed
         && !lshw.source.is_empty()
         && !device
@@ -4924,6 +5384,7 @@ async fn gpu_nvidia_smi_records(ctx: &ProbeContext<'_>) -> GpuNvidiaSmiRecords {
                 record.pci_address,
                 GpuMemoryRecord {
                     memory_bytes: record.memory_bytes,
+                    gddr_capacity: None,
                     source: result.source.clone(),
                     kind: SourceKind::Command,
                 },
@@ -4954,12 +5415,78 @@ async fn gpu_nvidia_settings_record(ctx: &ProbeContext<'_>) -> Option<GpuMemoryR
 
     Some(GpuMemoryRecord {
         memory_bytes: parse_nvidia_settings_videoram(&result.stdout)?,
+        gddr_capacity: None,
+        source: result.source,
+        kind: SourceKind::Command,
+    })
+}
+
+async fn gpu_nvidia_settings_memory_interface_record(
+    ctx: &ProbeContext<'_>,
+) -> Option<GpuMemoryBusWidthRecord> {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("nvidia-settings", ["-q", "GPUMemoryInterface"]),
+            ctx.timeout,
+        )
+        .await;
+    if !result.is_success() {
+        return None;
+    }
+
+    Some(GpuMemoryBusWidthRecord {
+        width_bits: parse_nvidia_settings_memory_interface(&result.stdout)?,
         source: result.source,
         kind: SourceKind::Command,
     })
 }
 
 fn unique_nvidia_settings_record(
+    record: &Option<GpuMemoryRecord>,
+    use_for_device: bool,
+) -> Option<&GpuMemoryRecord> {
+    use_for_device.then_some(record.as_ref()).flatten()
+}
+
+fn unique_nvidia_settings_memory_interface_record(
+    record: &Option<GpuMemoryBusWidthRecord>,
+    use_for_device: bool,
+) -> Option<&GpuMemoryBusWidthRecord> {
+    use_for_device.then_some(record.as_ref()).flatten()
+}
+
+fn apply_gpu_memory_bus_width_enrichment(
+    mut device: Device,
+    record: Option<&GpuMemoryBusWidthRecord>,
+) -> Device {
+    let Some(record) = record else {
+        return device;
+    };
+    let mut contributed = false;
+    if let DeviceProperties::Gpu(gpu) = &mut device.properties {
+        if gpu.memory_bus_width_bits.is_none() {
+            gpu.memory_bus_width_bits = Some(record.width_bits);
+            contributed = true;
+        }
+    }
+    if contributed
+        && !device
+            .sources
+            .iter()
+            .any(|source| source.source == record.source)
+    {
+        device = device.with_source(SourceEvidence {
+            source: record.source.clone(),
+            kind: record.kind,
+            status: SourceStatus::Success,
+            summary: None,
+        });
+    }
+    device
+}
+
+fn unique_gpu_memory_record(
     record: &Option<GpuMemoryRecord>,
     use_for_device: bool,
 ) -> Option<&GpuMemoryRecord> {
@@ -5084,11 +5611,18 @@ async fn gpu_devices_from_sysfs_pci(
         .iter()
         .filter(|record| is_nvidia_gpu_identity(record.vendor_id.as_deref(), None, None))
         .count();
+    let unique_gpu_count = records.len() == 1;
 
     for record in records {
         let address = record.address.clone();
         let use_nvidia_settings = nvidia_gpu_count == 1
             && is_nvidia_gpu_identity(record.vendor_id.as_deref(), None, None);
+        let vid_pid = gpu_vid_pid(
+            record.vendor_id.as_deref(),
+            record.device_id.as_deref(),
+            record.subsystem_vendor_id.as_deref(),
+            record.subsystem_device_id.as_deref(),
+        );
         let vendor = record
             .vendor_id
             .as_deref()
@@ -5135,24 +5669,53 @@ async fn gpu_devices_from_sysfs_pci(
                 status: DriverStatus::InUse,
             });
         }
-        devices.push(apply_gpu_proc_gpuinfo_enrichment(
-            apply_gpu_memory_enrichment(
-                apply_gpu_drm_enrichment(
-                    apply_gpu_lshw_enrichment(
-                        apply_gpu_dmesg_enrichment(device, sources.dmesg),
-                        sources.lshw,
+        devices.push(apply_gpu_xrandr_enrichment(
+            apply_gpu_kylin_gpuinfo_enrichment(
+                apply_gpu_pci_detail_enrichment(
+                    ctx,
+                    apply_gpu_memory_bus_width_enrichment(
+                        apply_gpu_proc_gpuinfo_enrichment(
+                            apply_gpu_memory_enrichment(
+                                apply_gpu_drm_enrichment(
+                                    apply_gpu_lshw_enrichment(
+                                        apply_gpu_dmesg_enrichment(device, sources.dmesg),
+                                        sources.lshw,
+                                    ),
+                                    sources.drm,
+                                ),
+                                sysfs_gpu_info
+                                    .as_ref()
+                                    .or_else(|| gpu_nvidia_smi_record(sources.nvidia_smi, &address))
+                                    .or_else(|| {
+                                        unique_nvidia_settings_record(
+                                            sources.nvidia_settings,
+                                            use_nvidia_settings,
+                                        )
+                                    })
+                                    .or_else(|| {
+                                        unique_gpu_memory_record(
+                                            sources.debug_gc_total_mem,
+                                            unique_gpu_count,
+                                        )
+                                    }),
+                            ),
+                            sources.proc_gpuinfo,
+                            jingjia_gpu_count == 1,
+                        ),
+                        unique_nvidia_settings_memory_interface_record(
+                            sources.nvidia_settings_memory_interface,
+                            use_nvidia_settings,
+                        ),
                     ),
-                    sources.drm,
-                ),
-                sysfs_gpu_info
-                    .as_ref()
-                    .or_else(|| gpu_nvidia_smi_record(sources.nvidia_smi, &address))
-                    .or_else(|| {
-                        unique_nvidia_settings_record(sources.nvidia_settings, use_nvidia_settings)
-                    }),
+                    &address,
+                    vid_pid,
+                )
+                .await,
+                sources.kylin_gpuinfo,
+                unique_gpu_count,
             ),
-            sources.proc_gpuinfo,
-            jingjia_gpu_count == 1,
+            sources.xrandr,
+            unique_gpu_count,
         ));
     }
 
@@ -5284,6 +5847,7 @@ impl Probe for MonitorProbe {
                             connector.clone(),
                             None,
                             None,
+                            Vec::new(),
                             result.source.clone(),
                             SourceKind::Command,
                             true,
@@ -5299,6 +5863,7 @@ impl Probe for MonitorProbe {
                             mon.connector,
                             mon.resolution,
                             mon.max_resolution,
+                            mon.support_resolutions,
                             result.source.clone(),
                             SourceKind::Command,
                             false,
@@ -5315,6 +5880,7 @@ impl Probe for MonitorProbe {
                         connector.clone(),
                         None,
                         None,
+                        Vec::new(),
                         result.source.clone(),
                         SourceKind::Command,
                         true,
@@ -5331,6 +5897,7 @@ impl Probe for MonitorProbe {
                     connector,
                     resolution,
                     max_resolution,
+                    support_resolutions,
                     mut source,
                     mut source_kind,
                     require_edid,
@@ -5338,8 +5905,12 @@ impl Probe for MonitorProbe {
                     let id = device_id::other("monitor", &connector);
                     let mut info = MonitorInfo {
                         connector: Some(connector.clone()),
+                        interface: monitor_connector_interface(&connector),
+                        raw_interface: Some(connector.clone()),
+                        aspect_ratio: resolution.as_deref().and_then(monitor_aspect_ratio),
                         resolution,
                         max_resolution,
+                        support_resolutions,
                         ..Default::default()
                     };
                     let valid_edid_source = edids.get(&connector).and_then(|candidates| {
@@ -5400,6 +5971,7 @@ fn monitor_device_from_hwinfo(index: usize, record: &HwinfoMonitorRecord, source
         name,
         DeviceProperties::Monitor(MonitorInfo {
             resolution: record.resolution.clone(),
+            aspect_ratio: record.resolution.as_deref().and_then(monitor_aspect_ratio),
             size_mm: record.size_mm,
             manufacturer: record.vendor.clone(),
             manufacturer_name: record.vendor.clone(),
@@ -5462,6 +6034,7 @@ fn apply_monitor_hwinfo_enrichment(mut device: Device, hwinfo: &MonitorHwinfoRec
     }
     if info.resolution.is_none() {
         info.resolution = record.resolution.clone();
+        info.aspect_ratio = info.resolution.as_deref().and_then(monitor_aspect_ratio);
     }
     if !hwinfo.source.is_empty()
         && !device
@@ -5651,12 +6224,70 @@ fn apply_edid(info: &mut MonitorInfo, edid: hw_parser::EdidRecord) {
     info.serial = edid.serial;
     info.manufactured_year = edid.year;
     info.manufactured_week = edid.week;
+    info.production_date = monitor_production_date(edid.year, edid.week);
     info.size_cm = edid.size_cm;
+    if info.size_mm.is_none() {
+        info.size_mm = edid.size_mm;
+    }
     info.diagonal_inches = edid.size_cm.map(diagonal_inches);
     info.gamma = edid.gamma;
     info.preferred_width = edid.preferred_mode.as_ref().map(|mode| mode.width);
     info.preferred_height = edid.preferred_mode.as_ref().map(|mode| mode.height);
     info.preferred_refresh_hz = edid.preferred_mode.as_ref().map(|mode| mode.refresh_hz);
+}
+
+fn monitor_connector_interface(connector: &str) -> Option<String> {
+    let upper = connector.to_ascii_uppercase();
+    if upper.starts_with("HDMI") {
+        Some("HDMI".to_string())
+    } else if upper.starts_with("EDP") {
+        Some("eDP".to_string())
+    } else if upper.starts_with("DP") || upper.starts_with("DISPLAYPORT") {
+        Some("DP".to_string())
+    } else if upper.starts_with("VGA") {
+        Some("VGA".to_string())
+    } else if upper.starts_with("DVI") {
+        Some("DVI".to_string())
+    } else {
+        None
+    }
+}
+
+fn monitor_production_date(year: Option<u16>, week: Option<u8>) -> Option<String> {
+    let year = year?;
+    let week = week?;
+    if week == 0 {
+        return None;
+    }
+    let month = ((week as u16 * 7).saturating_sub(1) / 30 + 1).min(12);
+    Some(format!("{year:04}-{month:02}"))
+}
+
+fn monitor_aspect_ratio(resolution: &str) -> Option<String> {
+    let (width, height) = parse_monitor_resolution(resolution)?;
+    let width = width as u32;
+    let height = height as u32;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let ratio = width as f32 / height as f32;
+    if (ratio - 21.0 / 9.0).abs() < 0.08 {
+        return Some("21:9".to_string());
+    }
+    if (ratio - 32.0 / 9.0).abs() < 0.08 {
+        return Some("32:9".to_string());
+    }
+    let divisor = gcd(width, height);
+    Some(format!("{}:{}", width / divisor, height / divisor))
+}
+
+fn gcd(mut left: u32, mut right: u32) -> u32 {
+    while right != 0 {
+        let next = left % right;
+        left = right;
+        right = next;
+    }
+    left
 }
 
 fn diagonal_inches((width_cm, height_cm): (u8, u8)) -> f32 {

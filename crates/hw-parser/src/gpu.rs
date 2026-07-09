@@ -1,4 +1,4 @@
-use crate::{parse_lspci_nn_k, PciRecord};
+use crate::{parse_lspci_nn_k, parse_width_bits, PciRecord};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -7,6 +7,12 @@ pub struct LshwDisplayRecord {
     pub vendor: Option<String>,
     pub bus_info: Option<String>,
     pub driver: Option<String>,
+    pub width_bits: Option<u32>,
+    pub clock_mhz: Option<u32>,
+    pub irq: Option<String>,
+    pub capabilities: Vec<String>,
+    pub io_port: Option<String>,
+    pub mem_address: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -20,6 +26,9 @@ pub struct GlxinfoBasicRecord {
     pub renderer: Option<String>,
     pub vendor: Option<String>,
     pub version: Option<String>,
+    pub glsl_version: Option<String>,
+    pub egl_version: Option<String>,
+    pub egl_client_apis: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -57,6 +66,14 @@ pub fn parse_glxinfo_basic(input: &str) -> GlxinfoBasicRecord {
             "OpenGL core profile version string" if record.version.is_none() => {
                 record.version = value;
             }
+            "OpenGL shading language version string" => record.glsl_version = value,
+            "OpenGL core profile shading language version string"
+                if record.glsl_version.is_none() =>
+            {
+                record.glsl_version = value;
+            }
+            "EGL version string" => record.egl_version = value,
+            "EGL client APIs" => record.egl_client_apis = value,
             _ => {}
         }
     }
@@ -117,6 +134,23 @@ pub fn parse_nvidia_settings_videoram(input: &str) -> Option<u64> {
     values.next().is_none().then_some(memory_bytes)
 }
 
+pub fn parse_nvidia_settings_memory_interface(input: &str) -> Option<u32> {
+    let mut values = input.lines().filter_map(|line| {
+        if !line.contains("GPUMemoryInterface") {
+            return None;
+        }
+        let (_, value) = line.rsplit_once(':')?;
+        let digits = value
+            .trim()
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<String>();
+        digits.parse::<u32>().ok()
+    });
+    let width_bits = values.next()?;
+    values.next().is_none().then_some(width_bits)
+}
+
 pub fn parse_lshw_display(input: &str) -> Vec<LshwDisplayRecord> {
     let mut records = Vec::new();
     let mut current: Option<LshwDisplayRecord> = None;
@@ -144,7 +178,11 @@ pub fn parse_lshw_display(input: &str) -> Vec<LshwDisplayRecord> {
             "product" => record.product = clean_lshw_display_value(value),
             "vendor" => record.vendor = clean_lshw_display_value(value),
             "bus info" => record.bus_info = clean_lshw_display_value(value),
+            "width" => record.width_bits = parse_width_bits(Some(value)),
+            "clock" => record.clock_mhz = parse_lshw_clock_mhz(value),
+            "capabilities" => record.capabilities = parse_lshw_capabilities(value),
             "configuration" => parse_lshw_display_configuration(record, value),
+            "resources" => parse_lshw_display_resources(record, value),
             _ => {}
         }
     }
@@ -232,9 +270,64 @@ fn parse_lshw_display_configuration(record: &mut LshwDisplayRecord, value: &str)
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };
-        if key == "driver" {
-            record.driver = clean_lshw_display_value(value);
+        match key {
+            "driver" => record.driver = clean_lshw_display_value(value),
+            "irq" => record.irq = clean_lshw_display_value(value),
+            _ => {}
         }
+    }
+}
+
+fn parse_lshw_display_resources(record: &mut LshwDisplayRecord, value: &str) {
+    let mut mem_addresses = Vec::new();
+    for part in value.split_whitespace() {
+        let Some((key, value)) = part.split_once(':') else {
+            continue;
+        };
+        match key {
+            "irq" => {
+                record.irq = record
+                    .irq
+                    .clone()
+                    .or_else(|| clean_lshw_display_value(value))
+            }
+            "ioport" => {
+                record.io_port = record
+                    .io_port
+                    .clone()
+                    .or_else(|| clean_lshw_display_value(value))
+            }
+            "memory" => {
+                if let Some(value) = clean_lshw_display_value(value) {
+                    mem_addresses.push(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    if record.mem_address.is_none() && !mem_addresses.is_empty() {
+        record.mem_address = Some(mem_addresses.join("; "));
+    }
+}
+
+fn parse_lshw_capabilities(value: &str) -> Vec<String> {
+    value
+        .split_whitespace()
+        .filter_map(clean_lshw_display_value)
+        .collect()
+}
+
+fn parse_lshw_clock_mhz(value: &str) -> Option<u32> {
+    let value = value.trim().to_ascii_lowercase();
+    let digits = value
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    let number = digits.parse::<u32>().ok()?;
+    if value.contains("ghz") {
+        number.checked_mul(1000)
+    } else {
+        Some(number)
     }
 }
 
