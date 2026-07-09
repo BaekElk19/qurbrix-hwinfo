@@ -25,12 +25,12 @@
 |---|---|---|---|
 | CPU | 约 82% | 约 95% | per-logical-CPU 明细树、PANGU M900 特判、`isHwPlatform` 语义、Overview 文案；Phytium 1500a `/sys/phytium1500a_info` 兜底 |
 | 主板 / BIOS | 约 65-70% | 约 95% | SMBIOS Version、BIOS ROM/Runtime/Address/Characteristics/Revision、Chipset Family、国产 vendor 归一化、Board Features/Type/Chassis Lock |
-| 内存 | 约 80% | 约 95% | DIMM Rank / Form Factor / Type Detail / Asset Tag、Module/Subsystem ID 独立字段、Overview 聚合、国产厂商映射 |
+| 内存 | 约 98% | 约 98% | 已达到 1.0 试用口径；剩余为真机 fixture 覆盖和保守匹配尾部风险，不阻塞上线 |
 | SSD / 存储 | 约 65% | 约 130%（已超） | UFS 检测（`spec_version`）、SATA Speed / RotationRate 文本、`/proc/bootdevice/cid` + `unique_number` 兜底、VID_PID / PhysID / Modalias、国产品牌前缀（YMTC/ZhiTai/Gloway/…） |
 | 显卡 | 约 60-65% | 约 130%（已超） | `/sys/kernel/debug/gc/total_mem`（Vivante GC / 飞腾）、景嘉微 JJW dmesg 正则、显示接口 connector 归并、位宽/时钟/IRQ/Capabilities/IOPort/MemAddress、EGL/GLSL、xrandr 分辨率写回 GpuInfo |
 | 显示器 | 约 65-70% | 约 110%（已超） | 多 DTD 尺寸解析 + base-vs-DTD 交叉校验、大端 EDID、Interface 分类字段、Aspect Ratio、全支持模式 @Hz 列表、0xFE Alphanumeric Name |
 
-综合基线（简单平均）：**vs Deepin ≈ 70%，vs Kylin ≈ 110%**。qurbrix 已经普遍超越 Kylin
+综合基线（简单平均）：**vs Deepin ≈ 73%，vs Kylin ≈ 111%**。qurbrix 已经普遍超越 Kylin
 的采集广度（Kylin 本身仅走 lscpu/dmidecode/lsblk/lshw display 等基础通道），主拉齐工作
 集中在 Deepin 侧：国产 SoC 特判、per-logical/per-DIMM 细粒度模型、UI 展示字段（Overview、
 Aspect Ratio、Interface 分类）与国产厂商归一化。
@@ -138,44 +138,45 @@ qurbrix `CpuInfo` 已覆盖 34 字段（`crates/hw-model/src/properties.rs:87-12
 |---|---|---|---|
 | `dmidecode -t 17`（主） | Y | Y | Y (`existing.rs:2440-2470`, `dmi.rs:74-131`) |
 | `dmidecode -t 16`（Physical Memory Array） | filter key（不显示到 memory 类别） | N | Y（归到 BIOS 设备） |
-| `lshw -class memory` | Y（主） | N | Y（兜底，`existing.rs:2477-2499`） |
+| `lshw -class memory` | Y（主） | N | Y（DMI 成功路径按 locator/serial 融合；DMI 不可用时兜底） |
 | `decode-dimms` SPD 文本 | N | N | Y (`dmi.rs:174-212`) |
 | Raw DDR4 SPD EEPROM sysfs | N | N | Y（size/speed/vendor/serial/PN） |
 | Raw DDR5 SPD EEPROM sysfs | N | N | 部分（仅 identity；Deepin/Kylin 均未实现 DDR5 SPD size/speed 深解析，不作为拉齐目标） |
 | EDAC sysfs `mc*/dimm*` | N | N | Y (`existing.rs:2616-2657`) |
 | `/proc/meminfo` 总量兜底 | N | Y（sysinfo） | Y (`existing.rs:2536-2555`) |
-| SPD manufacturer ID → 友好名映射 | N | N（原样 uppercase） | Y（9 家：Samsung/SK Hynix/Micron/Crucial/Kingston/Ramaxel/ADATA/Longsys/Kimtigo） |
-| `/proc/device-tree/memory@*/`（aarch64） | 部分 | Y（`cpuinfo.py:899-963`） | N |
-| FT1500a 固件长度 sanitize | N | Y | N |
+| SPD manufacturer ID → 友好名映射 | N | N（原样 uppercase） | Y（常见厂商覆盖，未知保留 JEP106 原始码；全量友好名表不作为对齐目标） |
+| `/proc/device-tree/memory@*/`（aarch64） | 部分 | Y（`cpuinfo.py:899-963`） | Y |
+| FT1500a 固件长度 sanitize | N | Y | Y |
 
 ### 3.2 字段差距
 
-qurbrix `MemoryInfo`（`properties.rs:126-140`）已覆盖 size_bytes/vendor/memory_type/speed_mtps/
-total_width_bits/data_width_bits/min|max|configured_voltage_v/locator/serial/part_number，且做了
-`<OUT OF SPEC>` 过滤、`No Module Installed` 跳过、`Bank Locator` 兜底 `Locator`、`Manufacturer ID` 兜底 vendor、
-`Configured Memory Speed` 兜底 `Speed`。
+qurbrix `MemoryInfo` 已覆盖 size_bytes/vendor/memory_type/speed_mtps/configured_speed_mtps/
+total_width_bits/data_width_bits/min|max|configured_voltage_v/locator/bank_locator/serial/part_number、
+Rank、Form Factor、Type Detail、Asset Tag、Module/SubSystem ID、Memory Technology、Operating Mode、
+Firmware Version、NVDIMM size 系列字段，并生成 Deepin-style overview 与 Kylin-style MemInfo。
+当前同时保留 `<OUT OF SPEC>` 过滤、`No Module Installed` 跳过、Kylin-style `Serial == "0"` 过滤、
+`Bank Locator` 兜底 `Locator`、`Manufacturer ID` 兜底 vendor、`Configured Memory Speed` 兜底 `Speed`。
 
-未采集（Deepin filter key 展示）：**Rank、Form Factor、Type Detail、Asset Tag、Module Manufacturer ID、
-Module Product ID、Memory Subsystem Controller Manufacturer/Product ID、Memory Technology、
-Memory Operating Mode Capability、Firmware Version、Non-Volatile/Volatile/Cache/Logical Size (NVDIMM)**。
-无 Overview 聚合字符串 `Size(Vendor Name Type Speed)`（Deepin `DeviceMemory.cpp:247-266`）。
+阶段结论（2026-07-09）：内存部分按“拉齐本地 Deepin/Kylin”口径已阶段性完成，可进入 1.0 试用验证。
+后续主要通过真实机器 fixture 补尾部兼容，不再因 SPD 表规模或展示层粗兜底阻塞上线。
 
 ### 3.3 backlog
 
-- **P0**：DIMM Rank / Form Factor / Type Detail / Asset Tag 采集；Module Manufacturer ID / Module Product ID /
-  Subsystem Controller IDs 独立暴露；Deepin-style Overview 字符串
-- **P1**：JEP106 表扩展至 CXMT/长鑫/紫光/Nanya/Winbond/Powerchip/Innogrit
-  等国产/常见厂商；Kylin-style `Serial == "0"` 过滤；`Form Factor + Type + Type Detail + Speed` 合成 `MemInfo` 串
-- **P2**：NVDIMM 系列字段；`dmidecode -t 16` 冗余映射到 memory 类别聚合信息；SW64 偶数补偿 / FT1500a sanitize；
-  MiB/GiB→GB 的 UI 层单位归一
+- **P0/P1**：已完成本地 Deepin/Kylin 对齐口径；不再新增内存阻塞项。
+- **P2（可选增强）**：继续补真实机器 fixture，尤其是 DMI/lshw 字段缺失、locator/serial 均不可用、
+  国产平台固件异常值等样本；如产品明确要求“超越 Deepin/Kylin”，再单独立项扩展 SPD 表或更深 SPD 解码。
 
 方向决策（2026-07-09）：本地 Deepin 与 Kylin 参考实现均没有 DDR5 raw SPD size/speed 深解析。当前目标是拉齐本地 Deepin/Kylin 行为，因此 DDR5 SPD 深解析不计入完成度缺口，也不作为后续必做 backlog；除非另有超越参考实现的新需求，只保留 DDR5 identity 解析与 `spd_partial` warning。
 
+方向决策（2026-07-09）：本地 Deepin 没有 SPD/JEP106 全量友好名称表；Kylin 仅有少量厂商字符串归一化，内存路径主要保留 `Manufacturer ID` uppercase。qurbrix 已覆盖常见 SPD manufacturer ID 并保留未知 JEP106 原始码，因此“完整的 SPD manufacturer ID 友好名称表”不作为本地 Deepin/Kylin 对齐缺口，也不阻塞 1.0 试用。
+
+方向决策（2026-07-09）：Kylin/Deepin 的粗展示兜底（如默认 `DDR3`/`DDR4`、`64bit`、`$` 占位）不进入 qurbrix 结构化核心模型。核心字段未知时保持空值并保留 source/warning；只允许展示层做温和文案兜底，避免把未知伪装成已知，影响下游判断和后续多源融合。
+
 ### 3.4 风险
 
-- SPD EEPROM 路径需要 root + `at24`/`ee1004` 内核模块，无载入时静默无警；建议 warning 明确提示
-- DDR5 SPD 只解 identity 时需 warning 标注 `spd_partial`；这只是透明度要求，不代表需要补齐 Deepin/Kylin 均未实现的 DDR5 SPD size/speed 深解析
-- 国产厂商 identification 双参考都缺，实际 CXMT/长鑫/紫光会落到 `JEP106 0x****` 原始码
+- 真实机器 fixture 仍需继续积累；这属于上线试用后的兼容性样本建设，不是 1.0 阻塞项
+- DMI 与 lshw 都缺 locator/serial 时保持保守，不强行融合，避免误匹配
+- SPD EEPROM 路径需要 root + `at24`/`ee1004`/`spd5118` 等内核支持；不可用时通过 warning/source 透明暴露
 
 ---
 
@@ -397,7 +398,7 @@ size_cm / diagonal_inches / gamma / preferred_width/height/refresh_hz。
 16. **显卡 xrandr 分辨率写回 GpuInfo**；`/sys/class/drm/card*-<CONN>/status` 按 GPU 归并 connector
 17. **显卡 glxinfo 扩展 EGL / GLSL**
 18. **显示器 Aspect Ratio（GCD）+ 全支持模式列表（每模式 @Hz）+ Monitor name 0xFE 兼容**
-19. **内存 JEP106 表扩展至 CXMT/长鑫/紫光/Nanya**
+19. **已移出 1.0 必做：内存 JEP106 全量友好名表**（本地 Deepin/Kylin 未实现；当前常见表 + 原始码保留已足够对齐）
 20. **主板 Chassis Lock / Board Features / Board Type + sysfs Chassis fallback 完整化**
 
 ### P2（长尾）
