@@ -17,7 +17,7 @@ use hw_parser::{
     parse_hwinfo_monitor, parse_ip_j_addr_result, parse_ip_j_link_result, parse_lsblk_json_result,
     parse_lscpu, parse_lshw_disk, parse_lshw_display, parse_lshw_memory, parse_lshw_network,
     parse_lshw_processor, parse_lshw_storage, parse_lspci_nn_k, parse_nvidia_settings_videoram,
-    parse_nvidia_smi_memory_csv, parse_proc_cpuinfo, parse_proc_hardware,
+    parse_nvidia_smi_memory_csv, parse_phytium1500a_info, parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
     parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_voltage_v, parse_width_bits,
     parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord,
@@ -67,6 +67,10 @@ impl Probe for CpuProbe {
             .await;
         let proc_cpuinfo_result = ctx.runner.read_file(Path::new("/proc/cpuinfo")).await;
         let proc_hardware_result = ctx.runner.read_file(Path::new("/proc/hardware")).await;
+        let phytium1500a_result = ctx
+            .runner
+            .read_file(Path::new("/sys/phytium1500a_info"))
+            .await;
         let cpu_sysfs = read_cpu_sysfs(ctx).await;
         let cpufreq = read_cpu_cpufreq(ctx).await;
 
@@ -151,6 +155,12 @@ impl Probe for CpuProbe {
         } else {
             None
         };
+        let phytium1500a = if phytium1500a_result.is_success() {
+            let record = parse_phytium1500a_info(&phytium1500a_result.stdout);
+            (!record.is_empty()).then_some(record)
+        } else {
+            None
+        };
         let lscpu_contributed = lscpu.is_some();
         let lshw_contributed = lshw.is_some();
         let dmi_contributed = dmi.iter().any(hw_parser::DmidecodeCpuRecord::is_useful);
@@ -158,6 +168,7 @@ impl Probe for CpuProbe {
         let proc_hardware_contributed = proc_hardware.is_some();
         let cpu_sysfs_contributed = cpu_sysfs.is_some();
         let cpufreq_contributed = cpufreq.is_some();
+        let phytium1500a_contributed = phytium1500a.is_some();
         if lscpu.is_none()
             && lshw.is_none()
             && !dmi_contributed
@@ -165,6 +176,7 @@ impl Probe for CpuProbe {
             && proc_hardware.is_none()
             && cpu_sysfs.is_none()
             && cpufreq.is_none()
+            && !phytium1500a_contributed
         {
             if !proc_cpuinfo_result.is_success() {
                 warnings.extend(
@@ -182,10 +194,13 @@ impl Probe for CpuProbe {
         let mut merged = merge_cpu_records(
             merge_cpu_record_fallback(
                 merge_cpu_record_fallback(
-                    merge_cpu_record_fallback(lscpu, proc_cpuinfo),
-                    proc_hardware,
+                    merge_cpu_record_fallback(
+                        merge_cpu_record_fallback(lscpu, proc_cpuinfo),
+                        proc_hardware,
+                    ),
+                    cpu_sysfs,
                 ),
-                cpu_sysfs,
+                phytium1500a,
             ),
             lshw,
             &dmi,
@@ -227,10 +242,23 @@ impl Probe for CpuProbe {
             })
             .or_else(|| merged.vendor.clone());
         let extensions = cpu_extensions_from_flags(&merged.flags);
+        let cache_entries = read_cpu_cache_entries(ctx, merged.threads).await;
+        let logical_cpus = read_logical_cpus(ctx).await;
+        let hw_platform = detect_hw_platform(ctx, merged.name.as_deref()).await;
+        let (frequency_display, frequency_is_range) = hw_parser::format_cpu_frequency_display(
+            merged.max_freq_mhz,
+            merged.min_freq_mhz,
+            merged.current_freq_mhz,
+        );
+        let overview = merged
+            .name
+            .as_deref()
+            .and_then(|name| hw_parser::format_cpu_overview(name, merged.cores, merged.threads));
+        let display_name = merged.name.clone().unwrap_or_else(|| "CPU".to_string());
         let mut device = Device::new(
             "cpu:0",
             DeviceKind::Cpu,
-            merged.name.clone().unwrap_or_else(|| "CPU".to_string()),
+            display_name,
             DeviceProperties::Cpu(Box::new(CpuInfo {
                 name: merged.name,
                 vendor,
@@ -248,6 +276,9 @@ impl Probe for CpuProbe {
                 min_freq_mhz: merged.min_freq_mhz,
                 current_freq_mhz: merged.current_freq_mhz,
                 external_clock_mhz: merged.external_clock_mhz,
+                frequency_display,
+                frequency_is_range,
+                overview,
                 family: merged.family,
                 cpu_implementer: merged.cpu_implementer,
                 cpu_architecture: merged.cpu_architecture,
@@ -263,9 +294,12 @@ impl Probe for CpuProbe {
                 l2_cache: merged.l2_cache,
                 l3_cache: merged.l3_cache,
                 l4_cache: merged.l4_cache,
+                caches: cache_entries,
                 clflush_size_bytes: merged.clflush_size_bytes,
                 flags: merged.flags,
                 extensions,
+                logical_cpus,
+                hw_platform,
             })),
         );
         for (source, contributed) in [
@@ -309,6 +343,14 @@ impl Probe for CpuProbe {
         if cpufreq_contributed {
             device = device.with_source(SourceEvidence {
                 source: "/sys/devices/system/cpu/cpu0/cpufreq".to_string(),
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+        if phytium1500a_contributed {
+            device = device.with_source(SourceEvidence {
+                source: "/sys/phytium1500a_info".to_string(),
                 kind: SourceKind::Sysfs,
                 status: SourceStatus::Success,
                 summary: None,
@@ -720,6 +762,174 @@ async fn read_sysfs_cpu_package(ctx: &ProbeContext<'_>, cpu_path: &Path) -> Opti
         Ok(value) if value < 0 => Some("0".to_string()),
         _ => Some(value),
     }
+}
+
+/// Deepin-style per-cache-index enumeration for `CpuInfo.caches`. Walks
+/// `/sys/devices/system/cpu/cpu0/cache/index*` and returns one entry per
+/// index, matching Deepin's `DeviceCpu` structured cache table rather
+/// than the four aggregated L1d/L1i/L2/L3 strings.
+async fn read_cpu_cache_entries(
+    ctx: &ProbeContext<'_>,
+    threads: Option<u32>,
+) -> Vec<hw_model::CpuCacheEntry> {
+    let cpu0 = Path::new("/sys/devices/system/cpu/cpu0");
+    let pattern = format!("{}/cache/index*", cpu0.display());
+    let mut paths = ctx.runner.glob(&pattern).await.paths;
+    paths.sort();
+
+    let mut entries = Vec::new();
+    for path in paths {
+        let level = read_optional_trimmed(ctx, &path.join("level"))
+            .await
+            .and_then(|value| value.parse::<u32>().ok());
+        let Some(level) = level else {
+            continue;
+        };
+        let kind = read_optional_trimmed(ctx, &path.join("type")).await;
+        let raw_size = read_optional_trimmed(ctx, &path.join("size")).await;
+        let ways = read_optional_trimmed(ctx, &path.join("ways_of_associativity"))
+            .await
+            .and_then(|value| value.parse::<u32>().ok());
+        let line_size = read_optional_trimmed(ctx, &path.join("coherency_line_size"))
+            .await
+            .and_then(|value| value.parse::<u32>().ok());
+        let sets = read_optional_trimmed(ctx, &path.join("number_of_sets"))
+            .await
+            .and_then(|value| value.parse::<u32>().ok());
+        let shared_cpu_list = read_optional_trimmed(ctx, &path.join("shared_cpu_list")).await;
+        let shared_cpu_count = shared_cpu_list.as_deref().and_then(parse_cpu_list_count);
+
+        let size_bytes = raw_size.as_deref().and_then(parse_sysfs_cache_bytes);
+        let size = raw_size.as_ref().and_then(|raw| {
+            total_sysfs_cache(raw, shared_cpu_list.as_deref(), threads)
+                .or_else(|| Some(raw.clone()))
+        });
+
+        entries.push(hw_model::CpuCacheEntry {
+            level,
+            kind,
+            size,
+            size_bytes,
+            ways_of_associativity: ways,
+            coherency_line_size: line_size,
+            number_of_sets: sets,
+            shared_cpu_list,
+            shared_cpu_count,
+        });
+    }
+    entries
+}
+
+/// Deepin `LoadCpuInfoThread` per-logical-CPU detail: enumerates
+/// `/sys/devices/system/cpu/cpu*` and returns one `LogicalCpuInfo` per
+/// online logical processor, carrying package/core ids and per-core
+/// current/min/max cpufreq (kHz to MHz) plus BogoMIPS from `/proc/cpuinfo`.
+async fn read_logical_cpus(ctx: &ProbeContext<'_>) -> Vec<hw_model::LogicalCpuInfo> {
+    let mut paths = ctx
+        .runner
+        .glob("/sys/devices/system/cpu/cpu*")
+        .await
+        .paths
+        .into_iter()
+        .filter(|path| cpu_index_from_sysfs_path(path).is_some())
+        .collect::<Vec<_>>();
+    paths.sort_by_key(|path| cpu_index_from_sysfs_path(path).unwrap_or(u32::MAX));
+
+    let online_indices = read_optional_trimmed(ctx, Path::new("/sys/devices/system/cpu/online"))
+        .await
+        .and_then(|value| parse_cpu_list_indices(&value));
+
+    let bogomips_by_cpu = read_bogomips_by_cpu(ctx).await;
+
+    let mut logical = Vec::new();
+    for path in paths {
+        let Some(processor) = cpu_index_from_sysfs_path(&path) else {
+            continue;
+        };
+        let physical_id = read_optional_trimmed(ctx, &path.join("topology/physical_package_id"))
+            .await
+            .and_then(|value| value.parse::<i32>().ok())
+            .and_then(|value| u32::try_from(value).ok());
+        let core_id = read_optional_trimmed(ctx, &path.join("topology/core_id"))
+            .await
+            .and_then(|value| value.parse::<i32>().ok())
+            .and_then(|value| u32::try_from(value).ok());
+        let cur = read_cpufreq_mhz(ctx, &path.join("cpufreq/scaling_cur_freq")).await;
+        let min = read_cpufreq_mhz(ctx, &path.join("cpufreq/cpuinfo_min_freq"))
+            .await
+            .or(read_cpufreq_mhz(ctx, &path.join("cpufreq/scaling_min_freq")).await);
+        let max = read_cpufreq_mhz(ctx, &path.join("cpufreq/cpuinfo_max_freq"))
+            .await
+            .or(read_cpufreq_mhz(ctx, &path.join("cpufreq/scaling_max_freq")).await);
+        let online = online_indices
+            .as_ref()
+            .map(|indices| indices.contains(&processor))
+            .unwrap_or(true);
+        let bogomips = bogomips_by_cpu.get(&processor).cloned();
+        logical.push(hw_model::LogicalCpuInfo {
+            processor,
+            physical_id,
+            core_id,
+            current_freq_mhz: cur,
+            min_freq_mhz: min,
+            max_freq_mhz: max,
+            bogomips,
+            online,
+        });
+    }
+    logical
+}
+
+async fn read_bogomips_by_cpu(ctx: &ProbeContext<'_>) -> HashMap<u32, String> {
+    let mut out = HashMap::new();
+    let result = ctx.runner.read_file(Path::new("/proc/cpuinfo")).await;
+    if !result.is_success() {
+        return out;
+    }
+    let mut current_processor: Option<u32> = None;
+    for line in result.stdout.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            if line.trim().is_empty() {
+                current_processor = None;
+            }
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key == "processor" {
+            current_processor = value.parse::<u32>().ok();
+        } else if key.eq_ignore_ascii_case("BogoMIPS") || key.eq_ignore_ascii_case("bogomips") {
+            if let Some(cpu) = current_processor {
+                if !value.is_empty() {
+                    out.entry(cpu).or_insert_with(|| value.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Deepin `Common::isHwPlatform()` runtime signal. Combines the CPU name,
+/// DMI system manufacturer, and `/proc/hardware` string. When any of them
+/// carries a HW-classified marker (Kunpeng/Kirin/HW990/PGUW/KLVV),
+/// `CpuInfo.hw_platform = true`; the UI can source the CPU name from
+/// DMI Version so Overview reads the customer branding.
+async fn detect_hw_platform(ctx: &ProbeContext<'_>, name: Option<&str>) -> bool {
+    if hw_parser::is_hw_platform_marker(None, name) {
+        return true;
+    }
+    let sys_vendor = read_sysfs_dmi_value(ctx, "sys_vendor").await;
+    let product_name = read_sysfs_dmi_value(ctx, "product_name").await;
+    if hw_parser::is_hw_platform_marker(sys_vendor.as_deref(), product_name.as_deref()) {
+        return true;
+    }
+    let hw_result = ctx.runner.read_file(Path::new("/proc/hardware")).await;
+    if hw_result.is_success()
+        && hw_parser::is_hw_platform_marker(None, Some(hw_result.stdout.as_str()))
+    {
+        return true;
+    }
+    false
 }
 
 async fn read_cpu_sysfs_cache(

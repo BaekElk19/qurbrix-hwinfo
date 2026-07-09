@@ -102,6 +102,9 @@ pub struct CpuInfo {
     pub min_freq_mhz: Option<u32>,
     pub current_freq_mhz: Option<u32>,
     pub external_clock_mhz: Option<u32>,
+    pub frequency_display: Option<String>,
+    pub frequency_is_range: bool,
+    pub overview: Option<String>,
     pub family: Option<String>,
     pub cpu_implementer: Option<String>,
     pub cpu_architecture: Option<String>,
@@ -117,9 +120,37 @@ pub struct CpuInfo {
     pub l2_cache: Option<String>,
     pub l3_cache: Option<String>,
     pub l4_cache: Option<String>,
+    pub caches: Vec<CpuCacheEntry>,
     pub clflush_size_bytes: Option<u32>,
     pub flags: Vec<String>,
     pub extensions: Vec<String>,
+    pub logical_cpus: Vec<LogicalCpuInfo>,
+    pub hw_platform: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct CpuCacheEntry {
+    pub level: u32,
+    pub kind: Option<String>,
+    pub size: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub ways_of_associativity: Option<u32>,
+    pub coherency_line_size: Option<u32>,
+    pub number_of_sets: Option<u32>,
+    pub shared_cpu_list: Option<String>,
+    pub shared_cpu_count: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct LogicalCpuInfo {
+    pub processor: u32,
+    pub physical_id: Option<u32>,
+    pub core_id: Option<u32>,
+    pub current_freq_mhz: Option<u32>,
+    pub min_freq_mhz: Option<u32>,
+    pub max_freq_mhz: Option<u32>,
+    pub bogomips: Option<String>,
+    pub online: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

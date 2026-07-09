@@ -382,7 +382,7 @@ fn parse_lshw_falls_back_from_null_product_to_version() {
     let lshw = parse_lshw_processor(&fixture("cpu/lshw-product-null.txt"));
     let merged = merge_cpu_records(None, Some(lshw), &[]);
 
-    assert_eq!(merged.name.as_deref(), Some("Phytium D2000/8"));
+    assert_eq!(merged.name.as_deref(), Some("Phytium D2000"));
     assert_eq!(merged.vendor.as_deref(), Some("Phytium"));
 }
 

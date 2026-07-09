@@ -326,8 +326,84 @@ pub fn parse_proc_hardware(input: &str) -> CpuRecord {
         record.model_name = Some("HUAWEI Kirin 9006C".to_string());
     } else if input.contains("HUAWEI Kirin 990") || input_lc.contains("kirin990") {
         record.model_name = Some("HUAWEI Kirin 990".to_string());
+    } else if input.contains("PANGU M900") || input_lc.contains("pangu m900") {
+        // Deepin/Phytium PANGU M900 board: /proc/hardware carries the SoC id.
+        record.model_name = Some("Phytium PANGU M900".to_string());
+    } else if input.contains("HW990") || input_lc.contains("hw990") {
+        // Kylin/Huawei HW990 variant (`/proc/hardware`), matching
+        // `Judgment_HW990()` in rubbish-clear-dbus/src/detailinfo/cpuinfo.py.
+        record.model_name = Some("Huawei HW990".to_string());
+    } else if input_lc.contains("phytium ft-1500a")
+        || input_lc.contains("ft-1500a")
+        || input_lc.contains("ft1500a")
+    {
+        record.model_name = Some("Phytium FT-1500A".to_string());
+    } else if input_lc.contains("phytium ft-2000") || input_lc.contains("ft-2000") {
+        record.model_name = Some("Phytium FT-2000".to_string());
+    } else if input_lc.contains("phytium d2000") || input_lc.contains("d2000") {
+        record.model_name = Some("Phytium D2000".to_string());
     }
 
+    record
+}
+
+/// Deepin's `Common::isHwPlatform()` check.
+pub fn is_hw_platform_marker(vendor: Option<&str>, product: Option<&str>) -> bool {
+    let is_hw = |value: Option<&str>| -> bool {
+        value
+            .map(|value| {
+                let lc = value.to_ascii_lowercase();
+                lc.contains("huawei")
+                    || lc.contains("hisilicon")
+                    || lc.contains("kunpeng")
+                    || lc.contains("pangu")
+                    || lc.contains("pguw")
+                    || lc.contains("klvv")
+                    || lc.contains("klvu")
+                    || lc.contains("pguv")
+                    || lc.contains("hw990")
+                    || lc.contains("kirin")
+            })
+            .unwrap_or(false)
+    };
+    is_hw(vendor) || is_hw(product)
+}
+
+/// Parse the Kylin `/sys/phytium1500a_info` file. Only present on Phytium 1500a
+/// boards; on Kylin the file gates the FT-1500a fallback path.
+pub fn parse_phytium1500a_info(input: &str) -> CpuRecord {
+    let mut record = CpuRecord::default();
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return record;
+    }
+    record.model_name = Some("Phytium FT-1500A".to_string());
+    record.vendor = Some("Phytium".to_string());
+    record.architecture = Some("aarch64".to_string());
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let lc = line.to_ascii_lowercase();
+        if let Some((key, value)) = line.split_once(':') {
+            let value = value.trim();
+            let key_lc = key.trim().to_ascii_lowercase();
+            if key_lc.contains("model") || key_lc.contains("name") {
+                if let Some(clean) = clean_value(value) {
+                    record.model_name = Some(clean);
+                }
+            } else if key_lc.contains("freq") || key_lc.contains("speed") {
+                if let Some(mhz) = parse_mhz(value) {
+                    record.cpu_max_mhz = record.cpu_max_mhz.or(Some(mhz));
+                }
+            }
+        } else if lc.contains("mhz") || lc.contains("ghz") {
+            if let Some(mhz) = parse_mhz(line) {
+                record.cpu_max_mhz = record.cpu_max_mhz.or(Some(mhz));
+            }
+        }
+    }
     record
 }
 
@@ -615,8 +691,14 @@ fn current_name_contains_loongson(value: Option<&str>) -> bool {
 
 fn clean_cpu_name(value: String) -> String {
     let value = value.trim();
+    let stripped = if value.to_ascii_lowercase().contains("loongson") {
+        crate::normalize::cpu_vendor::clean_loongson_name(value)
+    } else {
+        value.to_string()
+    };
+    let stripped_ref = stripped.as_str();
     for marker in [" x ", " X "] {
-        if let Some((prefix, suffix)) = value.rsplit_once(marker) {
+        if let Some((prefix, suffix)) = stripped_ref.rsplit_once(marker) {
             if !prefix.trim().is_empty()
                 && !suffix.is_empty()
                 && suffix.chars().all(|ch| ch.is_ascii_digit())
@@ -625,7 +707,20 @@ fn clean_cpu_name(value: String) -> String {
             }
         }
     }
-    value.to_string()
+    if stripped_ref
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch.is_ascii_digit())
+    {
+        if let Some(idx) = stripped_ref.rfind('/') {
+            let (prefix, suffix) = stripped_ref.split_at(idx);
+            let suffix_body = suffix.trim_start_matches('/');
+            if !suffix_body.is_empty() && suffix_body.chars().all(|ch| ch.is_ascii_digit()) {
+                return prefix.trim_end().to_string();
+            }
+        }
+    }
+    stripped
 }
 
 fn parse_mhz(value: &str) -> Option<u32> {
@@ -695,6 +790,7 @@ pub fn cpu_extensions_from_flags(flags: &[String]) -> Vec<String> {
     let flags: Vec<_> = flags.iter().map(|flag| flag.to_ascii_lowercase()).collect();
     let has = |needle: &str| flags.iter().any(|flag| flag == needle);
     let has_prefix = |prefix: &str| flags.iter().any(|flag| flag.starts_with(prefix));
+    let has_avx512 = flags.iter().any(|flag| flag.starts_with("avx512"));
     let mut extensions = Vec::new();
 
     for (present, name) in [
@@ -708,14 +804,157 @@ pub fn cpu_extensions_from_flags(flags: &[String]) -> Vec<String> {
         (has("sse4_1"), "SSE4_1"),
         (has("sse4_2"), "SSE4_2"),
         (has("amd64"), "AMD64"),
-        (has("em64t"), "EM64T"),
+        (has("em64t") || has("lm"), "EM64T"),
+        (has("avx"), "AVX"),
+        (has("avx2"), "AVX2"),
+        (has_avx512, "AVX512"),
+        (has("fma"), "FMA"),
+        (has("aes"), "AES"),
+        (has("sha_ni") || has("sha1_ni") || has("sha2_ni"), "SHA"),
+        (has("vmx"), "VMX"),
+        (has("svm"), "SVM"),
+        // ARMv8 crypto extensions surface on aarch64 as "aes"/"sha1"/"sha2"
+        (has("sha1"), "SHA1"),
+        (has("sha2"), "SHA2"),
+        (has("crc32"), "CRC32"),
+        // Deepin Overview groups NEON under "Extensions" too
+        (has("neon") || has("asimd"), "NEON"),
+        (has("crypto"), "Crypto"),
+        (has("rdrand"), "RDRAND"),
+        (has("rdseed"), "RDSEED"),
     ] {
-        if present {
+        if present && !extensions.iter().any(|value| value == name) {
             extensions.push(name.to_string());
         }
     }
 
     extensions
+}
+
+/// Deepin `DeviceCpu::setInfoFromLscpu()` frequency-range renderer. Returns
+/// `(display_string, is_range)` matching the "%1-%2 GHz" / "%1 GHz" / "%1 MHz"
+/// formatting used by the deepin-devicemanager UI. Prefers min/max range when
+/// both are available and non-equal; otherwise renders the higher of
+/// `max_freq_mhz` / `current_freq_mhz`.
+pub fn format_cpu_frequency_display(
+    max_mhz: Option<u32>,
+    min_mhz: Option<u32>,
+    current_mhz: Option<u32>,
+) -> (Option<String>, bool) {
+    if let (Some(min), Some(max)) = (min_mhz, max_mhz) {
+        let min_ghz = f64::from(min) / 1000.0;
+        let max_ghz = f64::from(max) / 1000.0;
+        if (min_ghz - max_ghz).abs() < 0.001 {
+            return (Some(format_freq_ghz_or_mhz(max_ghz)), false);
+        }
+        return (
+            Some(format!(
+                "{}-{} GHz",
+                trim_trailing_zero(&format!("{:.3}", min_ghz)),
+                trim_trailing_zero(&format!("{:.3}", max_ghz))
+            )),
+            true,
+        );
+    }
+    match max_mhz.or(current_mhz) {
+        Some(mhz) => (Some(format_freq_ghz_or_mhz(f64::from(mhz) / 1000.0)), false),
+        None => (None, false),
+    }
+}
+
+fn format_freq_ghz_or_mhz(ghz: f64) -> String {
+    if ghz > 1.0 {
+        format!("{} GHz", trim_trailing_zero(&format!("{:.3}", ghz)))
+    } else {
+        let mhz = ghz * 1000.0;
+        format!("{} MHz", trim_trailing_zero(&format!("{:.1}", mhz)))
+    }
+}
+
+fn trim_trailing_zero(value: &str) -> String {
+    if !value.contains('.') {
+        return value.to_string();
+    }
+    let trimmed = value.trim_end_matches('0');
+    trimmed.trim_end_matches('.').to_string()
+}
+
+/// Deepin `DeviceCpu::getOverviewInfo()` renders `"{name} ({cores} Core(s) / {threads} Processor)"`
+/// with English word counts when a mapping is available (matching the m_trNumber table),
+/// otherwise falls back to digits.
+pub fn format_cpu_overview(name: &str, cores: Option<u32>, threads: Option<u32>) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let cores = cores?;
+    let threads = threads?;
+    if cores == 0 && threads == 0 {
+        return None;
+    }
+    Some(format!(
+        "{} ({} Core(s) / {} Processor)",
+        name,
+        english_or_digits(cores),
+        english_or_digits(threads),
+    ))
+}
+
+/// Deepin `DeviceCpu.cpp:11-79` `m_trNumber` mapping.
+/// rather than "48". Only maps counts Deepin explicitly enumerates; unknown
+/// counts fall through to the decimal string.
+pub fn cpu_count_english_word(count: u32) -> Option<&'static str> {
+    Some(match count {
+        1 => "One",
+        2 => "Two",
+        3 => "Three",
+        4 => "Four",
+        5 => "Five",
+        6 => "Six",
+        7 => "Seven",
+        8 => "Eight",
+        9 => "Nine",
+        10 => "Ten",
+        11 => "Eleven",
+        12 => "Twelve",
+        14 => "Fourteen",
+        16 => "Sixteen",
+        18 => "Eighteen",
+        20 => "Twenty",
+        22 => "Twenty-two",
+        24 => "Twenty-four",
+        26 => "Twenty-six",
+        28 => "Twenty-eight",
+        30 => "Thirty",
+        32 => "Thirty-two",
+        36 => "Thirty-six",
+        40 => "Forty",
+        44 => "Forty-four",
+        48 => "Forty-eight",
+        56 => "Fifty-six",
+        60 => "Sixty",
+        64 => "Sixty-four",
+        72 => "Seventy-two",
+        80 => "Eighty",
+        88 => "Eighty-eight",
+        96 => "Ninety-six",
+        112 => "One hundred and Twelve",
+        120 => "One hundred and Twenty",
+        128 => "One hundred and Twenty-eight",
+        144 => "One hundred and Forty-four",
+        160 => "One hundred and Sixty",
+        176 => "One hundred and Seventy-six",
+        192 => "One hundred and Ninety-two",
+        224 => "Two hundred and Twenty-four",
+        256 => "Two hundred and Fifty-six",
+        _ => return None,
+    })
+}
+
+fn english_or_digits(count: u32) -> String {
+    cpu_count_english_word(count)
+        .map(str::to_string)
+        .unwrap_or_else(|| count.to_string())
 }
 
 fn normalize_lscpu_cache(
@@ -1125,5 +1364,144 @@ mod tests {
         assert_eq!(merged.vendor.as_deref(), Some("HiSilicon"));
         assert_eq!(merged.max_freq_mhz, Some(2600));
         assert_eq!(merged.current_freq_mhz, Some(2400));
+    }
+
+    #[test]
+    fn parse_proc_hardware_detects_pangu_m900_and_hw990() {
+        assert_eq!(
+            parse_proc_hardware("Hardware\t: Phytium PANGU M900")
+                .model_name
+                .as_deref(),
+            Some("Phytium PANGU M900"),
+        );
+        assert_eq!(
+            parse_proc_hardware("Hardware\t: HUAWEI HW990")
+                .model_name
+                .as_deref(),
+            Some("Huawei HW990"),
+        );
+        assert_eq!(
+            parse_proc_hardware("Hardware\t: Phytium FT-1500A/16")
+                .model_name
+                .as_deref(),
+            Some("Phytium FT-1500A"),
+        );
+        assert_eq!(
+            parse_proc_hardware("Hardware\t: Phytium D2000/8")
+                .model_name
+                .as_deref(),
+            Some("Phytium D2000"),
+        );
+    }
+
+    #[test]
+    fn parse_phytium1500a_info_reports_ft_1500a_identity() {
+        let record = parse_phytium1500a_info("Phytium FT-1500A/16\nfreq: 1500 MHz\n");
+        assert_eq!(record.model_name.as_deref(), Some("Phytium FT-1500A"));
+        assert_eq!(record.vendor.as_deref(), Some("Phytium"));
+        assert_eq!(record.architecture.as_deref(), Some("aarch64"));
+        assert_eq!(record.cpu_max_mhz, Some(1500));
+    }
+
+    #[test]
+    fn parse_phytium1500a_info_empty_returns_default() {
+        let record = parse_phytium1500a_info("");
+        assert!(record.is_empty());
+    }
+
+    #[test]
+    fn is_hw_platform_marker_detects_huawei_and_pangu() {
+        assert!(is_hw_platform_marker(Some("Huawei"), None));
+        assert!(is_hw_platform_marker(None, Some("PANGU M900")));
+        assert!(is_hw_platform_marker(
+            Some("HiSilicon"),
+            Some("Kunpeng-920")
+        ));
+        assert!(is_hw_platform_marker(None, Some("KLVV Board")));
+        assert!(!is_hw_platform_marker(Some("Intel"), Some("NUC")));
+        assert!(!is_hw_platform_marker(None, None));
+    }
+
+    #[test]
+    fn cpu_extensions_from_flags_includes_avx_aes_sha_and_virt() {
+        let flags: Vec<String> = [
+            "mmx", "sse", "sse2", "ssse3", "sse4_1", "sse4_2", "avx", "avx2", "avx512f", "aes",
+            "sha_ni", "vmx", "svm", "lm",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+        let extensions = cpu_extensions_from_flags(&flags);
+        for name in [
+            "MMX", "SSE", "SSE2", "SSSE3", "SSE4_1", "SSE4_2", "SSE4", "AVX", "AVX2", "AVX512",
+            "AES", "SHA", "VMX", "SVM", "EM64T",
+        ] {
+            assert!(
+                extensions.iter().any(|value| value == name),
+                "missing {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn format_cpu_frequency_display_renders_range_and_single_values() {
+        // Range case (min != max, difference > 0.001 GHz)
+        let (display, is_range) = format_cpu_frequency_display(Some(3200), Some(1200), None);
+        assert!(is_range);
+        assert_eq!(display.as_deref(), Some("1.2-3.2 GHz"));
+
+        // Collapsed range (min == max)
+        let (display, is_range) = format_cpu_frequency_display(Some(2400), Some(2400), None);
+        assert!(!is_range);
+        assert_eq!(display.as_deref(), Some("2.4 GHz"));
+
+        // Only max
+        let (display, is_range) = format_cpu_frequency_display(Some(1800), None, None);
+        assert!(!is_range);
+        assert_eq!(display.as_deref(), Some("1.8 GHz"));
+
+        // Current-only fallback
+        let (display, is_range) = format_cpu_frequency_display(None, None, Some(800));
+        assert!(!is_range);
+        assert_eq!(display.as_deref(), Some("800 MHz"));
+
+        // Nothing at all
+        let (display, is_range) = format_cpu_frequency_display(None, None, None);
+        assert_eq!(display, None);
+        assert!(!is_range);
+    }
+
+    #[test]
+    fn format_cpu_overview_uses_english_word_counts_when_available() {
+        assert_eq!(
+            format_cpu_overview("Kunpeng 920", Some(48), Some(48)).as_deref(),
+            Some("Kunpeng 920 (Forty-eight Core(s) / Forty-eight Processor)"),
+        );
+        // Falls back to digits for counts not in the mapping table
+        assert_eq!(
+            format_cpu_overview("Intel Xeon Gold", Some(13), Some(26)).as_deref(),
+            Some("Intel Xeon Gold (13 Core(s) / Twenty-six Processor)"),
+        );
+    }
+
+    #[test]
+    fn format_cpu_overview_returns_none_when_data_missing() {
+        assert_eq!(format_cpu_overview("", Some(8), Some(16)), None);
+        assert_eq!(format_cpu_overview("CPU", None, Some(8)), None);
+        assert_eq!(format_cpu_overview("CPU", Some(0), Some(0)), None);
+    }
+
+    #[test]
+    fn merge_cleans_loongson_name_trailing_at_frequency() {
+        let merged = merge_cpu_records(
+            Some(CpuRecord {
+                model_name: Some("Loongson-3A5000 @ 2500.00MHz".to_string()),
+                ..Default::default()
+            }),
+            None,
+            &[],
+        );
+        assert_eq!(merged.name.as_deref(), Some("Loongson-3A5000"));
     }
 }

@@ -463,7 +463,7 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
     let result = CpuProbe.probe(&ctx).await;
 
     assert_eq!(result.devices.len(), 1);
-    assert_eq!(result.devices[0].name, "Phytium D2000/8");
+    assert_eq!(result.devices[0].name, "Phytium D2000");
     assert_eq!(result.devices[0].sources.len(), 1);
     let source = result.devices[0]
         .sources
@@ -482,7 +482,7 @@ async fn cpu_probe_uses_proc_cpuinfo_when_command_sources_are_missing() {
     );
     match &result.devices[0].properties {
         DeviceProperties::Cpu(cpu) => {
-            assert_eq!(cpu.name.as_deref(), Some("Phytium D2000/8"));
+            assert_eq!(cpu.name.as_deref(), Some("Phytium D2000"));
             assert_eq!(cpu.vendor.as_deref(), Some("Phytium"));
             assert_eq!(cpu.architecture.as_deref(), Some("aarch64"));
             assert_eq!(cpu.threads, Some(2));
