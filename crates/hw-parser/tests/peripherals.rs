@@ -171,6 +171,22 @@ fn parses_lshw_memory_banks() {
 }
 
 #[test]
+fn parses_lshw_system_memory_when_no_banks() {
+    let records = parse_lshw_memory(
+        "*-memory\n\
+             description: System Memory\n\
+             physical id: 10\n\
+             size: 32GiB\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        parse_size_to_bytes(records[0].size.as_deref()),
+        Some(32 * 1024 * 1024 * 1024)
+    );
+}
+
+#[test]
 fn parses_dmidecode_memory_manufacturer_id_fallback() {
     let records = parse_dmidecode_memory(
         "Memory Device\n\
@@ -233,6 +249,101 @@ fn parses_dmidecode_memory_ignores_out_of_spec_type() {
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].memory_type, None);
+}
+
+#[test]
+fn parses_dmidecode_memory_ignores_ft1500a_random_size() {
+    let records = parse_dmidecode_memory(
+        "Memory Device\n\
+         \tSize: 12345678901234567890\n\
+         \tLocator: DIMM0\n\
+         \tManufacturer ID: 80ce00000000\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].size, None);
+    assert_eq!(records[0].locator.as_deref(), Some("DIMM0"));
+    assert_eq!(records[0].manufacturer.as_deref(), Some("80CE00000000"));
+}
+
+#[test]
+fn parses_dmidecode_memory_drops_records_with_only_invalid_size() {
+    let records = parse_dmidecode_memory(
+        "Memory Device\n\
+         \tSize: 12345678901234567890\n",
+    );
+
+    assert!(records.is_empty());
+}
+
+#[test]
+fn parses_dmidecode_memory_deepin_detail_fields() {
+    let records = parse_dmidecode_memory(
+        "Memory Device\n\
+         \tSize: 32 GB\n\
+         \tError Information Handle: 0x0042\n\
+         \tForm Factor: DIMM\n\
+         \tSet: None\n\
+         \tLocator: ChannelA-DIMM0\n\
+         \tBank Locator: BANK 0\n\
+         \tManufacturer: CXMT\n\
+         \tSerial Number: 0\n\
+         \tPart Number: ABCD5600\n\
+         \tType: DDR5\n\
+         \tType Detail: Synchronous Unbuffered (Unregistered)\n\
+         \tSpeed: 5600 MT/s\n\
+         \tConfigured Memory Speed: 5200 MT/s\n\
+         \tAsset Tag: 9876543210\n\
+         \tRank: 2\n\
+         \tModule Manufacturer ID: 0x8A32\n\
+         \tModule Product ID: 0x1234\n\
+         \tMemory Subsystem Controller Manufacturer ID: 0x8086\n\
+         \tMemory Subsystem Controller Product ID: 0x5678\n\
+         \tMemory Technology: DRAM\n\
+         \tMemory Operating Mode Capability: Volatile memory\n\
+         \tFirmware Version: 1.2.3\n\
+         \tNon-Volatile Size: None\n\
+         \tVolatile Size: 32 GB\n\
+         \tCache Size: None\n\
+         \tLogical Size: 32 GB\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].serial, None);
+    assert_eq!(
+        records[0].error_information_handle.as_deref(),
+        Some("0x0042")
+    );
+    assert_eq!(records[0].form_factor.as_deref(), Some("DIMM"));
+    assert_eq!(records[0].set.as_deref(), Some("None"));
+    assert_eq!(records[0].bank_locator.as_deref(), Some("BANK 0"));
+    assert_eq!(
+        records[0].type_detail.as_deref(),
+        Some("Synchronous Unbuffered (Unregistered)")
+    );
+    assert_eq!(records[0].asset_tag.as_deref(), Some("9876543210"));
+    assert_eq!(records[0].configured_speed.as_deref(), Some("5200 MT/s"));
+    assert_eq!(records[0].rank.as_deref(), Some("2"));
+    assert_eq!(records[0].module_manufacturer_id.as_deref(), Some("0x8A32"));
+    assert_eq!(records[0].module_product_id.as_deref(), Some("0x1234"));
+    assert_eq!(
+        records[0]
+            .memory_subsystem_controller_manufacturer_id
+            .as_deref(),
+        Some("0x8086")
+    );
+    assert_eq!(
+        records[0].memory_subsystem_controller_product_id.as_deref(),
+        Some("0x5678")
+    );
+    assert_eq!(records[0].memory_technology.as_deref(), Some("DRAM"));
+    assert_eq!(
+        records[0].memory_operating_mode_capability.as_deref(),
+        Some("Volatile memory")
+    );
+    assert_eq!(records[0].firmware_version.as_deref(), Some("1.2.3"));
+    assert_eq!(records[0].volatile_size.as_deref(), Some("32 GB"));
+    assert_eq!(records[0].logical_size.as_deref(), Some("32 GB"));
 }
 
 #[test]
@@ -300,6 +411,19 @@ fn parses_common_raw_spd_manufacturer_ids() {
         (0x04, 0xcb, "ADATA"),
         (0x89, 0xcd, "Longsys"),
         (0x89, 0x68, "Kimtigo"),
+        (0x83, 0x0b, "Nanya"),
+        (0x80, 0xda, "Winbond"),
+        (0x04, 0xc8, "Powerchip"),
+        (0x89, 0x9b, "YMTC"),
+        (0x8a, 0x91, "CXMT"),
+        (0x8a, 0x8f, "UNIC"),
+        (0x86, 0xc8, "GigaDevice"),
+        (0x07, 0x46, "Gloway"),
+        (0x08, 0x13, "Gloway"),
+        (0x08, 0x1a, "UniIC"),
+        (0x8a, 0x02, "KingSpec"),
+        (0x89, 0xf7, "Netac"),
+        (0x8a, 0xb1, "Biwin"),
     ];
 
     for (count, code, vendor) in cases {

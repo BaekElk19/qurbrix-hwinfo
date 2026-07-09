@@ -13,6 +13,7 @@ async fn memory_probe_outputs_dimm_devices() {
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = MemoryProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Memory);
+    assert_eq!(result.devices[0].name, "M471A2K43");
 }
 
 #[tokio::test]
@@ -54,6 +55,261 @@ async fn memory_probe_preserves_dmi_width_and_voltage_fields() {
 }
 
 #[tokio::test]
+async fn memory_probe_preserves_deepin_dmi_detail_fields() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "memory"],
+        "Memory Device\n\
+         \tSize: 32 GB\n\
+         \tError Information Handle: 0x0042\n\
+         \tForm Factor: DIMM\n\
+         \tSet: None\n\
+         \tLocator: ChannelA-DIMM0\n\
+         \tBank Locator: BANK 0\n\
+         \tType: DDR5\n\
+         \tType Detail: Synchronous Unbuffered (Unregistered)\n\
+         \tSpeed: 5600 MT/s\n\
+         \tConfigured Memory Speed: 5200 MT/s\n\
+         \tManufacturer: CXMT\n\
+         \tSerial Number: 12345678\n\
+         \tAsset Tag: 9876543210\n\
+         \tPart Number: ABCD5600\n\
+         \tRank: 2\n\
+         \tModule Manufacturer ID: 0x8A32\n\
+         \tModule Product ID: 0x1234\n\
+         \tMemory Subsystem Controller Manufacturer ID: 0x8086\n\
+         \tMemory Subsystem Controller Product ID: 0x5678\n\
+         \tMemory Technology: DRAM\n\
+         \tMemory Operating Mode Capability: Volatile memory\n\
+         \tFirmware Version: 1.2.3\n\
+         \tNon-Volatile Size: None\n\
+         \tVolatile Size: 32 GB\n\
+         \tCache Size: None\n\
+         \tLogical Size: 32 GB\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+
+    assert_eq!(memory.error_information_handle.as_deref(), Some("0x0042"));
+    assert_eq!(memory.form_factor.as_deref(), Some("DIMM"));
+    assert_eq!(memory.set.as_deref(), Some("None"));
+    assert_eq!(memory.bank_locator.as_deref(), Some("BANK 0"));
+    assert_eq!(
+        memory.type_detail.as_deref(),
+        Some("Synchronous Unbuffered (Unregistered)")
+    );
+    assert_eq!(memory.configured_speed_mtps, Some(5200));
+    assert_eq!(memory.asset_tag.as_deref(), Some("9876543210"));
+    assert_eq!(memory.rank, Some(2));
+    assert_eq!(memory.module_manufacturer_id.as_deref(), Some("0x8A32"));
+    assert_eq!(memory.module_product_id.as_deref(), Some("0x1234"));
+    assert_eq!(
+        memory
+            .memory_subsystem_controller_manufacturer_id
+            .as_deref(),
+        Some("0x8086")
+    );
+    assert_eq!(
+        memory.memory_subsystem_controller_product_id.as_deref(),
+        Some("0x5678")
+    );
+    assert_eq!(memory.memory_technology.as_deref(), Some("DRAM"));
+    assert_eq!(
+        memory.memory_operating_mode_capability.as_deref(),
+        Some("Volatile memory")
+    );
+    assert_eq!(memory.firmware_version.as_deref(), Some("1.2.3"));
+    assert_eq!(memory.non_volatile_size_bytes, None);
+    assert_eq!(memory.volatile_size_bytes, Some(32 * 1024 * 1024 * 1024));
+    assert_eq!(memory.cache_size_bytes, None);
+    assert_eq!(memory.logical_size_bytes, Some(32 * 1024 * 1024 * 1024));
+    assert_eq!(
+        memory.overview.as_deref(),
+        Some("32 GB(ABCD5600 DDR5 5600 MT/s)")
+    );
+    assert_eq!(
+        memory.mem_info.as_deref(),
+        Some("DIMM DDR5 Synchronous Unbuffered (Unregistered) 5600 MT/s")
+    );
+}
+
+#[tokio::test]
+async fn memory_probe_normalizes_mib_size_in_deepin_overview() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "memory"],
+        "Memory Device\n\
+         \tSize: 32768 MiB\n\
+         \tLocator: ChannelA-DIMM0\n\
+         \tType: DDR5\n\
+         \tSpeed: 5600 MT/s\n\
+         \tManufacturer: CXMT\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+
+    assert_eq!(memory.size_bytes, Some(32 * 1024 * 1024 * 1024));
+    assert_eq!(
+        memory.overview.as_deref(),
+        Some("32 GB(CXMT DDR5 5600 MT/s)")
+    );
+}
+
+#[tokio::test]
+async fn memory_probe_enriches_dmi_success_records_from_matching_lshw_bank() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "dmidecode",
+            ["-t", "memory"],
+            "Memory Device\n\
+             \tSize: 32768 MiB\n\
+             \tLocator: ChannelA-DIMM0\n\
+             \tManufacturer: Not Specified\n\
+             \tSerial Number: ABCD1234\n\
+             \tPart Number: Not Specified\n\
+             \tType: DDR5\n\
+             \tType Detail: Synchronous Unbuffered (Unregistered)\n\
+             \tSpeed: Unknown\n\
+             \tConfigured Memory Speed: 5600 MT/s\n\
+             \tRank: 2\n",
+        )
+        .with_command(
+            "lshw",
+            ["-class", "memory"],
+            "  *-memory\n\
+             \tdescription: System Memory\n\
+             \tphysical id: 24\n\
+             \tsize: 32GiB\n\
+             \t*-bank:0\n\
+             \t   description: DIMM DDR5 Synchronous 5600 MHz\n\
+             \t   product: LSHW-PART-5600\n\
+             \t   vendor: CXMT\n\
+             \t   physical id: 0\n\
+             \t   serial: ABCD1234\n\
+             \t   slot: ChannelA-DIMM0\n\
+             \t   size: 32GiB\n\
+             \t   width: 64 bits\n\
+             \t   clock: 5600MHz (178.6ns)\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].name, "LSHW-PART-5600");
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == "dmidecode -t memory" && source.kind == SourceKind::Command
+    }));
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == "lshw -class memory" && source.kind == SourceKind::Command
+    }));
+
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+
+    assert_eq!(memory.vendor.as_deref(), Some("CXMT"));
+    assert_eq!(memory.part_number.as_deref(), Some("LSHW-PART-5600"));
+    assert_eq!(memory.speed_mtps, Some(5600));
+    assert_eq!(memory.configured_speed_mtps, Some(5600));
+    assert_eq!(memory.data_width_bits, Some(64));
+    assert_eq!(memory.rank, Some(2));
+    assert_eq!(
+        memory.overview.as_deref(),
+        Some("32 GB(LSHW-PART-5600 DDR5 5600 MT/s)")
+    );
+    assert_eq!(
+        memory.mem_info.as_deref(),
+        Some("DIMM DDR5 Synchronous Unbuffered (Unregistered) 5600 MT/s")
+    );
+}
+
+#[tokio::test]
+async fn memory_probe_normalizes_mb_size_in_kylin_overview() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "memory"],
+        "Memory Device\n\
+         \tSize: 8192 MB\n\
+         \tLocator: ChannelA-DIMM0\n\
+         \tType: DDR4\n\
+         \tSpeed: 3200 MT/s\n\
+         \tManufacturer: Samsung\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+
+    assert_eq!(
+        memory.overview.as_deref(),
+        Some("8 GB(Samsung DDR4 3200 MT/s)")
+    );
+}
+
+#[tokio::test]
+async fn memory_probe_omits_deepin_placeholder_part_number_from_overview() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "memory"],
+        "Memory Device\n\
+         \tSize: 16 GB\n\
+         \tLocator: ChannelA-DIMM0\n\
+         \tType: DDR4\n\
+         \tSpeed: 3200 MT/s\n\
+         \tManufacturer: Ramaxel\n\
+         \tPart Number: --\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+
+    assert_eq!(memory.overview.as_deref(), Some("16 GB(DDR4 3200 MT/s)"));
+    assert_eq!(result.devices[0].name, "ChannelA-DIMM0");
+}
+
+#[tokio::test]
+async fn memory_probe_normalizes_compact_lshw_memory_size_in_deepin_overview() {
+    let runner = FakeSourceRunner::new()
+        .with_command_status("dmidecode", ["-t", "memory"], "", 1)
+        .with_command(
+            "lshw",
+            ["-class", "memory"],
+            "  *-memory\n\
+             \tdescription: System Memory\n\
+             \tphysical id: 24\n\
+             \tslot: System board or motherboard\n\
+             \tsize: 1024MiB\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+
+    assert_eq!(memory.size_bytes, Some(1024 * 1024 * 1024));
+    assert_eq!(memory.overview.as_deref(), Some("1 GB"));
+}
+
+#[tokio::test]
 async fn memory_probe_uses_proc_meminfo_when_dmidecode_is_missing() {
     let runner =
         FakeSourceRunner::new().with_file("/proc/meminfo", "MemTotal:       16384000 kB\n");
@@ -79,6 +335,204 @@ async fn memory_probe_uses_proc_meminfo_when_dmidecode_is_missing() {
     assert!(result.warnings.iter().any(|warning| {
         warning.code == "source_missing" && warning.source.as_deref() == Some("lshw -class memory")
     }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_missing"
+            && warning.source.as_deref() == Some("raw SPD EEPROM sysfs")
+    }));
+}
+
+#[tokio::test]
+async fn memory_probe_uses_phytium1500a_info_sysfs_before_proc_meminfo() {
+    let memory0 = PathBuf::from("/sys/phytium1500a_info/memory0");
+    let memory1 = PathBuf::from("/sys/phytium1500a_info/memory1");
+    let runner = FakeSourceRunner::new()
+        .with_glob(
+            "/sys/phytium1500a_info/memory*",
+            vec![memory0.clone(), memory1.clone()],
+        )
+        .with_file(
+            memory0.clone(),
+            "Bank Locator:DIMM_A0\n\
+             Size:8192 MB\n\
+             Manufacturer ID:0x8a32\n",
+        )
+        .with_file(
+            memory1.clone(),
+            "Bank Locator:DIMM_A1\n\
+             Size:123456789012345\n\
+             Manufacturer ID:0x8a33\n",
+        )
+        .with_file("/proc/meminfo", "MemTotal:       16384000 kB\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+    assert_eq!(memory.locator.as_deref(), Some("DIMM_A0"));
+    assert_eq!(memory.vendor.as_deref(), Some("0X8A32"));
+    assert_eq!(memory.memory_type.as_deref(), Some("DDR4"));
+    assert_eq!(memory.data_width_bits, Some(64));
+    assert_eq!(memory.size_bytes, Some(8192 * 1024 * 1024));
+
+    let DeviceProperties::Memory(memory) = &result.devices[1].properties else {
+        panic!("expected memory properties");
+    };
+    assert_eq!(memory.locator.as_deref(), Some("DIMM_A1"));
+    assert_eq!(memory.vendor.as_deref(), Some("0X8A33"));
+    assert_eq!(memory.size_bytes, None);
+
+    assert!(result.devices.iter().all(|device| {
+        device.sources.iter().any(|source| {
+            source.source.starts_with("/sys/phytium1500a_info/memory")
+                && source.kind == SourceKind::Sysfs
+                && source.status == SourceStatus::Success
+        })
+    }));
+}
+
+#[tokio::test]
+async fn memory_probe_uses_device_tree_memory_before_proc_meminfo() {
+    let reg_path = PathBuf::from("/proc/device-tree/memory@40000000/reg");
+    let runner = FakeSourceRunner::new()
+        .with_glob("/proc/device-tree/memory@*/reg", vec![reg_path.clone()])
+        .with_file_bytes("/proc/device-tree/#address-cells", be_u32(2))
+        .with_file_bytes("/proc/device-tree/#size-cells", be_u32(2))
+        .with_file_bytes(
+            reg_path.clone(),
+            be_u32_words([0, 0x4000_0000, 0, 0x8000_0000]),
+        )
+        .with_file("/proc/meminfo", "MemTotal:       16384000 kB\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].kind, DeviceKind::Memory);
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.size_bytes, Some(2 * 1024 * 1024 * 1024));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == reg_path.display().to_string()
+            && source.kind == SourceKind::Procfs
+            && source.status == SourceStatus::Success
+    }));
+}
+
+#[tokio::test]
+async fn memory_probe_uses_dmi_memory_array_when_no_dimm_records() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "dmidecode",
+            ["-t", "memory"],
+            "Physical Memory Array\n\
+             \tLocation: System Board Or Motherboard\n\
+             \tUse: System Memory\n\
+             \tError Correction Type: Multi-bit ECC\n\
+             \tMaximum Capacity: 64 GB\n\
+             \tError Information Handle: Not Provided\n\
+             \tNumber Of Devices: 2\n",
+        )
+        .with_file("/proc/meminfo", "MemTotal:       16384000 kB\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "memory:array");
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.size_bytes, Some(64 * 1024 * 1024 * 1024));
+            assert_eq!(
+                memory.memory_array_location.as_deref(),
+                Some("System Board Or Motherboard")
+            );
+            assert_eq!(memory.memory_array_use.as_deref(), Some("System Memory"));
+            assert_eq!(
+                memory.memory_array_error_correction_type.as_deref(),
+                Some("Multi-bit ECC")
+            );
+            assert_eq!(
+                memory.memory_array_maximum_capacity_bytes,
+                Some(64 * 1024 * 1024 * 1024)
+            );
+            assert_eq!(
+                memory.memory_array_error_information_handle.as_deref(),
+                Some("Not Provided")
+            );
+            assert_eq!(memory.memory_array_number_of_devices, Some(2));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == "dmidecode -t memory"
+            && source.kind == SourceKind::Command
+            && source.status == SourceStatus::Success
+    }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "source_empty" && warning.source.as_deref() == Some("dmidecode -t memory")
+    }));
+}
+
+#[tokio::test]
+async fn memory_probe_preserves_dmi_memory_array_alongside_dimm_records() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "memory"],
+        "Physical Memory Array\n\
+         \tLocation: System Board Or Motherboard\n\
+         \tUse: System Memory\n\
+         \tError Correction Type: Multi-bit ECC\n\
+         \tMaximum Capacity: 64 GB\n\
+         \tError Information Handle: Not Provided\n\
+         \tNumber Of Devices: 2\n\
+         Memory Device\n\
+         \tSize: 32 GB\n\
+         \tLocator: ChannelA-DIMM0\n\
+         \tType: DDR5\n\
+         \tSpeed: 5600 MT/s\n\
+         \tManufacturer: CXMT\n\
+         \tSerial Number: 12345678\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 2);
+    assert!(result.devices.iter().any(|device| {
+        matches!(
+            &device.properties,
+            DeviceProperties::Memory(memory)
+                if memory.serial.as_deref() == Some("12345678")
+                    && memory.size_bytes == Some(32 * 1024 * 1024 * 1024)
+        )
+    }));
+
+    let array = result
+        .devices
+        .iter()
+        .find(|device| device.id == "memory:array")
+        .expect("expected memory array device");
+    match &array.properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(
+                memory.memory_array_location.as_deref(),
+                Some("System Board Or Motherboard")
+            );
+            assert_eq!(memory.memory_array_use.as_deref(), Some("System Memory"));
+            assert_eq!(
+                memory.memory_array_error_correction_type.as_deref(),
+                Some("Multi-bit ECC")
+            );
+            assert_eq!(
+                memory.memory_array_maximum_capacity_bytes,
+                Some(64 * 1024 * 1024 * 1024)
+            );
+            assert_eq!(memory.memory_array_number_of_devices, Some(2));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -124,6 +578,38 @@ async fn memory_probe_uses_lshw_when_dmidecode_is_missing() {
         result.warnings[0].source.as_deref(),
         Some("dmidecode -t memory")
     );
+}
+
+#[tokio::test]
+async fn memory_probe_uses_lshw_description_as_deepin_name_when_product_is_missing() {
+    let runner = FakeSourceRunner::new()
+        .with_command_status("dmidecode", ["-t", "memory"], "", 1)
+        .with_command(
+            "lshw",
+            ["-class", "memory"],
+            "*-memory\n\
+             \tdescription: System Memory\n\
+             *-bank:0\n\
+                \tdescription: SODIMM DDR4 Synchronous 3200 MHz (0.3 ns)\n\
+                \tvendor: Samsung\n\
+                \tserial: ABCD1234\n\
+                \tslot: ChannelA-DIMM0\n\
+                \tsize: 8GiB\n\
+                \tclock: 3200MHz (0.3ns)\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(
+        result.devices[0].name,
+        "SODIMM DDR4 Synchronous 3200 MHz (0.3 ns)"
+    );
+    let DeviceProperties::Memory(memory) = &result.devices[0].properties else {
+        panic!("expected memory properties");
+    };
+    assert_eq!(memory.part_number, None);
+    assert_eq!(memory.locator.as_deref(), Some("ChannelA-DIMM0"));
 }
 
 #[tokio::test]
@@ -317,6 +803,37 @@ async fn memory_probe_uses_raw_ddr5_spd_identity_when_command_sources_are_missin
             assert_eq!(memory.locator.as_deref(), Some("0-0051"));
             assert_eq!(memory.serial.as_deref(), Some("E6FFB785"));
             assert_eq!(memory.part_number.as_deref(), Some("CT8G48C40U5.M4A1"));
+        }
+        other => panic!("expected memory properties, got {other:?}"),
+    }
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.source == spd_path.display().to_string()
+            && source.kind == SourceKind::Sysfs
+            && source.status == SourceStatus::Success
+    }));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == "spd_partial"
+            && warning.source.as_deref() == Some(&spd_path.display().to_string())
+    }));
+}
+
+#[tokio::test]
+async fn memory_probe_uses_spd5118_nvmem_when_command_sources_are_missing() {
+    let spd_path = PathBuf::from("/sys/bus/nvmem/devices/spd5118-0/nvmem");
+    let runner = FakeSourceRunner::new()
+        .with_glob("/sys/bus/i2c/drivers/eeprom/*/eeprom", Vec::new())
+        .with_glob("/sys/bus/i2c/drivers/ee1004/*/eeprom", Vec::new())
+        .with_glob("/sys/bus/nvmem/devices/*/nvmem", vec![spd_path.clone()])
+        .with_file_bytes(spd_path.clone(), ddr5_spd_eeprom());
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MemoryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    match &result.devices[0].properties {
+        DeviceProperties::Memory(memory) => {
+            assert_eq!(memory.vendor.as_deref(), Some("Crucial"));
+            assert_eq!(memory.memory_type.as_deref(), Some("DDR5 SDRAM"));
+            assert_eq!(memory.locator.as_deref(), Some("spd5118-0"));
         }
         other => panic!("expected memory properties, got {other:?}"),
     }
@@ -2026,4 +2543,12 @@ fn xrandr_edid_hex(edid: &[u8]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn be_u32(value: u32) -> Vec<u8> {
+    value.to_be_bytes().to_vec()
+}
+
+fn be_u32_words<const N: usize>(values: [u32; N]) -> Vec<u8> {
+    values.into_iter().flat_map(u32::to_be_bytes).collect()
 }
