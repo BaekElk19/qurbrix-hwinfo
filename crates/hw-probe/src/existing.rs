@@ -24,7 +24,7 @@ use hw_parser::{
     DmiMemoryRecord, DmiSystemRecord, GlxinfoBasicRecord, HwinfoDiskRecord, HwinfoMonitorRecord,
     LshwDiskRecord, LshwDisplayRecord, LshwNetworkRecord, LshwStorageRecord, PciRecord,
 };
-use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind};
+use hw_source::{CommandSpec, SourceBytesResult, SourceErrorKind, SourceResult};
 use std::{collections::HashMap, path::Path};
 
 pub struct CpuProbe;
@@ -1618,7 +1618,10 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         let node = format!("/dev/{name}");
         let vendor = read_optional_trimmed(ctx, &path.join("device/vendor")).await;
         let model = read_optional_trimmed(ctx, &path.join("device/model")).await;
-        let serial = read_optional_trimmed(ctx, &path.join("device/serial")).await;
+        let mut serial = read_optional_trimmed(ctx, &path.join("device/serial")).await;
+        if serial.is_none() {
+            serial = storage_serial_fallback(ctx, &path).await;
+        }
         let wwn = read_first_optional_trimmed(ctx, &[path.join("device/wwid"), path.join("wwid")])
             .await
             .map(normalize_storage_wwn);
@@ -1631,13 +1634,23 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
             .await
             .and_then(|sectors| sectors.parse::<u64>().ok())
             .and_then(|sectors| sectors.checked_mul(512));
-        let media_type = read_optional_trimmed(ctx, &path.join("queue/rotational"))
-            .await
-            .and_then(|rotational| match rotational.as_str() {
-                "0" => Some("ssd".to_string()),
-                "1" => Some("hdd".to_string()),
-                _ => None,
-            });
+        let rotational = read_optional_trimmed(ctx, &path.join("queue/rotational")).await;
+        let spec_version = read_optional_trimmed(ctx, &path.join("device/spec_version")).await;
+        let media_type = if spec_version.is_some() {
+            Some("ufs".to_string())
+        } else {
+            rotational
+                .as_deref()
+                .and_then(storage_media_type_from_rotational)
+        };
+        let rotation_rate = rotational
+            .as_deref()
+            .and_then(storage_rotation_rate_from_rotational);
+        let modalias = read_optional_trimmed(ctx, &path.join("device/modalias")).await;
+        let uevent = read_optional_trimmed(ctx, &path.join("device/uevent")).await;
+        let vid_pid = uevent
+            .as_deref()
+            .and_then(|uevent| parse_uevent_value(uevent, "PRODUCT"));
 
         let mut device = Device::new(
             device_id::storage(None, serial.as_deref(), &node),
@@ -1646,9 +1659,15 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
             DeviceProperties::Storage(StorageInfo {
                 device_node: Some(node),
                 size_bytes,
+                size_display: storage_size_display(size_bytes, media_type.as_deref()),
                 media_type,
                 firmware,
                 wwn,
+                rotation_rate,
+                ufs_spec_version: spec_version,
+                vid_pid: vid_pid.clone(),
+                phys_id: vid_pid,
+                modalias,
                 ..Default::default()
             }),
         )
@@ -1667,9 +1686,9 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         let device = apply_storage_lshw_enrichment(device, &lshw);
         let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
         let device = apply_storage_hdparm_enrichment(ctx, device).await;
-        devices.push(apply_storage_vendor_fallback(
+        devices.push(apply_storage_parent_ref(apply_storage_vendor_fallback(
             apply_storage_smartctl(ctx, device).await,
-        ));
+        )));
     }
 
     if devices.is_empty() {
@@ -1818,6 +1837,87 @@ fn storage_device_from_hwinfo(record: HwinfoDiskRecord, source: &str) -> Device 
         status: SourceStatus::Success,
         summary: None,
     })
+}
+
+async fn apply_storage_sysfs_enrichment(
+    ctx: &ProbeContext<'_>,
+    mut device: Device,
+    name: &str,
+) -> Device {
+    let sysfs_path = Path::new("/sys/block").join(name);
+    let spec_version = read_optional_trimmed(ctx, &sysfs_path.join("device/spec_version")).await;
+    let rotational = read_optional_trimmed(ctx, &sysfs_path.join("queue/rotational")).await;
+    let modalias = read_optional_trimmed(ctx, &sysfs_path.join("device/modalias")).await;
+    let uevent = read_optional_trimmed(ctx, &sysfs_path.join("device/uevent")).await;
+    let vid_pid = uevent
+        .as_deref()
+        .and_then(|uevent| parse_uevent_value(uevent, "PRODUCT"));
+    let serial_fallback = if device.serial.is_none() {
+        storage_serial_fallback(ctx, &sysfs_path).await
+    } else {
+        None
+    };
+    let mut contributed = false;
+
+    if let Some(serial) = serial_fallback {
+        device.serial = Some(serial);
+        if let DeviceProperties::Storage(storage) = &device.properties {
+            if let Some(node) = storage.device_node.as_deref() {
+                device.id =
+                    device_id::storage(storage.wwn.as_deref(), device.serial.as_deref(), node);
+            }
+        }
+        contributed = true;
+    }
+
+    if let DeviceProperties::Storage(storage) = &mut device.properties {
+        if spec_version.is_some() {
+            if storage.media_type.as_deref() != Some("ufs") {
+                storage.media_type = Some("ufs".to_string());
+                contributed = true;
+            }
+            if storage.ufs_spec_version.is_none() {
+                storage.ufs_spec_version = spec_version;
+                contributed = true;
+            }
+        }
+        if let Some(rotational) = rotational.as_deref() {
+            if storage.media_type.is_none() {
+                storage.media_type = storage_media_type_from_rotational(rotational);
+                contributed |= storage.media_type.is_some();
+            }
+            if storage.rotation_rate.is_none() {
+                storage.rotation_rate = storage_rotation_rate_from_rotational(rotational);
+                contributed |= storage.rotation_rate.is_some();
+            }
+        }
+        if storage.modalias.is_none() && modalias.is_some() {
+            storage.modalias = modalias;
+            contributed = true;
+        }
+        if storage.vid_pid.is_none() && vid_pid.is_some() {
+            storage.vid_pid = vid_pid.clone();
+            storage.phys_id = storage.phys_id.take().or(vid_pid);
+            contributed = true;
+        }
+    }
+
+    if contributed {
+        let source = sysfs_path.display().to_string();
+        if !device
+            .sources
+            .iter()
+            .any(|evidence| evidence.source == source)
+        {
+            device = device.with_source(SourceEvidence {
+                source,
+                kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+    }
+    device
 }
 
 async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str) -> Device {
@@ -2214,6 +2314,15 @@ fn apply_storage_lshw_enrichment(mut device: Device, lshw: &StorageLshwRecords) 
             storage.firmware = record.firmware.clone();
             contributed = true;
         }
+        if storage.speed.is_none() && record.speed.is_some() {
+            storage.speed = record.speed.clone();
+            contributed = true;
+        }
+        if storage.capabilities.is_empty() && !record.capabilities.is_empty() {
+            storage.capabilities = record.capabilities.clone();
+            device.capabilities.extend(record.capabilities.clone());
+            contributed = true;
+        }
     }
     if contributed
         && !lshw.source.is_empty()
@@ -2380,14 +2489,12 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
     }) else {
         return device;
     };
+    let media_type = match &device.properties {
+        DeviceProperties::Storage(storage) => storage.media_type.clone(),
+        _ => None,
+    };
 
-    let result = ctx
-        .runner
-        .run_command(
-            &CommandSpec::new("smartctl", ["-a".to_string(), "-j".to_string(), node]),
-            ctx.timeout,
-        )
-        .await;
+    let result = run_storage_smartctl(ctx, &node, media_type.as_deref()).await;
     let source_status = if result.is_success() {
         SourceStatus::Success
     } else {
@@ -2398,6 +2505,13 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
     }
 
     let Ok(smart) = parse_smartctl_json(&result.stdout) else {
+        device.warnings.push(
+            ScanWarning::new(
+                "parse_failed",
+                format!("storage source '{}' could not be parsed", result.source),
+            )
+            .with_source(result.source),
+        );
         return device;
     };
     if smart.smart_status.is_none()
@@ -2461,10 +2575,105 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
     })
 }
 
+async fn run_storage_smartctl(
+    ctx: &ProbeContext<'_>,
+    node: &str,
+    media_type: Option<&str>,
+) -> SourceResult {
+    let result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new(
+                "smartctl",
+                ["-a".to_string(), "-j".to_string(), node.to_string()],
+            ),
+            ctx.timeout,
+        )
+        .await;
+    if !should_retry_storage_smartctl_with_sat(&result, media_type) {
+        return result;
+    }
+    ctx.runner
+        .run_command(
+            &CommandSpec::new(
+                "smartctl",
+                [
+                    "-a".to_string(),
+                    "-j".to_string(),
+                    "-d".to_string(),
+                    "sat".to_string(),
+                    node.to_string(),
+                ],
+            ),
+            ctx.timeout,
+        )
+        .await
+}
+
+fn should_retry_storage_smartctl_with_sat(result: &SourceResult, media_type: Option<&str>) -> bool {
+    !result.is_success()
+        && media_type.is_some_and(|value| value.eq_ignore_ascii_case("usb"))
+        && result.stdout.contains("Read Device Identity failed:")
+}
+
 fn is_ignored_block_device(name: &str) -> bool {
     ["loop", "ram", "zram", "dm-", "md", "sr"]
         .iter()
         .any(|prefix| name.starts_with(prefix))
+}
+
+fn storage_media_type_from_rotational(rotational: &str) -> Option<String> {
+    match rotational {
+        "0" => Some("ssd".to_string()),
+        "1" => Some("hdd".to_string()),
+        _ => None,
+    }
+}
+
+fn storage_rotation_rate_from_rotational(rotational: &str) -> Option<String> {
+    match rotational {
+        "0" => Some("Solid State Device".to_string()),
+        "1" => Some("Rotating Media".to_string()),
+        _ => None,
+    }
+}
+
+fn storage_size_display(size_bytes: Option<u64>, media_type: Option<&str>) -> Option<String> {
+    let size = size_bytes?;
+    let gb = 1_000_000_000_u64;
+    let is_usb = media_type.is_some_and(|value| value.eq_ignore_ascii_case("usb"));
+    let display = if size > 255 * gb && size < 257 * gb {
+        "256 GB"
+    } else if size > 511 * gb && size < 513 * gb {
+        "512 GB"
+    } else if size > 999 * gb && size < 1025 * gb {
+        "1 TB"
+    } else if size > 1999 * gb && size < 2049 * gb {
+        "2 TB"
+    } else if is_usb && size > 15 * gb && size < 17 * gb {
+        "16 GB"
+    } else if is_usb && size > 31 * gb && size < 33 * gb {
+        "32 GB"
+    } else if is_usb && size > 63 * gb && size < 65 * gb {
+        "64 GB"
+    } else if is_usb && size > 127 * gb && size < 129 * gb {
+        "128 GB"
+    } else {
+        return None;
+    };
+    Some(display.to_string())
+}
+
+async fn storage_serial_fallback(ctx: &ProbeContext<'_>, sysfs_path: &Path) -> Option<String> {
+    let device_path = sysfs_path.join("device");
+    let device_name = read_optional_trimmed(ctx, &device_path.join("name")).await;
+    let bootdevice_name = read_optional_trimmed(ctx, Path::new("/proc/bootdevice/name")).await;
+    if device_name.is_some() && device_name == bootdevice_name {
+        if let Some(cid) = read_optional_trimmed(ctx, Path::new("/proc/bootdevice/cid")).await {
+            return Some(cid);
+        }
+    }
+    read_optional_trimmed(ctx, &device_path.join("unique_number")).await
 }
 
 async fn read_first_optional_trimmed(
@@ -2522,6 +2731,7 @@ impl Probe for StorageProbe {
         if !result.is_success() {
             let mut fallback = ProbeResult::source_failure(self.name(), &result);
             fallback.devices = storage_devices_from_sysfs(ctx).await;
+            fallback.consumed = storage_consumed_refs(&fallback.devices);
             return fallback;
         }
         let records = match parse_lsblk_json_result(&result.stdout) {
@@ -2553,13 +2763,19 @@ impl Probe for StorageProbe {
             let name = dev.name;
             let node = format!("/dev/{name}");
             let wwn = dev.wwn.map(normalize_storage_wwn);
+            let sysfs_path = Path::new("/sys/block").join(&name);
+            let mut serial = dev.serial;
+            if serial.is_none() {
+                serial = storage_serial_fallback(ctx, &sysfs_path).await;
+            }
             let mut device = Device::new(
-                device_id::storage(wwn.as_deref(), dev.serial.as_deref(), &node),
+                device_id::storage(wwn.as_deref(), serial.as_deref(), &node),
                 DeviceKind::Storage,
                 dev.model.clone().unwrap_or_else(|| node.clone()),
                 DeviceProperties::Storage(StorageInfo {
                     device_node: Some(node),
                     size_bytes: dev.size,
+                    size_display: storage_size_display(dev.size, dev.tran.as_deref()),
                     media_type: dev.tran,
                     firmware: dev.rev,
                     wwn,
@@ -2573,30 +2789,58 @@ impl Probe for StorageProbe {
                 summary: None,
             });
             device.model = dev.model;
-            device.serial = dev.serial;
+            device.serial = serial;
+            let device = apply_storage_sysfs_enrichment(ctx, device, &name).await;
             let device = apply_storage_driver(ctx, device, &name).await;
             let device = apply_storage_lshw_storage_enrichment(device, &lshw_storage);
             let device = apply_storage_lspci_enrichment(device, &lspci);
             let device = apply_storage_lshw_enrichment(device, &lshw);
             let device = apply_storage_hwinfo_enrichment(device, &hwinfo);
             let device = apply_storage_hdparm_enrichment(ctx, device).await;
-            devices.push(apply_storage_vendor_fallback(
+            devices.push(apply_storage_parent_ref(apply_storage_vendor_fallback(
                 apply_storage_smartctl(ctx, device).await,
-            ));
+            )));
         }
         if devices.is_empty() {
+            let fallback_devices = storage_devices_from_sysfs(ctx).await;
+            let consumed = storage_consumed_refs(&fallback_devices);
             return ProbeResult {
-                devices: storage_devices_from_sysfs(ctx).await,
+                devices: fallback_devices,
                 warnings: vec![ScanWarning::new(
                     "source_empty",
                     "storage source produced no disk records",
                 )
                 .with_source(result.source)],
-                consumed: Vec::new(),
+                consumed,
             };
         }
-        ProbeResult::with_devices(devices)
+        ProbeResult {
+            consumed: storage_consumed_refs(&devices),
+            devices,
+            warnings: Vec::new(),
+        }
     }
+}
+
+fn apply_storage_parent_ref(mut device: Device) -> Device {
+    let Some(BusInfo::Pci { address, .. }) = device.bus.as_ref() else {
+        return device;
+    };
+    device.parent_id = Some(device_id::pci(address));
+    device
+}
+
+fn storage_consumed_refs(devices: &[Device]) -> Vec<DeviceRef> {
+    let mut refs = Vec::new();
+    for device in devices {
+        let Some(id) = device.parent_id.as_ref() else {
+            continue;
+        };
+        if !refs.iter().any(|entry: &DeviceRef| entry.id == *id) {
+            refs.push(DeviceRef { id: id.clone() });
+        }
+    }
+    refs
 }
 
 fn apply_storage_vendor_fallback(mut device: Device) -> Device {
@@ -2629,12 +2873,43 @@ fn storage_vendor_from_model_prefix(model: &str) -> Option<&'static str> {
         ("QUANTUM", "Quantum"),
         ("FIREBALL", "Quantum"),
         ("FORESEE", "Foresee"),
+        ("YMTC", "YMTC"),
+        ("ZHITAI", "ZhiTai"),
+        ("ZTC", "ZhiTai"),
+        ("YEESTOR", "Yeestor"),
+        ("MAXIO", "Maxio"),
+        ("GLOWAY", "Gloway"),
+        ("KINGSPEC", "KingSpec"),
+        ("KINGSTON", "Kingston"),
+        ("SANDISK", "SanDisk"),
+        ("SAMSUNG", "Samsung"),
+        ("MICRON", "Micron"),
+        ("CT", "Crucial"),
+        ("SKHYNIX", "SK hynix"),
+        ("SK HYNIX", "SK hynix"),
+        ("HYNIX", "SK hynix"),
+        ("NETAC", "Netac"),
+        ("RAMAXEL", "Ramaxel"),
+        ("BIWIN", "Biwin"),
+        ("CXMT", "CXMT"),
+        ("TIGO", "Tigo"),
+        ("COLORFUL", "Colorful"),
+        ("ASGARD", "Asgard"),
+        ("LEXAR", "Lexar"),
         ("IBM", "IBM"),
         ("RS", "Longsys"),
-        ("ST", "Seagate"),
     ]
     .into_iter()
     .find_map(|(prefix, vendor)| model.starts_with(prefix).then_some(vendor))
+    .or_else(|| storage_seagate_vendor_from_model_prefix(&model))
+}
+
+fn storage_seagate_vendor_from_model_prefix(model: &str) -> Option<&'static str> {
+    let rest = model.strip_prefix("ST")?;
+    rest.chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_digit())
+        .then_some("Seagate")
 }
 
 #[async_trait]

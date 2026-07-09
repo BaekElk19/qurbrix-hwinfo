@@ -1389,6 +1389,34 @@ async fn storage_probe_preserves_wwn_and_firmware_from_lsblk_success_path() {
 }
 
 #[tokio::test]
+async fn storage_probe_reports_deepin_size_display_rounding() {
+    let cases = [
+        (512_110_190_592_u64, "512 GB", "sata"),
+        (1_000_204_886_016_u64, "1 TB", "nvme"),
+        (16_031_383_552_u64, "16 GB", "usb"),
+    ];
+
+    for (size, expected, tran) in cases {
+        let runner = FakeSourceRunner::new().with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            format!(
+                r#"{{"blockdevices":[{{"name":"sda","type":"disk","size":{size},"model":"Disk","serial":"S1","tran":"{tran}"}}]}}"#
+            ),
+        );
+        let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+        let result = StorageProbe.probe(&ctx).await;
+
+        let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+            panic!("expected storage properties");
+        };
+        assert_eq!(storage.size_bytes, Some(size));
+        assert_eq!(storage.size_display.as_deref(), Some(expected), "{tran}");
+    }
+}
+
+#[tokio::test]
 async fn storage_probe_infers_longsys_vendor_from_rs_model_prefix() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",
@@ -1410,6 +1438,28 @@ async fn storage_probe_infers_vendor_from_kylin_disk_model_prefix() {
         ("WDC WD10EZEX-08WN4A0", "Western Digital"),
         ("ST1000DM010-2EP102", "Seagate"),
         ("FORESEE 256GB SSD", "Foresee"),
+        ("YMTC PC300 512GB", "YMTC"),
+        ("ZHITAI TiPlus5000", "ZhiTai"),
+        ("ZTC ZTSSD-A4", "ZhiTai"),
+        ("YEESTOR YS9082", "Yeestor"),
+        ("MAXIO MAP1202", "Maxio"),
+        ("GLOWAY VAL 512G", "Gloway"),
+        ("KingSpec NT-256", "KingSpec"),
+        ("KINGSTON SA400S37", "Kingston"),
+        ("SanDisk SSD PLUS", "SanDisk"),
+        ("SAMSUNG MZVL2512HCJQ", "Samsung"),
+        ("MICRON_2450_MTFDKBA512TFK", "Micron"),
+        ("CT500MX500SSD1", "Crucial"),
+        ("SKHynix_HFS512GDE9X081N", "SK hynix"),
+        ("HYNIX HFS256G39TND", "SK hynix"),
+        ("NETAC SSD 512GB", "Netac"),
+        ("RAMAXEL RPEYJ1T24MKN2QW", "Ramaxel"),
+        ("BIWIN SSD", "Biwin"),
+        ("CXMT SSD", "CXMT"),
+        ("TIGO SSD", "Tigo"),
+        ("Colorful CN600", "Colorful"),
+        ("Asgard AN4", "Asgard"),
+        ("LEXAR SSD NM620", "Lexar"),
     ];
 
     for (model, vendor) in cases {
@@ -1621,6 +1671,59 @@ async fn storage_probe_reads_smart_health_from_nonzero_smartctl_json() {
 }
 
 #[tokio::test]
+async fn storage_probe_retries_usb_bridge_smartctl_with_sat_device_type() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"USB SSD","serial":"S1","tran":"usb"}]}"#,
+        )
+        .with_command_status(
+            "smartctl",
+            ["-a", "-j", "/dev/sda"],
+            "Read Device Identity failed: scsi error unsupported scsi opcode\n",
+            2,
+        )
+        .with_command(
+            "smartctl",
+            ["-a", "-j", "-d", "sat", "/dev/sda"],
+            r#"{"smart_status":{"passed":true},"temperature":{"current":39}}"#,
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = StorageProbe.probe(&ctx).await;
+
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.smart_status.as_deref(), Some("passed"));
+    assert_eq!(storage.temperature_celsius, Some(39.0));
+    assert!(result.devices[0].sources.iter().any(|source| {
+        source.kind == SourceKind::Command && source.source == "smartctl -a -j -d sat /dev/sda"
+    }));
+}
+
+#[tokio::test]
+async fn storage_probe_records_warning_when_smartctl_json_is_malformed() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_command("smartctl", ["-a", "-j", "/dev/sda"], "not json");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert!(result.devices[0].warnings.iter().any(|warning| {
+        warning.code == "parse_failed"
+            && warning.source.as_deref() == Some("smartctl -a -j /dev/sda")
+    }));
+}
+
+#[tokio::test]
 async fn storage_probe_reads_driver_from_sysfs_for_lsblk_disk() {
     let runner = FakeSourceRunner::new()
         .with_command(
@@ -1686,6 +1789,8 @@ async fn storage_probe_preserves_sata_parent_pci_identity_from_sysfs() {
         .iter()
         .any(|source| source.kind == SourceKind::Sysfs
             && source.source == "/sys/block/sda/device/../../../uevent"));
+    assert_eq!(device.parent_id.as_deref(), Some("pci:0000:00:17.0"));
+    assert_eq!(result.consumed[0].id, "pci:0000:00:17.0");
 }
 
 #[tokio::test]
@@ -1910,6 +2015,8 @@ async fn storage_probe_enriches_controller_identity_from_lshw_storage() {
         Some("NVMe SSD Controller PM9A1/PM9A3/980PRO")
     );
     assert_eq!(storage.controller_driver.as_deref(), Some("nvme"));
+    assert_eq!(device.parent_id.as_deref(), Some("pci:0000:0d:00.0"));
+    assert_eq!(result.consumed[0].id, "pci:0000:0d:00.0");
     assert!(device.sources.iter().any(|source| {
         source.kind == SourceKind::Command && source.source == "lshw -class storage"
     }));
@@ -1968,7 +2075,8 @@ async fn storage_probe_enriches_human_readable_lshw_fields() {
                   vendor: Samsung\n\
                   logical name: /dev/sda\n\
                   serial: S12345\n\
-                  configuration: ansiversion=5 firmware=3B2QGXA7 sectorsize=512\n",
+                  capabilities: gpt-1.00 partitioned partitioned:gpt\n\
+                  configuration: ansiversion=5 firmware=3B2QGXA7 sectorsize=512 speed=6Gbit/s\n",
         );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
@@ -1986,6 +2094,11 @@ async fn storage_probe_enriches_human_readable_lshw_fields() {
         panic!("expected storage properties");
     };
     assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
+    assert_eq!(storage.speed.as_deref(), Some("6Gbit/s"));
+    assert_eq!(
+        storage.capabilities,
+        vec!["gpt-1.00", "partitioned", "partitioned:gpt"]
+    );
 }
 
 #[tokio::test]
@@ -2133,7 +2246,17 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
         .with_file("/sys/block/sda/device/serial", "S12345\n")
         .with_file("/sys/block/sda/device/wwid", "naa.5002538f00000000\n")
         .with_file("/sys/block/sda/device/rev", "3B2QGXA7\n")
-        .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
+        .with_file(
+            "/sys/block/sda/device/uevent",
+            "DRIVER=sd\nPRODUCT=abcd/1234/0001\n",
+        )
+        .with_file(
+            "/sys/block/sda/device/../uevent",
+            "DRIVER=ufs\nPCI_CLASS=180000\nPCI_ID=1D87:0001\nPCI_SLOT_NAME=0000:01:00.0\n",
+        )
+        .with_file("/sys/block/sda/device/spec_version", "3.1\n")
+        .with_file("/sys/block/sda/device/modalias", "scsi:t-0x00\n")
+        .with_file("/sys/block/sda/device/unique_number", "UNIQUE-S12345\n")
         .with_file("/sys/block/sda/queue/rotational", "0\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
@@ -2171,7 +2294,12 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
         DeviceProperties::Storage(storage) => {
             assert_eq!(storage.device_node.as_deref(), Some("/dev/sda"));
             assert_eq!(storage.size_bytes, Some(1_073_741_824));
-            assert_eq!(storage.media_type.as_deref(), Some("ssd"));
+            assert_eq!(storage.media_type.as_deref(), Some("ufs"));
+            assert_eq!(storage.rotation_rate.as_deref(), Some("Solid State Device"));
+            assert_eq!(storage.ufs_spec_version.as_deref(), Some("3.1"));
+            assert_eq!(storage.vid_pid.as_deref(), Some("abcd/1234/0001"));
+            assert_eq!(storage.phys_id.as_deref(), Some("abcd/1234/0001"));
+            assert_eq!(storage.modalias.as_deref(), Some("scsi:t-0x00"));
             assert_eq!(storage.wwn.as_deref(), Some("naa.5002538f00000000"));
             assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
         }
@@ -2193,6 +2321,29 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
             .count(),
         1
     );
+    assert_eq!(
+        result.devices[0].parent_id.as_deref(),
+        Some("pci:0000:01:00.0")
+    );
+    assert_eq!(result.consumed[0].id, "pci:0000:01:00.0");
+}
+
+#[tokio::test]
+async fn storage_probe_prefers_bootdevice_cid_for_platform_disk_serial() {
+    let runner = FakeSourceRunner::new()
+        .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/sda")])
+        .with_file("/sys/block/sda/device/model", "UFS Disk\n")
+        .with_file("/sys/block/sda/device/name", "f8300000.ufs\n")
+        .with_file("/sys/block/sda/device/spec_version", "3.1\n")
+        .with_file("/proc/bootdevice/name", "f8300000.ufs\n")
+        .with_file("/proc/bootdevice/cid", "CID-SERIAL-123\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = StorageProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    assert_eq!(result.devices[0].id, "storage:serial:CID-SERIAL-123");
+    assert_eq!(result.devices[0].serial.as_deref(), Some("CID-SERIAL-123"));
 }
 
 #[tokio::test]

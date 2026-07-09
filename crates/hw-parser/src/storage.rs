@@ -44,6 +44,8 @@ pub struct LshwDiskRecord {
     pub vendor: Option<String>,
     pub serial: Option<String>,
     pub firmware: Option<String>,
+    pub speed: Option<String>,
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -194,6 +196,7 @@ pub fn parse_lshw_disk(input: &str) -> Vec<LshwDiskRecord> {
             "product" => record.product = clean_lshw_disk_value(value),
             "vendor" => record.vendor = clean_lshw_disk_value(value),
             "serial" => record.serial = clean_lshw_disk_value(value),
+            "capabilities" => record.capabilities = clean_lshw_capabilities(value),
             "configuration" => parse_lshw_disk_configuration(record, value),
             _ => {}
         }
@@ -353,8 +356,10 @@ fn parse_lshw_disk_configuration(record: &mut LshwDiskRecord, value: &str) {
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };
-        if key == "firmware" {
-            record.firmware = clean_lshw_disk_value(value);
+        match key {
+            "firmware" => record.firmware = clean_lshw_disk_value(value),
+            "speed" => record.speed = clean_lshw_disk_value(value),
+            _ => {}
         }
     }
 }
@@ -377,6 +382,15 @@ fn clean_lshw_disk_value(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn clean_lshw_capabilities(value: &str) -> Vec<String> {
+    value
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn clean_hwinfo_disk_value(value: &str) -> Option<String> {
