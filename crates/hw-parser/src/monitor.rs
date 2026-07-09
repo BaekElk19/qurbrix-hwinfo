@@ -6,7 +6,9 @@ pub struct XrandrMonitorRecord {
     pub connected: bool,
     pub primary: bool,
     pub resolution: Option<String>,
+    pub current_refresh_hz: Option<u16>,
     pub max_resolution: Option<String>,
+    pub min_resolution: Option<String>,
     pub support_resolutions: Vec<String>,
 }
 
@@ -46,7 +48,9 @@ pub fn parse_xrandr_query(input: &str) -> Vec<XrandrMonitorRecord> {
                 connected: state == Some("connected"),
                 primary,
                 resolution,
+                current_refresh_hz: None,
                 max_resolution: None,
+                min_resolution: None,
                 support_resolutions: Vec::new(),
             });
             continue;
@@ -57,9 +61,16 @@ pub fn parse_xrandr_query(input: &str) -> Vec<XrandrMonitorRecord> {
                 record.max_resolution = parse_mode_resolution(first);
             }
             if record.connected {
-                record
-                    .support_resolutions
-                    .extend(parse_mode_refreshes(line));
+                let refreshes = parse_mode_refreshes(line);
+                if record.current_refresh_hz.is_none() {
+                    if let Some(rate) = parse_current_refresh_rate(line) {
+                        record.current_refresh_hz = Some(rate);
+                    }
+                }
+                if let Some(mode) = parse_mode_resolution(first) {
+                    record.min_resolution = Some(mode);
+                }
+                record.support_resolutions.extend(refreshes);
             }
         }
     }
@@ -244,6 +255,24 @@ fn parse_mode_resolution(value: &str) -> Option<String> {
         && width.chars().all(|c| c.is_ascii_digit())
         && height.chars().all(|c| c.is_ascii_digit()))
     .then(|| value.to_string())
+}
+
+fn parse_current_refresh_rate(line: &str) -> Option<u16> {
+    let mut parts = line.split_whitespace();
+    let _resolution = parts.next().and_then(parse_mode_resolution)?;
+    for part in parts {
+        if !part.contains('*') {
+            continue;
+        }
+        let rate = part.trim_end_matches(['*', '+']);
+        if rate.is_empty() || !rate.chars().all(|ch| ch.is_ascii_digit() || ch == '.') {
+            continue;
+        }
+        if let Ok(value) = rate.parse::<f32>() {
+            return Some(value.round() as u16);
+        }
+    }
+    None
 }
 
 fn parse_mode_refreshes(line: &str) -> Vec<String> {

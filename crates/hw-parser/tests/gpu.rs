@@ -11,6 +11,7 @@ fn parses_lshw_display_records() {
               description: VGA compatible controller\n\
               product: Navi 23 [Radeon RX 6600]\n\
               vendor: Advanced Micro Devices, Inc. [AMD/ATI]\n\
+              version: c7\n\
               bus info: pci@0000:03:00.0\n\
               width: 64 bits\n\
               clock: 33MHz\n\
@@ -28,6 +29,11 @@ fn parses_lshw_display_records() {
         records[0].vendor.as_deref(),
         Some("Advanced Micro Devices, Inc. [AMD/ATI]")
     );
+    assert_eq!(
+        records[0].description.as_deref(),
+        Some("VGA compatible controller")
+    );
+    assert_eq!(records[0].version.as_deref(), Some("c7"));
     assert_eq!(records[0].bus_info.as_deref(), Some("pci@0000:03:00.0"));
     assert_eq!(records[0].driver.as_deref(), Some("amdgpu"));
     assert_eq!(records[0].width_bits, Some(64));

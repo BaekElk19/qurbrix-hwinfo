@@ -1,0 +1,10 @@
+31: None 00.0: 10600 Disk
+  Hardware Class: disk
+  Model: "Samsung SSD 980"
+  Vendor: "Samsung"
+  Device: "Samsung SSD 980"
+  Revision: "3B4QFXO7"
+  Driver: "nvme"
+  Driver Modules: "nvme"
+  Device File: /dev/nvme0n1
+  Serial ID: "S6P0TEST123"

@@ -1,0 +1,14 @@
+{
+  "blockdevices": [
+    {
+      "name": "nvme0n1",
+      "type": "disk",
+      "size": 512110190592,
+      "model": "Samsung SSD 980",
+      "serial": "S6P0TEST123",
+      "tran": "nvme",
+      "wwn": "eui.002538b111111111",
+      "rev": "3B4QFXO7"
+    }
+  ]
+}

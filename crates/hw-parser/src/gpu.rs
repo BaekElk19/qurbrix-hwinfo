@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct LshwDisplayRecord {
     pub product: Option<String>,
     pub vendor: Option<String>,
+    pub description: Option<String>,
+    pub version: Option<String>,
     pub bus_info: Option<String>,
     pub driver: Option<String>,
     pub width_bits: Option<u32>,
@@ -177,6 +179,8 @@ pub fn parse_lshw_display(input: &str) -> Vec<LshwDisplayRecord> {
         match key.trim() {
             "product" => record.product = clean_lshw_display_value(value),
             "vendor" => record.vendor = clean_lshw_display_value(value),
+            "description" => record.description = clean_lshw_display_value(value),
+            "version" => record.version = clean_lshw_display_value(value),
             "bus info" => record.bus_info = clean_lshw_display_value(value),
             "width" => record.width_bits = parse_width_bits(Some(value)),
             "clock" => record.clock_mhz = parse_lshw_clock_mhz(value),

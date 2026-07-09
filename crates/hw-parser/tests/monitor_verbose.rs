@@ -1,5 +1,6 @@
 use hw_parser::{
-    lookup_pnp_manufacturer, parse_hwinfo_monitor, parse_xrandr_query, parse_xrandr_verbose,
+    lookup_pnp_manufacturer, parse_edid, parse_hwinfo_monitor, parse_xrandr_query,
+    parse_xrandr_verbose,
 };
 
 #[test]
@@ -33,8 +34,11 @@ fn parse_xrandr_query_extracts_first_mode_as_max_resolution() {
     );
 
     assert_eq!(records.len(), 1);
+    assert!(records[0].primary);
     assert_eq!(records[0].resolution.as_deref(), Some("1920x1080"));
+    assert_eq!(records[0].current_refresh_hz, Some(60));
     assert_eq!(records[0].max_resolution.as_deref(), Some("2560x1440"));
+    assert_eq!(records[0].min_resolution.as_deref(), Some("1920x1080"));
 }
 
 #[test]
@@ -126,4 +130,36 @@ fn pnp_lookup_returns_known_manufacturer_names() {
     assert_eq!(lookup_pnp_manufacturer("AOC"), Some("AOC International"));
     assert_eq!(lookup_pnp_manufacturer(" aoc "), Some("AOC International"));
     assert_eq!(lookup_pnp_manufacturer("ZZZ"), None);
+}
+
+#[test]
+fn monitor_fixtures_cover_xrandr_and_edid_sources() {
+    let hwinfo_records = parse_hwinfo_monitor(&hw_testdata::fixture("monitor/hwinfo-monitor.txt"));
+    assert_eq!(hwinfo_records.len(), 1);
+    assert_eq!(hwinfo_records[0].model.as_deref(), Some("AOC FIXTURE"));
+
+    let query_records = parse_xrandr_query(&hw_testdata::fixture("xrandr/query.txt"));
+    assert_eq!(query_records.len(), 2);
+    assert!(query_records[0].primary);
+    assert_eq!(query_records[0].current_refresh_hz, Some(60));
+
+    let verbose_records = parse_xrandr_verbose(&hw_testdata::fixture("xrandr/verbose.txt"));
+    assert_eq!(verbose_records.len(), 1);
+    assert_eq!(verbose_records[0].connector, "HDMI-1");
+
+    let edid = parse_hex_fixture(&hw_testdata::fixture("edid/aoc.hex"));
+    let record = parse_edid(&edid).expect("fixture EDID parses");
+    assert_eq!(record.manufacturer.as_deref(), Some("AOC"));
+    assert_eq!(record.name.as_deref(), Some("AOC FIXTURE"));
+}
+
+fn parse_hex_fixture(input: &str) -> Vec<u8> {
+    let hex = input.split_whitespace().collect::<String>();
+    hex.as_bytes()
+        .chunks(2)
+        .map(|chunk| {
+            let pair = std::str::from_utf8(chunk).expect("hex fixture is utf8");
+            u8::from_str_radix(pair, 16).expect("hex fixture has byte pairs")
+        })
+        .collect()
 }

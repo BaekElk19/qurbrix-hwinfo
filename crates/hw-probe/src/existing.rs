@@ -75,6 +75,13 @@ impl Probe for CpuProbe {
             .runner
             .read_file(Path::new("/sys/phytium1500a_info"))
             .await;
+        let sensors_result = ctx
+            .runner
+            .run_command(
+                &CommandSpec::new("sensors", std::iter::empty::<&str>()),
+                ctx.timeout,
+            )
+            .await;
         let cpu_sysfs = read_cpu_sysfs(ctx).await;
         let cpufreq = read_cpu_cpufreq(ctx).await;
 
@@ -165,6 +172,11 @@ impl Probe for CpuProbe {
         } else {
             None
         };
+        let sensors_temperatures = if sensors_result.is_success() {
+            parse_sensors_cpu_temperatures(&sensors_result.stdout)
+        } else {
+            HashMap::new()
+        };
         let lscpu_contributed = lscpu.is_some();
         let lshw_contributed = lshw.is_some();
         let dmi_contributed = dmi.iter().any(hw_parser::DmidecodeCpuRecord::is_useful);
@@ -172,6 +184,7 @@ impl Probe for CpuProbe {
         let proc_hardware_contributed = proc_hardware.is_some();
         let cpu_sysfs_contributed = cpu_sysfs.is_some();
         let cpufreq_contributed = cpufreq.is_some();
+        let sensors_contributed = !sensors_temperatures.is_empty();
         let phytium1500a_contributed = phytium1500a.is_some();
         if lscpu.is_none()
             && lshw.is_none()
@@ -209,10 +222,10 @@ impl Probe for CpuProbe {
             lshw,
             &dmi,
         );
-        if let Some(cpufreq) = cpufreq {
-            merged.max_freq_mhz = merged.max_freq_mhz.or(cpufreq.cpu_max_mhz);
-            merged.min_freq_mhz = merged.min_freq_mhz.or(cpufreq.cpu_min_mhz);
-            merged.current_freq_mhz = merged.current_freq_mhz.or(cpufreq.cpu_mhz);
+        if let Some(cpufreq) = cpufreq.as_ref() {
+            merged.max_freq_mhz = merged.max_freq_mhz.or(cpufreq.record.cpu_max_mhz);
+            merged.min_freq_mhz = merged.min_freq_mhz.or(cpufreq.record.cpu_min_mhz);
+            merged.current_freq_mhz = merged.current_freq_mhz.or(cpufreq.record.cpu_mhz);
         }
         let architecture = merged
             .architecture
@@ -247,7 +260,7 @@ impl Probe for CpuProbe {
             .or_else(|| merged.vendor.clone());
         let extensions = cpu_extensions_from_flags(&merged.flags);
         let cache_entries = read_cpu_cache_entries(ctx, merged.threads).await;
-        let logical_cpus = read_logical_cpus(ctx).await;
+        let logical_cpus = read_logical_cpus(ctx, &sensors_temperatures).await;
         let hw_platform = detect_hw_platform(ctx, merged.name.as_deref()).await;
         let (frequency_display, frequency_is_range) = hw_parser::format_cpu_frequency_display(
             merged.max_freq_mhz,
@@ -304,6 +317,20 @@ impl Probe for CpuProbe {
                 extensions,
                 logical_cpus,
                 hw_platform,
+                scaling_governor: cpufreq
+                    .as_ref()
+                    .and_then(|cpufreq| cpufreq.scaling_governor.clone()),
+                scaling_available_governors: cpufreq
+                    .as_ref()
+                    .map(|cpufreq| cpufreq.scaling_available_governors.clone())
+                    .unwrap_or_default(),
+                scaling_available_frequencies_khz: cpufreq
+                    .as_ref()
+                    .map(|cpufreq| cpufreq.scaling_available_frequencies_khz.clone())
+                    .unwrap_or_default(),
+                scaling_setspeed_supported: cpufreq
+                    .as_ref()
+                    .is_some_and(|cpufreq| cpufreq.scaling_setspeed_supported),
             })),
         );
         for (source, contributed) in [
@@ -348,6 +375,14 @@ impl Probe for CpuProbe {
             device = device.with_source(SourceEvidence {
                 source: "/sys/devices/system/cpu/cpu0/cpufreq".to_string(),
                 kind: SourceKind::Sysfs,
+                status: SourceStatus::Success,
+                summary: None,
+            });
+        }
+        if sensors_contributed {
+            device = device.with_source(SourceEvidence {
+                source: sensors_result.source,
+                kind: SourceKind::Command,
                 status: SourceStatus::Success,
                 summary: None,
             });
@@ -828,7 +863,10 @@ async fn read_cpu_cache_entries(
 /// `/sys/devices/system/cpu/cpu*` and returns one `LogicalCpuInfo` per
 /// online logical processor, carrying package/core ids and per-core
 /// current/min/max cpufreq (kHz to MHz) plus BogoMIPS from `/proc/cpuinfo`.
-async fn read_logical_cpus(ctx: &ProbeContext<'_>) -> Vec<hw_model::LogicalCpuInfo> {
+async fn read_logical_cpus(
+    ctx: &ProbeContext<'_>,
+    temperatures_by_core: &HashMap<u32, f32>,
+) -> Vec<hw_model::LogicalCpuInfo> {
     let mut paths = ctx
         .runner
         .glob("/sys/devices/system/cpu/cpu*")
@@ -870,6 +908,9 @@ async fn read_logical_cpus(ctx: &ProbeContext<'_>) -> Vec<hw_model::LogicalCpuIn
             .map(|indices| indices.contains(&processor))
             .unwrap_or(true);
         let bogomips = bogomips_by_cpu.get(&processor).cloned();
+        let temperature_celsius = core_id
+            .and_then(|core_id| temperatures_by_core.get(&core_id).copied())
+            .or_else(|| temperatures_by_core.get(&processor).copied());
         logical.push(hw_model::LogicalCpuInfo {
             processor,
             physical_id,
@@ -879,6 +920,7 @@ async fn read_logical_cpus(ctx: &ProbeContext<'_>) -> Vec<hw_model::LogicalCpuIn
             max_freq_mhz: max,
             bogomips,
             online,
+            temperature_celsius,
         });
     }
     logical
@@ -1091,54 +1133,76 @@ fn format_cache_bytes(bytes: u64) -> Option<String> {
     }
 }
 
-async fn read_cpu_cpufreq(ctx: &ProbeContext<'_>) -> Option<hw_parser::CpuRecord> {
-    let mut cpu_max_mhz = read_cpufreq_mhz(
-        ctx,
-        Path::new("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"),
-    )
-    .await;
-    if cpu_max_mhz.is_none() {
-        cpu_max_mhz = read_cpufreq_mhz(
-            ctx,
-            Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"),
-        )
-        .await;
+#[derive(Default)]
+struct CpuCpufreqInfo {
+    record: hw_parser::CpuRecord,
+    scaling_governor: Option<String>,
+    scaling_available_governors: Vec<String>,
+    scaling_available_frequencies_khz: Vec<u32>,
+    scaling_setspeed_supported: bool,
+}
+
+impl CpuCpufreqInfo {
+    fn is_empty(&self) -> bool {
+        self.record.is_empty()
+            && self.scaling_governor.is_none()
+            && self.scaling_available_governors.is_empty()
+            && self.scaling_available_frequencies_khz.is_empty()
+            && !self.scaling_setspeed_supported
     }
-    let mut cpu_min_mhz = read_cpufreq_mhz(
-        ctx,
-        Path::new("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq"),
-    )
-    .await;
+}
+
+async fn read_cpu_cpufreq(ctx: &ProbeContext<'_>) -> Option<CpuCpufreqInfo> {
+    let base = Path::new("/sys/devices/system/cpu/cpu0/cpufreq");
+    let mut cpu_max_mhz = read_cpufreq_mhz(ctx, &base.join("cpuinfo_max_freq")).await;
+    if cpu_max_mhz.is_none() {
+        cpu_max_mhz = read_cpufreq_mhz(ctx, &base.join("scaling_max_freq")).await;
+    }
+    let mut cpu_min_mhz = read_cpufreq_mhz(ctx, &base.join("cpuinfo_min_freq")).await;
     if cpu_min_mhz.is_none() {
-        cpu_min_mhz = read_cpufreq_mhz(
-            ctx,
-            Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq"),
-        )
-        .await;
+        cpu_min_mhz = read_cpufreq_mhz(ctx, &base.join("scaling_min_freq")).await;
     }
     let mut cpu_mhz = read_average_scaling_cur_freq(ctx).await;
     if cpu_mhz.is_none() {
-        cpu_mhz = read_cpufreq_mhz(
-            ctx,
-            Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
-        )
-        .await;
+        cpu_mhz = read_cpufreq_mhz(ctx, &base.join("scaling_cur_freq")).await;
     }
+    let scaling_setspeed = read_optional_trimmed(ctx, &base.join("scaling_setspeed")).await;
     if cpu_mhz.is_none() {
-        cpu_mhz = read_cpufreq_mhz(
-            ctx,
-            Path::new("/sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed"),
-        )
-        .await;
+        cpu_mhz = scaling_setspeed.as_deref().and_then(parse_cpufreq_khz);
     }
-    let record = hw_parser::CpuRecord {
-        cpu_mhz,
-        cpu_max_mhz,
-        cpu_min_mhz,
-        ..Default::default()
+    let info = CpuCpufreqInfo {
+        record: hw_parser::CpuRecord {
+            cpu_mhz,
+            cpu_max_mhz,
+            cpu_min_mhz,
+            ..Default::default()
+        },
+        scaling_governor: read_optional_trimmed(ctx, &base.join("scaling_governor")).await,
+        scaling_available_governors: read_optional_trimmed(
+            ctx,
+            &base.join("scaling_available_governors"),
+        )
+        .await
+        .map(|value| {
+            value
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default(),
+        scaling_available_frequencies_khz: read_optional_trimmed(
+            ctx,
+            &base.join("scaling_available_frequencies"),
+        )
+        .await
+        .map(|value| parse_cpufreq_khz_list(&value))
+        .unwrap_or_default(),
+        scaling_setspeed_supported: scaling_setspeed
+            .as_deref()
+            .is_some_and(cpufreq_setspeed_supported),
     };
 
-    (!record.is_empty()).then_some(record)
+    (!info.is_empty()).then_some(info)
 }
 
 async fn read_average_scaling_cur_freq(ctx: &ProbeContext<'_>) -> Option<u32> {
@@ -1180,6 +1244,57 @@ fn parse_cpufreq_khz(value: &str) -> Option<u32> {
     let khz = value.trim().parse::<u64>().ok()?;
     let mhz = (khz + 500) / 1000;
     u32::try_from(mhz).ok().filter(|value| *value > 0)
+}
+
+fn parse_cpufreq_khz_list(value: &str) -> Vec<u32> {
+    value
+        .split_whitespace()
+        .filter_map(|part| part.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .collect()
+}
+
+fn cpufreq_setspeed_supported(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && !value.eq_ignore_ascii_case("<unsupported>")
+}
+
+fn parse_sensors_cpu_temperatures(input: &str) -> HashMap<u32, f32> {
+    let mut temperatures = HashMap::new();
+    for line in input.lines() {
+        let Some((label, value)) = line.split_once(':') else {
+            continue;
+        };
+        let Some(index) = sensors_cpu_index(label) else {
+            continue;
+        };
+        if let Some(temperature) = parse_temperature_celsius(value) {
+            temperatures.entry(index).or_insert(temperature);
+        }
+    }
+    temperatures
+}
+
+fn sensors_cpu_index(label: &str) -> Option<u32> {
+    let label = label.trim().to_ascii_lowercase();
+    let suffix = label
+        .strip_prefix("core")
+        .or_else(|| label.strip_prefix("cpu"))?;
+    let digits = suffix
+        .trim_start_matches(|ch: char| ch.is_ascii_whitespace() || ch == '-' || ch == '_')
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
+}
+
+fn parse_temperature_celsius(value: &str) -> Option<f32> {
+    let start = value.find(|ch: char| ch == '+' || ch == '-' || ch.is_ascii_digit())?;
+    let tail = &value[start..];
+    let end = tail
+        .find(|ch: char| !(ch.is_ascii_digit() || ch == '.' || ch == '+' || ch == '-'))
+        .unwrap_or(tail.len());
+    tail[..end].parse::<f32>().ok()
 }
 
 #[async_trait]
@@ -1640,21 +1755,24 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
             .and_then(|sectors| sectors.checked_mul(512));
         let rotational = read_optional_trimmed(ctx, &path.join("queue/rotational")).await;
         let spec_version = read_optional_trimmed(ctx, &path.join("device/spec_version")).await;
-        let media_type = if spec_version.is_some() {
-            Some("ufs".to_string())
-        } else {
-            rotational
-                .as_deref()
-                .and_then(storage_media_type_from_rotational)
-        };
-        let rotation_rate = rotational
-            .as_deref()
-            .and_then(storage_rotation_rate_from_rotational);
         let modalias = read_optional_trimmed(ctx, &path.join("device/modalias")).await;
         let uevent = read_optional_trimmed(ctx, &path.join("device/uevent")).await;
         let vid_pid = uevent
             .as_deref()
             .and_then(|uevent| parse_uevent_value(uevent, "PRODUCT"));
+        let media_type = rotational
+            .as_deref()
+            .and_then(storage_media_type_from_rotational);
+        let interface = if spec_version.is_some() {
+            Some("ufs".to_string())
+        } else {
+            modalias
+                .as_deref()
+                .and_then(storage_interface_from_modalias)
+        };
+        let rotation_rate = rotational
+            .as_deref()
+            .and_then(storage_rotation_rate_from_rotational);
 
         let mut device = Device::new(
             device_id::storage(None, serial.as_deref(), &node),
@@ -1663,8 +1781,9 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
             DeviceProperties::Storage(StorageInfo {
                 device_node: Some(node),
                 size_bytes,
-                size_display: storage_size_display(size_bytes, media_type.as_deref()),
+                size_display: storage_size_display(size_bytes, interface.as_deref()),
                 media_type,
+                interface,
                 firmware,
                 wwn,
                 rotation_rate,
@@ -1876,8 +1995,8 @@ async fn apply_storage_sysfs_enrichment(
 
     if let DeviceProperties::Storage(storage) = &mut device.properties {
         if spec_version.is_some() {
-            if storage.media_type.as_deref() != Some("ufs") {
-                storage.media_type = Some("ufs".to_string());
+            if storage.interface.as_deref() != Some("ufs") {
+                storage.interface = Some("ufs".to_string());
                 contributed = true;
             }
             if storage.ufs_spec_version.is_none() {
@@ -1893,6 +2012,12 @@ async fn apply_storage_sysfs_enrichment(
             if storage.rotation_rate.is_none() {
                 storage.rotation_rate = storage_rotation_rate_from_rotational(rotational);
                 contributed |= storage.rotation_rate.is_some();
+            }
+        }
+        if let Some(modalias_ref) = modalias.as_deref() {
+            if storage.interface.is_none() {
+                storage.interface = storage_interface_from_modalias(modalias_ref);
+                contributed |= storage.interface.is_some();
             }
         }
         if storage.modalias.is_none() && modalias.is_some() {
@@ -2126,7 +2251,7 @@ async fn apply_unique_storage_controller_pci_identity(
     ctx: &ProbeContext<'_>,
     mut device: Device,
 ) -> Device {
-    let Some(media_type) = storage_media_type_for_pci_controller(&device) else {
+    let Some(interface) = storage_interface_for_pci_controller(&device) else {
         return device;
     };
 
@@ -2147,7 +2272,7 @@ async fn apply_unique_storage_controller_pci_identity(
             record
                 .class_id
                 .as_deref()
-                .is_some_and(|class| storage_controller_class_matches_media_type(media_type, class))
+                .is_some_and(|class| storage_controller_class_matches_interface(interface, class))
                 .then_some(index)
         })
         .collect();
@@ -2188,19 +2313,19 @@ async fn apply_unique_storage_controller_pci_identity(
     device
 }
 
-fn storage_media_type_for_pci_controller(device: &Device) -> Option<&str> {
+fn storage_interface_for_pci_controller(device: &Device) -> Option<&str> {
     let DeviceProperties::Storage(storage) = &device.properties else {
         return None;
     };
     storage
-        .media_type
+        .interface
         .as_deref()
-        .filter(|media_type| matches!(*media_type, "sata" | "ata" | "scsi"))
+        .filter(|interface| matches!(*interface, "sata" | "ata" | "scsi"))
 }
 
-fn storage_controller_class_matches_media_type(media_type: &str, class: &str) -> bool {
+fn storage_controller_class_matches_interface(interface: &str, class: &str) -> bool {
     let class = class.trim_start_matches("0x").trim_start_matches("0X");
-    match media_type {
+    match interface {
         "sata" => class.starts_with("0106"),
         "ata" => class.starts_with("0101") || class.starts_with("0106"),
         "scsi" => class.starts_with("0100") || class.starts_with("0107"),
@@ -2493,12 +2618,12 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
     }) else {
         return device;
     };
-    let media_type = match &device.properties {
-        DeviceProperties::Storage(storage) => storage.media_type.clone(),
+    let interface = match &device.properties {
+        DeviceProperties::Storage(storage) => storage.interface.clone(),
         _ => None,
     };
 
-    let result = run_storage_smartctl(ctx, &node, media_type.as_deref()).await;
+    let result = run_storage_smartctl(ctx, &node, interface.as_deref()).await;
     let source_status = if result.is_success() {
         SourceStatus::Success
     } else {
@@ -2582,7 +2707,7 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
 async fn run_storage_smartctl(
     ctx: &ProbeContext<'_>,
     node: &str,
-    media_type: Option<&str>,
+    interface: Option<&str>,
 ) -> SourceResult {
     let result = ctx
         .runner
@@ -2594,7 +2719,7 @@ async fn run_storage_smartctl(
             ctx.timeout,
         )
         .await;
-    if !should_retry_storage_smartctl_with_sat(&result, media_type) {
+    if !should_retry_storage_smartctl_with_sat(&result, interface) {
         return result;
     }
     ctx.runner
@@ -2614,9 +2739,9 @@ async fn run_storage_smartctl(
         .await
 }
 
-fn should_retry_storage_smartctl_with_sat(result: &SourceResult, media_type: Option<&str>) -> bool {
+fn should_retry_storage_smartctl_with_sat(result: &SourceResult, interface: Option<&str>) -> bool {
     !result.is_success()
-        && media_type.is_some_and(|value| value.eq_ignore_ascii_case("usb"))
+        && interface.is_some_and(|value| value.eq_ignore_ascii_case("usb"))
         && result.stdout.contains("Read Device Identity failed:")
 }
 
@@ -2642,10 +2767,28 @@ fn storage_rotation_rate_from_rotational(rotational: &str) -> Option<String> {
     }
 }
 
-fn storage_size_display(size_bytes: Option<u64>, media_type: Option<&str>) -> Option<String> {
+fn normalize_storage_interface(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn storage_interface_from_modalias(modalias: &str) -> Option<String> {
+    let prefix = modalias.split(':').next().unwrap_or(modalias);
+    match prefix.to_ascii_lowercase().as_str() {
+        "nvme" => Some("nvme".to_string()),
+        "pci" if modalias.contains("cc0108") || modalias.contains("cc010802") => {
+            Some("nvme".to_string())
+        }
+        "usb" => Some("usb".to_string()),
+        "scsi" => Some("scsi".to_string()),
+        "sdio" | "mmc" => Some("mmc".to_string()),
+        _ => None,
+    }
+}
+
+fn storage_size_display(size_bytes: Option<u64>, interface: Option<&str>) -> Option<String> {
     let size = size_bytes?;
     let gb = 1_000_000_000_u64;
-    let is_usb = media_type.is_some_and(|value| value.eq_ignore_ascii_case("usb"));
+    let is_usb = interface.is_some_and(|value| value.eq_ignore_ascii_case("usb"));
     let display = if size > 255 * gb && size < 257 * gb {
         "256 GB"
     } else if size > 511 * gb && size < 513 * gb {
@@ -2772,6 +2915,7 @@ impl Probe for StorageProbe {
             if serial.is_none() {
                 serial = storage_serial_fallback(ctx, &sysfs_path).await;
             }
+            let interface = dev.tran.as_deref().map(normalize_storage_interface);
             let mut device = Device::new(
                 device_id::storage(wwn.as_deref(), serial.as_deref(), &node),
                 DeviceKind::Storage,
@@ -2779,8 +2923,8 @@ impl Probe for StorageProbe {
                 DeviceProperties::Storage(StorageInfo {
                     device_node: Some(node),
                     size_bytes: dev.size,
-                    size_display: storage_size_display(dev.size, dev.tran.as_deref()),
-                    media_type: dev.tran,
+                    size_display: storage_size_display(dev.size, interface.as_deref()),
+                    interface,
                     firmware: dev.rev,
                     wwn,
                     ..Default::default()
@@ -4473,6 +4617,7 @@ struct GpuXrandrRecord {
     connectors: Vec<GpuConnectorInfo>,
     current_resolution: Option<String>,
     max_resolution: Option<String>,
+    min_resolution: Option<String>,
 }
 
 #[derive(Default)]
@@ -4603,11 +4748,21 @@ fn gpu_xrandr_record_from_query(
         })
         .max_by_key(|(area, _)| *area)
         .map(|(_, resolution)| resolution);
+    let min_resolution = records
+        .iter()
+        .filter(|record| record.connected)
+        .filter_map(|record| {
+            let resolution = record.min_resolution.as_deref()?;
+            Some((resolution_area(resolution)?, resolution.to_string()))
+        })
+        .min_by_key(|(area, _)| *area)
+        .map(|(_, resolution)| resolution);
     GpuXrandrRecord {
         source,
         connectors,
         current_resolution,
         max_resolution,
+        min_resolution,
     }
 }
 
@@ -4627,6 +4782,10 @@ fn apply_gpu_xrandr_enrichment(
         }
         if gpu.max_resolution.is_none() && xrandr.max_resolution.is_some() {
             gpu.max_resolution = xrandr.max_resolution.clone();
+            contributed = true;
+        }
+        if gpu.min_resolution.is_none() && xrandr.min_resolution.is_some() {
+            gpu.min_resolution = xrandr.min_resolution.clone();
             contributed = true;
         }
         if gpu.connectors.is_empty() && !xrandr.connectors.is_empty() {
@@ -5285,6 +5444,14 @@ fn apply_gpu_lshw_enrichment(mut device: Device, lshw: &GpuLshwDisplayRecords) -
             gpu.mem_address = record.mem_address.clone();
             contributed = true;
         }
+        if gpu.revision.is_none() && record.version.is_some() {
+            gpu.revision = record.version.clone();
+            contributed = true;
+        }
+        if gpu.description.is_none() && record.description.is_some() {
+            gpu.description = record.description.clone();
+            contributed = true;
+        }
     }
     if contributed
         && !lshw.source.is_empty()
@@ -5722,6 +5889,18 @@ async fn gpu_devices_from_sysfs_pci(
     devices
 }
 
+struct MonitorProbeEntry {
+    connector: String,
+    resolution: Option<String>,
+    current_refresh_hz: Option<u16>,
+    primary: bool,
+    max_resolution: Option<String>,
+    support_resolutions: Vec<String>,
+    source: String,
+    source_kind: SourceKind,
+    require_edid: bool,
+}
+
 #[async_trait]
 impl Probe for MonitorProbe {
     fn name(&self) -> &'static str {
@@ -5833,7 +6012,7 @@ impl Probe for MonitorProbe {
             }
         }
 
-        let mut monitors: Vec<_> = if result.is_success() {
+        let mut monitors: Vec<MonitorProbeEntry> = if result.is_success() {
             let records = parse_xrandr_query(&result.stdout);
             if records.is_empty() {
                 warnings.push(
@@ -5842,32 +6021,32 @@ impl Probe for MonitorProbe {
                 );
                 edids
                     .keys()
-                    .map(|connector| {
-                        (
-                            connector.clone(),
-                            None,
-                            None,
-                            Vec::new(),
-                            result.source.clone(),
-                            SourceKind::Command,
-                            true,
-                        )
+                    .map(|connector| MonitorProbeEntry {
+                        connector: connector.clone(),
+                        resolution: None,
+                        current_refresh_hz: None,
+                        primary: false,
+                        max_resolution: None,
+                        support_resolutions: Vec::new(),
+                        source: result.source.clone(),
+                        source_kind: SourceKind::Command,
+                        require_edid: true,
                     })
                     .collect()
             } else {
                 records
                     .into_iter()
                     .filter(|mon| mon.connected)
-                    .map(|mon| {
-                        (
-                            mon.connector,
-                            mon.resolution,
-                            mon.max_resolution,
-                            mon.support_resolutions,
-                            result.source.clone(),
-                            SourceKind::Command,
-                            false,
-                        )
+                    .map(|mon| MonitorProbeEntry {
+                        connector: mon.connector,
+                        resolution: mon.resolution,
+                        current_refresh_hz: mon.current_refresh_hz,
+                        primary: mon.primary,
+                        max_resolution: mon.max_resolution,
+                        support_resolutions: mon.support_resolutions,
+                        source: result.source.clone(),
+                        source_kind: SourceKind::Command,
+                        require_edid: false,
                     })
                     .collect()
             }
@@ -5875,33 +6054,35 @@ impl Probe for MonitorProbe {
             warnings.extend(ProbeResult::source_failure(self.name(), &result).warnings);
             edids
                 .keys()
-                .map(|connector| {
-                    (
-                        connector.clone(),
-                        None,
-                        None,
-                        Vec::new(),
-                        result.source.clone(),
-                        SourceKind::Command,
-                        true,
-                    )
+                .map(|connector| MonitorProbeEntry {
+                    connector: connector.clone(),
+                    resolution: None,
+                    current_refresh_hz: None,
+                    primary: false,
+                    max_resolution: None,
+                    support_resolutions: Vec::new(),
+                    source: result.source.clone(),
+                    source_kind: SourceKind::Command,
+                    require_edid: true,
                 })
                 .collect()
         };
-        monitors.sort_by(|left, right| left.0.cmp(&right.0));
+        monitors.sort_by(|left, right| left.connector.cmp(&right.connector));
 
         let mut devices: Vec<_> = monitors
             .into_iter()
             .filter_map(
-                |(
-                    connector,
-                    resolution,
-                    max_resolution,
-                    support_resolutions,
-                    mut source,
-                    mut source_kind,
-                    require_edid,
-                )| {
+                |MonitorProbeEntry {
+                     connector,
+                     resolution,
+                     current_refresh_hz,
+                     primary,
+                     max_resolution,
+                     support_resolutions,
+                     mut source,
+                     mut source_kind,
+                     require_edid,
+                 }| {
                     let id = device_id::other("monitor", &connector);
                     let mut info = MonitorInfo {
                         connector: Some(connector.clone()),
@@ -5909,6 +6090,8 @@ impl Probe for MonitorProbe {
                         raw_interface: Some(connector.clone()),
                         aspect_ratio: resolution.as_deref().and_then(monitor_aspect_ratio),
                         resolution,
+                        current_refresh_hz,
+                        is_primary: primary,
                         max_resolution,
                         support_resolutions,
                         ..Default::default()

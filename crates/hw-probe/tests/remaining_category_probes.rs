@@ -1478,6 +1478,7 @@ async fn gpu_probe_enriches_human_readable_lshw_display_fields() {
                   description: VGA compatible controller\n\
                   product: Jingjia JM9 Series Graphics Adapter\n\
                   vendor: Jingjia Micro\n\
+                  version: 1a\n\
                   bus info: pci@0000:03:00.0\n\
                   width: 64 bits\n\
                   clock: 33MHz\n\
@@ -1508,6 +1509,11 @@ async fn gpu_probe_enriches_human_readable_lshw_display_fields() {
     match &device.properties {
         DeviceProperties::Gpu(gpu) => {
             assert_eq!(gpu.vendor.as_deref(), Some("Jingjia Micro"));
+            assert_eq!(
+                gpu.description.as_deref(),
+                Some("VGA compatible controller")
+            );
+            assert_eq!(gpu.revision.as_deref(), Some("1a"));
             assert_eq!(gpu.memory_bus_width_bits, Some(64));
             assert_eq!(gpu.clock_mhz, Some(33));
             assert_eq!(gpu.irq.as_deref(), Some("141"));
@@ -1608,6 +1614,7 @@ async fn gpu_probe_attaches_xrandr_connectors_and_resolution_to_unique_gpu() {
     match &device.properties {
         DeviceProperties::Gpu(gpu) => {
             assert_eq!(gpu.current_resolution.as_deref(), Some("1920x1080"));
+            assert_eq!(gpu.min_resolution.as_deref(), Some("1920x1080"));
             assert_eq!(gpu.max_resolution.as_deref(), Some("2560x1440"));
             assert_eq!(gpu.connectors.len(), 3);
             assert_eq!(gpu.connectors[0].connector, "eDP-1");
@@ -2346,7 +2353,9 @@ async fn monitor_probe_reports_xrandr_max_resolution() {
     assert_eq!(result.devices.len(), 1);
     match &result.devices[0].properties {
         DeviceProperties::Monitor(monitor) => {
+            assert!(monitor.is_primary);
             assert_eq!(monitor.resolution.as_deref(), Some("1920x1080"));
+            assert_eq!(monitor.current_refresh_hz, Some(60));
             assert_eq!(monitor.max_resolution.as_deref(), Some("2560x1440"));
         }
         other => panic!("expected monitor properties, got {other:?}"),

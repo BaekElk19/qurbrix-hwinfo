@@ -1,0 +1,8 @@
+31: None 00.0: 10002 LCD Monitor
+  Hardware Class: monitor
+  Model: "AOC FIXTURE"
+  Vendor: "AOC International"
+  Device: eisa 0x1234
+  Serial ID: "MON-FIXTURE"
+  Resolution: 1920x1080@60Hz
+  Size: 520x320 mm

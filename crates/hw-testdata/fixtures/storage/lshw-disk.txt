@@ -1,0 +1,8 @@
+  *-disk
+       description: NVMe disk
+       product: Samsung SSD 980
+       vendor: Samsung
+       logical name: /dev/nvme0n1
+       serial: S6P0TEST123
+       capabilities: gpt-1.00 partitioned partitioned:gpt
+       configuration: firmware=3B4QFXO7 sectorsize=512

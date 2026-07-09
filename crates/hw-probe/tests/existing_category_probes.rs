@@ -239,6 +239,81 @@ async fn cpu_probe_outputs_cpu_device() {
 }
 
 #[tokio::test]
+async fn cpu_probe_reads_sensors_temperatures_and_cpufreq_controls() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lscpu",
+            std::iter::empty::<&str>(),
+            "Architecture: x86_64\nCPU(s): 2\nModel name: Intel Test CPU\nVendor ID: GenuineIntel\n",
+        )
+        .with_command(
+            "sensors",
+            std::iter::empty::<&str>(),
+            "coretemp-isa-0000\n\
+             Core 0:        +41.0°C  (high = +80.0°C, crit = +100.0°C)\n\
+             Core 1:        +42.5°C  (high = +80.0°C, crit = +100.0°C)\n",
+        )
+        .with_glob(
+            "/sys/devices/system/cpu/cpu*",
+            vec![
+                PathBuf::from("/sys/devices/system/cpu/cpu0"),
+                PathBuf::from("/sys/devices/system/cpu/cpu1"),
+            ],
+        )
+        .with_glob(
+            "/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq",
+            vec![
+                PathBuf::from("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"),
+                PathBuf::from("/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq"),
+            ],
+        )
+        .with_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "1800000\n")
+        .with_file("/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq", "2000000\n")
+        .with_file("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq", "1200000\n")
+        .with_file("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", "3200000\n")
+        .with_file("/sys/devices/system/cpu/cpu1/cpufreq/cpuinfo_min_freq", "1200000\n")
+        .with_file("/sys/devices/system/cpu/cpu1/cpufreq/cpuinfo_max_freq", "3200000\n")
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
+            "schedutil\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors",
+            "performance powersave schedutil\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies",
+            "1200000 2400000 3200000\n",
+        )
+        .with_file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed",
+            "1800000\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = CpuProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Cpu(cpu) = &result.devices[0].properties else {
+        panic!("expected cpu properties");
+    };
+    assert_eq!(cpu.current_freq_mhz, Some(1900));
+    assert_eq!(cpu.scaling_governor.as_deref(), Some("schedutil"));
+    assert_eq!(
+        cpu.scaling_available_governors,
+        vec!["performance", "powersave", "schedutil"]
+    );
+    assert_eq!(
+        cpu.scaling_available_frequencies_khz,
+        vec![1_200_000, 2_400_000, 3_200_000]
+    );
+    assert!(cpu.scaling_setspeed_supported);
+    assert_eq!(cpu.logical_cpus.len(), 2);
+    assert_eq!(cpu.logical_cpus[0].temperature_celsius, Some(41.0));
+    assert_eq!(cpu.logical_cpus[1].temperature_celsius, Some(42.5));
+}
+
+#[tokio::test]
 async fn cpu_probe_uses_dmi_when_lscpu_is_missing() {
     let runner = FakeSourceRunner::new().with_command(
         "dmidecode",
@@ -1624,6 +1699,8 @@ async fn storage_probe_reads_nvme_smart_health_details() {
     let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
         panic!("expected storage properties");
     };
+    assert_eq!(storage.interface.as_deref(), Some("nvme"));
+    assert_eq!(storage.media_type, None);
     assert_eq!(storage.power_on_hours, Some(1234));
     assert_eq!(storage.power_cycle_count, Some(56));
     assert_eq!(storage.available_spare_percent, Some(99));
@@ -1638,6 +1715,26 @@ async fn storage_probe_reads_nvme_smart_health_details() {
         .iter()
         .any(|source| source.kind == SourceKind::Command
             && source.source == "smartctl -a -j /dev/nvme0n1"));
+}
+
+#[tokio::test]
+async fn storage_probe_splits_transport_interface_from_rotational_media_type() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_file("/sys/block/sda/queue/rotational", "0\n");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = StorageProbe.probe(&ctx).await;
+
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.interface.as_deref(), Some("sata"));
+    assert_eq!(storage.media_type.as_deref(), Some("ssd"));
 }
 
 #[tokio::test]
@@ -2294,7 +2391,8 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
         DeviceProperties::Storage(storage) => {
             assert_eq!(storage.device_node.as_deref(), Some("/dev/sda"));
             assert_eq!(storage.size_bytes, Some(1_073_741_824));
-            assert_eq!(storage.media_type.as_deref(), Some("ufs"));
+            assert_eq!(storage.media_type.as_deref(), Some("ssd"));
+            assert_eq!(storage.interface.as_deref(), Some("ufs"));
             assert_eq!(storage.rotation_rate.as_deref(), Some("Solid State Device"));
             assert_eq!(storage.ufs_spec_version.as_deref(), Some("3.1"));
             assert_eq!(storage.vid_pid.as_deref(), Some("abcd/1234/0001"));

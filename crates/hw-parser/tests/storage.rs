@@ -1,4 +1,4 @@
-use hw_parser::parse_lshw_disk;
+use hw_parser::{parse_hwinfo_disk, parse_lsblk_json_result, parse_lshw_disk, parse_smartctl_json};
 
 #[test]
 fn lshw_disk_parses_deepin_storage_configuration_fields() {
@@ -20,4 +20,25 @@ fn lshw_disk_parses_deepin_storage_configuration_fields() {
         records[0].capabilities,
         vec!["gpt-1.00", "partitioned", "partitioned:gpt"]
     );
+}
+
+#[test]
+fn storage_fixtures_cover_lsblk_smartctl_hwinfo_and_lshw_sources() {
+    let lsblk = parse_lsblk_json_result(&hw_testdata::fixture("storage/lsblk.json"))
+        .expect("lsblk fixture parses");
+    assert_eq!(lsblk.len(), 1);
+    assert_eq!(lsblk[0].tran.as_deref(), Some("nvme"));
+
+    let smart = parse_smartctl_json(&hw_testdata::fixture("storage/smartctl-nvme.json"))
+        .expect("smartctl fixture parses");
+    assert_eq!(smart.smart_status.as_deref(), Some("passed"));
+    assert_eq!(smart.temperature_celsius, Some(37.0));
+
+    let hwinfo = parse_hwinfo_disk(&hw_testdata::fixture("storage/hwinfo-disk.txt"));
+    assert_eq!(hwinfo.len(), 1);
+    assert_eq!(hwinfo[0].device_node.as_deref(), Some("/dev/nvme0n1"));
+
+    let lshw = parse_lshw_disk(&hw_testdata::fixture("storage/lshw-disk.txt"));
+    assert_eq!(lshw.len(), 1);
+    assert_eq!(lshw[0].logical_name.as_deref(), Some("/dev/nvme0n1"));
 }

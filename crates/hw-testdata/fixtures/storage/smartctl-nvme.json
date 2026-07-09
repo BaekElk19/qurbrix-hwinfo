@@ -1,0 +1,24 @@
+{
+  "model_name": "Samsung SSD 980",
+  "serial_number": "S6P0TEST123",
+  "firmware_version": "3B4QFXO7",
+  "smart_status": {
+    "passed": true
+  },
+  "temperature": {
+    "current": 37
+  },
+  "power_on_time": {
+    "hours": 1234
+  },
+  "power_cycle_count": 56,
+  "nvme_smart_health_information_log": {
+    "available_spare": 99,
+    "available_spare_threshold": 10,
+    "percentage_used": 3,
+    "data_units_read": 123456,
+    "data_units_written": 654321,
+    "media_errors": 2,
+    "num_err_log_entries": 4
+  }
+}

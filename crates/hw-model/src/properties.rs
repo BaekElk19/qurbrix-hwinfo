@@ -137,6 +137,10 @@ pub struct CpuInfo {
     pub extensions: Vec<String>,
     pub logical_cpus: Vec<LogicalCpuInfo>,
     pub hw_platform: bool,
+    pub scaling_governor: Option<String>,
+    pub scaling_available_governors: Vec<String>,
+    pub scaling_available_frequencies_khz: Vec<u32>,
+    pub scaling_setspeed_supported: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -162,6 +166,7 @@ pub struct LogicalCpuInfo {
     pub max_freq_mhz: Option<u32>,
     pub bogomips: Option<String>,
     pub online: bool,
+    pub temperature_celsius: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -213,6 +218,7 @@ pub struct StorageInfo {
     pub size_bytes: Option<u64>,
     pub size_display: Option<String>,
     pub media_type: Option<String>,
+    pub interface: Option<String>,
     pub controller_vendor: Option<String>,
     pub controller_model: Option<String>,
     pub controller_driver: Option<String>,
@@ -241,6 +247,8 @@ pub struct StorageInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct GpuInfo {
     pub vendor: Option<String>,
+    pub description: Option<String>,
+    pub revision: Option<String>,
     pub renderer: Option<String>,
     pub opengl_vendor: Option<String>,
     pub opengl_version: Option<String>,
@@ -259,6 +267,7 @@ pub struct GpuInfo {
     pub modalias: Option<String>,
     pub gddr_capacity: Option<String>,
     pub current_resolution: Option<String>,
+    pub min_resolution: Option<String>,
     pub max_resolution: Option<String>,
     pub connectors: Vec<GpuConnectorInfo>,
 }
@@ -278,7 +287,9 @@ pub struct MonitorInfo {
     pub connector: Option<String>,
     pub interface: Option<String>,
     pub raw_interface: Option<String>,
+    pub is_primary: bool,
     pub resolution: Option<String>,
+    pub current_refresh_hz: Option<u16>,
     pub max_resolution: Option<String>,
     pub support_resolutions: Vec<String>,
     pub aspect_ratio: Option<String>,
