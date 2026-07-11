@@ -1483,6 +1483,49 @@ async fn cdrom_probe_uses_hwinfo_when_proc_and_sysfs_are_missing() {
 }
 
 #[tokio::test]
+async fn cdrom_probe_deduplicates_hwinfo_alias_with_sysfs_device() {
+    let runner = FakeSourceRunner::new()
+        .with_file("/proc/sys/dev/cdrom/info", "")
+        .with_glob(
+            "/sys/class/block/sr*",
+            vec![PathBuf::from("/sys/class/block/sr0")],
+        )
+        .with_file("/sys/class/block/sr0/device/vendor", "NECVMWar\n")
+        .with_file("/sys/class/block/sr0/device/model", "VMware SATA CD01\n")
+        .with_file("/sys/class/block/sr0/device/rev", "1.00\n")
+        .with_command(
+            "hwinfo",
+            ["--cdrom"],
+            "24: SCSI 200.0: 10602 CD-ROM (DVD)\n\
+             \tHardware Class: cdrom\n\
+             \tModel: \"NECVMWar VMware SATA CD01\"\n\
+             \tVendor: \"NECVMWar\"\n\
+             \tDevice File: /dev/sr0 (/dev/sg0)\n\
+             \tRevision: \"1.00\"\n\
+             \tDriver: \"ahci\"\n\
+             \tDriver Modules: \"ahci\"\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = CdromProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let device = &result.devices[0];
+    assert_eq!(device.id, "cdrom:sr0");
+    let DeviceProperties::Cdrom(info) = &device.properties else {
+        panic!("expected cdrom properties");
+    };
+    assert_eq!(info.device_node.as_deref(), Some("/dev/sr0"));
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.source == "/sys/class/block/sr0"));
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.source == "hwinfo --cdrom"));
+}
+
+#[tokio::test]
 async fn cdrom_sysfs_fallback_enriches_from_lshw_cdrom_identity() {
     let runner = FakeSourceRunner::new()
         .with_glob(

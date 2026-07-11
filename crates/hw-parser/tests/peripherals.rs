@@ -532,6 +532,19 @@ fn parses_hwinfo_cdrom_records() {
 }
 
 #[test]
+fn parses_hwinfo_cdrom_device_file_alias_as_primary_node() {
+    let records = parse_hwinfo_cdrom(
+        "24: SCSI 200.0: 10602 CD-ROM (DVD)\n\
+         \tHardware Class: cdrom\n\
+         \tModel: \"NECVMWar VMware SATA CD01\"\n\
+         \tDevice File: /dev/sr0 (/dev/sg0)\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].device_node.as_deref(), Some("/dev/sr0"));
+}
+
+#[test]
 fn parses_bluetooth_and_video() {
     let controllers = parse_hciconfig(&hw_testdata::fixture("bluetooth/hciconfig-a.txt"));
     let paired =

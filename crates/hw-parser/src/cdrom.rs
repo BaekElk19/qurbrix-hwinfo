@@ -114,7 +114,7 @@ fn parse_hwinfo_cdrom_section(lines: &[&str]) -> Option<HwinfoCdromRecord> {
             "Revision" => record.revision = clean_hwinfo_cdrom_value(value),
             "Driver" => record.driver = clean_hwinfo_cdrom_value(value),
             "Driver Modules" => record.driver_modules = clean_hwinfo_cdrom_modules(value),
-            "Device File" => record.device_node = clean_hwinfo_cdrom_value(value),
+            "Device File" => record.device_node = clean_hwinfo_cdrom_device_node(value),
             "SysFS ID" => {
                 if record.device_node.is_none() {
                     record.device_node = hwinfo_cdrom_node_from_sysfs_id(value);
@@ -187,6 +187,14 @@ fn clean_hwinfo_cdrom_value(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn clean_hwinfo_cdrom_device_node(value: &str) -> Option<String> {
+    let value = clean_hwinfo_cdrom_value(value)?;
+    value
+        .split_whitespace()
+        .find(|part| part.starts_with("/dev/"))
+        .map(|part| part.trim_matches(|ch| ch == '(' || ch == ')').to_string())
 }
 
 fn clean_hwinfo_cdrom_modules(value: &str) -> Vec<String> {
