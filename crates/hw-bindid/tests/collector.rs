@@ -18,11 +18,21 @@ async fn collector_returns_failed_report_when_required_sources_are_missing() {
 
     assert_eq!(report.status, BindIdStatus::Failed);
     assert!(report.value.is_none());
-    assert!(report.missing_required_kinds.contains(&"system".to_string()));
-    assert!(report.missing_required_kinds.contains(&"motherboard".to_string()));
-    assert!(report.missing_required_kinds.contains(&"memory".to_string()));
-    assert!(report.missing_required_kinds.contains(&"storage".to_string()));
-    assert!(report.missing_required_kinds.contains(&"network".to_string()));
+    assert!(report
+        .missing_required_kinds
+        .contains(&"system".to_string()));
+    assert!(report
+        .missing_required_kinds
+        .contains(&"motherboard".to_string()));
+    assert!(report
+        .missing_required_kinds
+        .contains(&"memory".to_string()));
+    assert!(report
+        .missing_required_kinds
+        .contains(&"storage".to_string()));
+    assert!(report
+        .missing_required_kinds
+        .contains(&"network".to_string()));
     assert!(!report.warnings.is_empty());
 }
 
@@ -44,7 +54,9 @@ async fn collector_converts_narrow_probe_devices_into_component_keys() {
         vec!["storage:model=Disk|serial=S1".to_string()]
     );
     assert_eq!(report.covered_kinds, vec!["storage".to_string()]);
-    assert!(!report.missing_required_kinds.contains(&"storage".to_string()));
+    assert!(!report
+        .missing_required_kinds
+        .contains(&"storage".to_string()));
     assert!(!report.warnings.is_empty());
 }
 
@@ -60,19 +72,21 @@ async fn collector_keeps_bindid_source_surface_narrow() {
     assert!(calls.commands.contains(&"dmidecode -t 1".to_string()));
     assert!(calls.commands.contains(&"dmidecode -t 0,1,2,3".to_string()));
     assert!(calls.commands.contains(&"dmidecode -t memory".to_string()));
-    assert!(
-        calls.commands.contains(
-            &"lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV".to_string()
-        )
-    );
+    assert!(calls
+        .commands
+        .contains(&"lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV".to_string()));
     assert!(calls.commands.contains(&"ip -j link".to_string()));
     assert!(calls.commands.contains(&"lspci -nn -k".to_string()));
     assert!(!calls.commands.contains(&"lscpu".to_string()));
     assert!(!calls.commands.contains(&"lsusb".to_string()));
     assert!(!calls.commands.contains(&"pactl list cards".to_string()));
-    assert!(!calls.commands.contains(&"bluetoothctl paired-devices".to_string()));
+    assert!(!calls
+        .commands
+        .contains(&"bluetoothctl paired-devices".to_string()));
     assert!(!calls.commands.contains(&"upower --dump".to_string()));
-    assert!(!calls.commands.contains(&"v4l2-ctl --list-devices".to_string()));
+    assert!(!calls
+        .commands
+        .contains(&"v4l2-ctl --list-devices".to_string()));
     assert!(!calls.commands.contains(&"lpstat -a".to_string()));
     assert!(!calls.commands.contains(&"xrandr --verbose".to_string()));
     assert!(!calls.commands.contains(&"hwinfo --monitor".to_string()));
@@ -80,18 +94,14 @@ async fn collector_keeps_bindid_source_surface_narrow() {
     assert!(!calls.files.contains(&"/proc/hardware".to_string()));
     assert!(!calls.files.contains(&"/proc/asound/cards".to_string()));
     assert!(!calls.files.contains(&"/proc/bus/input/devices".to_string()));
-    assert!(
-        !calls
-            .file_bytes
-            .iter()
-            .any(|path| path.contains("/sys/class/drm/"))
-    );
-    assert!(
-        !calls
-            .canonical_paths
-            .iter()
-            .any(|path| path.contains("/sys/class/video4linux/"))
-    );
+    assert!(!calls
+        .file_bytes
+        .iter()
+        .any(|path| path.contains("/sys/class/drm/")));
+    assert!(!calls
+        .canonical_paths
+        .iter()
+        .any(|path| path.contains("/sys/class/video4linux/")));
     assert!(!calls.globs.contains(&"/sys/class/drm/*/edid".to_string()));
 }
 
@@ -133,7 +143,11 @@ impl SourceRunner for StrictRecordingRunner {
         let source = command.display_name();
         self.calls.lock().unwrap().commands.push(source.clone());
         Box::pin(async move {
-            SourceResult::error(source, SourceErrorKind::Missing, "strict command not registered")
+            SourceResult::error(
+                source,
+                SourceErrorKind::Missing,
+                "strict command not registered",
+            )
         })
     }
 
@@ -149,7 +163,11 @@ impl SourceRunner for StrictRecordingRunner {
         let source = path.display().to_string();
         self.calls.lock().unwrap().files.push(source.clone());
         Box::pin(async move {
-            SourceResult::error(source, SourceErrorKind::Missing, "strict file not registered")
+            SourceResult::error(
+                source,
+                SourceErrorKind::Missing,
+                "strict file not registered",
+            )
         })
     }
 

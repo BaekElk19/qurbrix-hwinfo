@@ -2,8 +2,7 @@ use crate::{devices::component_keys_from_devices, model::BindIdReport};
 use anyhow::Result;
 use hw_model::Device;
 use hw_probe::{
-    BiosProbe, GpuProbe, MemoryProbe, NetworkProbe, Probe, ProbeContext, StorageProbe,
-    SystemProbe,
+    BiosProbe, GpuProbe, MemoryProbe, NetworkProbe, Probe, ProbeContext, StorageProbe, SystemProbe,
 };
 use hw_source::{RealSourceRunner, SourceRunner};
 use std::time::Duration;

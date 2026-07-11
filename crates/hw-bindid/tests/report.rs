@@ -40,15 +40,10 @@ fn complete_report_includes_bindid_value_and_preserves_warnings() {
 
 #[test]
 fn missing_required_network_fails_report_without_value() {
-    let keys = [
-        SYSTEM_KEY,
-        MOTHERBOARD_KEY,
-        MEMORY_KEY,
-        STORAGE_KEY,
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect();
+    let keys = [SYSTEM_KEY, MOTHERBOARD_KEY, MEMORY_KEY, STORAGE_KEY]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
 
     let report = BindIdReport::from_parts(keys, Vec::new());
 
