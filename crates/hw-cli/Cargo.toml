@@ -12,9 +12,11 @@ path = "src/lib.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+hw-bindid = { path = "../hw-bindid" }
 hw-collect = { path = "../hw-collect" }
 hw-model = { path = "../hw-model" }
 hw-output = { path = "../hw-output" }
+libc = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

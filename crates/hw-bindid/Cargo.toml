@@ -1,0 +1,18 @@
+[package]
+name = "hw-bindid"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+hex = { workspace = true }
+hw-model = { path = "../hw-model" }
+hw-probe = { path = "../hw-probe" }
+hw-source = { path = "../hw-source" }
+serde = { workspace = true }
+sha1 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

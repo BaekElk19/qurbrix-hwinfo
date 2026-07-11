@@ -12,10 +12,13 @@ publish = false
 anyhow = "1"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
+hex = "0.4"
 insta = "1"
+libc = "0.2"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -38,6 +41,7 @@ path = "crates/hw-cli/src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+hw-bindid = { path = "crates/hw-bindid" }
 hw-collect = { path = "crates/hw-collect" }
 hw-cli = { path = "crates/hw-cli" }
 hw-model = { path = "crates/hw-model" }
