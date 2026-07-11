@@ -136,6 +136,34 @@ fn ignores_cpu_and_monitor_devices() {
 }
 
 #[test]
+fn ignores_supported_properties_when_device_kind_is_unsupported() {
+    let device = Device::new(
+        "cpu0",
+        DeviceKind::Cpu,
+        "CPU",
+        DeviceProperties::System(SystemDeviceInfo {
+            manufacturer: Some("GEIT".to_string()),
+            product_name: Some("UT6619-FC2".to_string()),
+            ..SystemDeviceInfo::default()
+        }),
+    );
+
+    assert!(component_keys_from_devices(&[device]).is_empty());
+}
+
+#[test]
+fn ignores_unsupported_properties_when_device_kind_is_supported() {
+    let device = Device::new(
+        "system0",
+        DeviceKind::System,
+        "Host",
+        DeviceProperties::Cpu(Box::default()),
+    );
+
+    assert!(component_keys_from_devices(&[device]).is_empty());
+}
+
+#[test]
 fn ignores_loopback_and_all_zero_mac_network_devices() {
     let devices = vec![
         Device::new(
@@ -206,5 +234,47 @@ fn gpu_falls_back_to_description_when_device_model_is_missing() {
     assert_eq!(
         component_keys_from_devices(&[device]),
         vec!["gpu:model=RDNA 3 iGPU|name=Integrated Graphics".to_string()]
+    );
+}
+
+#[test]
+fn ignores_gpu_with_topology_name_and_no_model() {
+    let device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "GPU 0000:00:02.0",
+        DeviceProperties::Gpu(GpuInfo::default()),
+    );
+
+    assert!(component_keys_from_devices(&[device]).is_empty());
+}
+
+#[test]
+fn ignores_gpu_with_vendor_only_name_and_no_model() {
+    let device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "Intel",
+        DeviceProperties::Gpu(GpuInfo::default()),
+    );
+
+    assert!(component_keys_from_devices(&[device]).is_empty());
+}
+
+#[test]
+fn gpu_with_generic_name_and_description_uses_model_only() {
+    let device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "GPU 0000:00:02.0",
+        DeviceProperties::Gpu(GpuInfo {
+            description: Some("UHD Graphics 770".to_string()),
+            ..GpuInfo::default()
+        }),
+    );
+
+    assert_eq!(
+        component_keys_from_devices(&[device]),
+        vec!["gpu:model=UHD Graphics 770".to_string()]
     );
 }
