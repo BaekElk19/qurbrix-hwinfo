@@ -8,6 +8,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 - 保留 source evidence，便于排错、回放和对比采集结果。
 - 为 Rust 调用方提供 typed `ScanReport` 模型。
 - 为脚本和 agent 提供 flat JSON、JSONL、summary 和 table 输出。
+- 提供 `bindid` 轻量业务绑定 ID，用于常规读取和低频硬件绑定检查。
 - 提供 fake source runner 与 fixture 驱动的 parser/probe 测试。
 
 ## 目录结构
@@ -38,6 +39,8 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 - 网络：`ip`
 
 缺少部分命令时，采集器会尽量回退到可用的数据源，返回的字段可能减少。
+`scan`、`summary`、`table` 和 `bindid` 这类硬件访问命令需要 root 权限；
+`schema`、`list-kinds` 和 `sources` 这类元数据命令不需要 root。
 
 ## 构建
 
@@ -56,6 +59,8 @@ qurbrix-hw scan --format jsonl
 qurbrix-hw summary
 qurbrix-hw table --kind storage
 qurbrix-hw list-kinds
+sudo qurbrix-hw bindid --pretty
+sudo qurbrix-hw bindid --timeout 30s
 ```
 
 扫描状态：
@@ -66,6 +71,13 @@ qurbrix-hw list-kinds
 
 `partial` 仍返回退出码 `0`，方便脚本继续消费已有结果。
 
+`bindid` 输出 `schema_version: qurbrix.hw.bindid.v1`，生成 16 位小写 SHA1
+十六进制前缀作为轻量业务绑定 ID，用于常规读取和低频硬件绑定检查。它只覆盖窄组件集：
+必需 `system`、`motherboard`、`memory`、`storage`、`network`，可选 `gpu`。
+CPU 和显示器/显示设备不参与；网络只使用 MAC，不使用网络类型、接口、IP、速率或链路状态。
+缺少必需组件时 `status` 为 `failed`、`value` 为 `null`，仍会输出 JSON 并返回退出码 `2`。
+权限失败会在探测前返回退出码 `4`，stdout 为空。
+
 ## 集成合约
 
 Rust 调用方直接依赖顶层 `qurbrix-hw` 库 facade。其他语言的上层程序调用 CLI，
@@ -74,6 +86,8 @@ Rust 调用方直接依赖顶层 `qurbrix-hw` 库 facade。其他语言的上层
 面向机器调用时：
 
 - 优先使用 `qurbrix-hw scan --format json`，消费 flat 外部 schema。
+- 需要常规读取或低频硬件绑定检查时，使用 `qurbrix-hw bindid`，消费
+  `qurbrix.hw.bindid.v1` 输出。
 - 只有明确需要 Rust 模型形状时，才使用 `qurbrix-hw scan --format typed-json`。
 - 不要解析 `summary` 或 `table` 这类面向人的输出。
 - 不要依赖 JSON 字段顺序或空白格式。
@@ -101,10 +115,13 @@ async fn main() -> anyhow::Result<()> {
 3. `hw-probe` 将 source records 转换为 typed `Device`。
 4. `hw-collect` 负责编排 probe 并生成 `ScanReport`。
 5. `hw-output` 将报告转换为 flat JSON、JSONL、summary 和 table。
+6. `bindid` 从采集结果中选择窄组件集，归一化字段、排序 component key，
+   用 SHA1 生成轻量业务绑定 ID。
 
 ## 注意事项
 
 - `dmidecode`、部分 `/sys` 路径和设备信息可能需要更高权限。
+- `bindid` 与硬件采集命令一样需要 root；元数据命令不需要 root。
 - 显示器采集依赖 EDID 和可选的 `xrandr` 输出；无图形会话时仍会尝试读取 sysfs。
 - `partial` 报告仍然应当可以被机器消费。
 - 日志和诊断信息写入 stderr；结构化命令输出写入 stdout。

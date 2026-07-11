@@ -51,6 +51,55 @@ Each flat device object contains:
 
 `partial` returns exit code `0`.
 
+## Bind ID command
+
+```bash
+sudo qurbrix-hw bindid --pretty
+sudo qurbrix-hw bindid --timeout 30s
+```
+
+`bindid` emits one JSON object. It is a lightweight business binding ID for
+routine reads and low-frequency hardware binding checks.
+
+The component set is intentionally narrow and is inspired by the original
+binding behavior:
+
+- Required kinds: `system`, `motherboard`, `memory`, `storage`, `network`.
+- Optional kinds: `gpu`.
+- CPU and display/monitor are intentionally excluded.
+- Network contributes MAC only; network type, interface, IP, speed, and
+  link-state are excluded.
+
+Output fields:
+
+- `schema_version`: always `qurbrix.hw.bindid.v1`.
+- `algorithm`: always `qurbrix-hw-bindid-sha1-hex16-v1`.
+- `status`: `complete` or `failed`.
+- `value`: 16-character lowercase SHA1 hex prefix when complete, otherwise
+  `null`.
+- `required_kinds`: `system`, `motherboard`, `memory`, `storage`, `network`.
+- `optional_kinds`: `gpu`.
+- `covered_kinds`: kinds included in the computed input.
+- `missing_required_kinds`: required kinds missing after collection.
+- `missing_optional_kinds`: optional kinds missing after collection.
+- `component_keys`: normalized component key strings used as algorithm input.
+- `warnings`: bindid warnings.
+
+Algorithm summary:
+
+- Values are normalized by trimming/collapsing whitespace and dropping empty
+  values or placeholders.
+- Component fields are sorted by field name.
+- Component keys are sorted.
+- Component keys are joined with `||`.
+- The joined string is hashed with SHA1; `value` is the first 16 characters of
+  lowercase hex.
+- Values in component keys escape `%`, `|`, and `=`.
+
+`bindid` requires root like other hardware access commands. A non-root
+invocation exits `4` before probing and writes no JSON to stdout. Metadata
+commands (`schema`, `list-kinds`, and `sources`) do not require root.
+
 ## Device kind strings
 
 Supported kind strings are:
@@ -113,9 +162,9 @@ format so unsupported machine formats are rejected instead of silently ignored.
 
 | Exit code | Meaning |
 | --- | --- |
-| 0 | Scan succeeded, including partial reports |
+| 0 | Scan succeeded, including partial reports; bindid completed |
 | 1 | CLI argument error or serialization error |
-| 2 | Scan failed and no valid report was generated |
+| 2 | Scan failed and no valid report was generated; bindid failed because required kinds were missing after collection, with JSON still printed |
 | 3 | Requested kind/source is unsupported |
-| 4 | Permission failure prevents core scan |
+| 4 | Permission failure prevents core scan or bindid probing; bindid stdout is empty |
 | 124 | Timeout |
