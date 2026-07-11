@@ -55,7 +55,7 @@ fn component_key_from_device(device: &Device) -> Option<String> {
                 ("name", stable_gpu_name(&device.name)),
                 (
                     "model",
-                    device.model.as_deref().or(info.description.as_deref()),
+                    stable_gpu_model(device.model.as_deref().or(info.description.as_deref())),
                 ),
             ],
         ),
@@ -77,10 +77,19 @@ fn is_loopback_network(info: &NetworkInfo) -> bool {
 
 fn stable_gpu_name(name: &str) -> Option<&str> {
     let name = name.trim();
-    if is_generic_gpu_name(name) {
+    if is_generic_gpu_name(name) || is_software_gpu_identity(name) {
         None
     } else {
         Some(name)
+    }
+}
+
+fn stable_gpu_model(model: Option<&str>) -> Option<&str> {
+    let model = model?.trim();
+    if model.is_empty() || is_software_gpu_identity(model) {
+        None
+    } else {
+        Some(model)
     }
 }
 
@@ -96,4 +105,12 @@ fn is_generic_gpu_name(name: &str) -> bool {
 
     name.strip_prefix("GPU ")
         .is_some_and(|suffix| suffix.chars().any(|ch| ch == ':'))
+}
+
+fn is_software_gpu_identity(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("llvmpipe")
+        || value.contains("softpipe")
+        || value.contains("software rasterizer")
+        || value.contains("swiftshader")
 }

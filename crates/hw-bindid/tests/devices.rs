@@ -238,6 +238,53 @@ fn gpu_falls_back_to_description_when_device_model_is_missing() {
 }
 
 #[test]
+fn ignores_gpu_when_name_and_model_are_software_renderer_strings() {
+    let mut device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "llvmpipe (LLVM 17.0.6, 256 bits)",
+        DeviceProperties::Gpu(GpuInfo::default()),
+    );
+    device.model = Some("llvmpipe (LLVM 17.0.6, 256 bits)".to_string());
+
+    assert!(component_keys_from_devices(&[device]).is_empty());
+}
+
+#[test]
+fn ignores_gpu_when_generic_name_only_has_software_renderer_description() {
+    let device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "GPU 0000:00:02.0",
+        DeviceProperties::Gpu(GpuInfo {
+            description: Some("llvmpipe (LLVM 17.0.6, 256 bits)".to_string()),
+            ..GpuInfo::default()
+        }),
+    );
+
+    assert!(component_keys_from_devices(&[device]).is_empty());
+}
+
+#[test]
+fn gpu_with_stable_name_and_software_renderer_model_uses_name_only() {
+    let mut device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "NVIDIA GeForce RTX 4090",
+        DeviceProperties::Gpu(GpuInfo {
+            description: Some("swiftshader".to_string()),
+            ..GpuInfo::default()
+        }),
+    );
+    device.model = Some("swiftshader".to_string());
+
+    assert_eq!(
+        component_keys_from_devices(&[device]),
+        vec!["gpu:name=NVIDIA GeForce RTX 4090".to_string()]
+    );
+}
+
+#[test]
 fn ignores_gpu_with_topology_name_and_no_model() {
     let device = Device::new(
         "gpu0",
