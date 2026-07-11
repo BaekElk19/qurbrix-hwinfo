@@ -22,6 +22,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 │   ├── hw-parser/          # lscpu、dmidecode、lsblk、xrandr、ip、lspci、lsusb 等解析逻辑
 │   ├── hw-probe/           # 将解析结果转换为 Device 的分类 probe
 │   ├── hw-collect/         # 采集编排，生成 ScanReport
+│   ├── hw-bindid/          # 生成轻量业务绑定 ID
 │   ├── hw-output/          # flat JSON、JSONL、summary、table 和 schema helper
 │   ├── hw-cli/             # qurbrix-hw CLI 参数和命令
 │   └── hw-testdata/        # parser fixture helper
