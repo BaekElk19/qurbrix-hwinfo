@@ -97,7 +97,14 @@ impl SourceRunner for RealSourceRunner {
         let mut paths = Vec::new();
 
         if let Some((before, after)) = pattern.split_once('*') {
-            if before.ends_with('/') && after.starts_with('/') {
+            if before.ends_with('/') && after.is_empty() {
+                let dir = Path::new(before.trim_end_matches('/'));
+                if let Ok(mut entries) = fs::read_dir(dir).await {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        paths.push(entry.path());
+                    }
+                }
+            } else if before.ends_with('/') && after.starts_with('/') {
                 let dir = Path::new(before.trim_end_matches('/'));
                 let suffix = after.trim_start_matches('/');
                 if let Ok(mut entries) = fs::read_dir(dir).await {

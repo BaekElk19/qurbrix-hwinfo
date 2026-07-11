@@ -171,6 +171,24 @@ async fn real_runner_glob_matches_single_middle_wildcard_with_suffix() {
     assert_paths_contain(&result.paths, &edid);
 }
 
+#[tokio::test]
+async fn real_runner_glob_matches_children_for_trailing_wildcard() {
+    let root =
+        std::env::temp_dir().join(format!("qurbrix-hw-glob-trailing-{}", std::process::id()));
+    let child = root.join("pci:e1000e");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(&child, []).unwrap();
+
+    let pattern = format!("{}/*", root.display());
+    let runner = hw_source::RealSourceRunner;
+    let result = runner.glob(&pattern).await;
+
+    std::fs::remove_file(&child).unwrap();
+    std::fs::remove_dir(&root).unwrap();
+    assert_eq!(result.pattern, pattern);
+    assert_eq!(result.paths, vec![child]);
+}
+
 fn assert_paths_contain(paths: &[PathBuf], expected: &Path) {
     assert!(
         paths.iter().any(|path| path == expected),
