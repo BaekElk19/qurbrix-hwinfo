@@ -168,4 +168,3 @@ format so unsupported machine formats are rejected instead of silently ignored.
 | 2 | Scan failed and no valid report was generated; bindid failed because required kinds were missing after collection, with JSON still printed |
 | 3 | Requested kind/source is unsupported |
 | 4 | Permission failure prevents core scan or bindid probing; bindid stdout is empty |
-| 124 | Timeout |

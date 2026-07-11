@@ -54,10 +54,10 @@ cargo test --workspace
 默认输出面向脚本和 agent，结构化结果写入 stdout，日志写入 stderr：
 
 ```bash
-qurbrix-hw scan --format json --pretty
-qurbrix-hw scan --format jsonl
-qurbrix-hw summary
-qurbrix-hw table --kind storage
+sudo qurbrix-hw scan --format json --pretty
+sudo qurbrix-hw scan --format jsonl
+sudo qurbrix-hw summary
+sudo qurbrix-hw table --kind storage
 qurbrix-hw list-kinds
 sudo qurbrix-hw bindid --pretty
 sudo qurbrix-hw bindid --timeout 30s
