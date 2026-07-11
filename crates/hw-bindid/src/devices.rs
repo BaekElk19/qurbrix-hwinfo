@@ -55,7 +55,7 @@ fn component_key_from_device(device: &Device) -> Option<String> {
                 ("name", stable_gpu_name(&device.name)),
                 (
                     "model",
-                    stable_gpu_model(device.model.as_deref().or(info.description.as_deref())),
+                    stable_gpu_model_from(device.model.as_deref(), info.description.as_deref()),
                 ),
             ],
         ),
@@ -91,6 +91,13 @@ fn stable_gpu_model(model: Option<&str>) -> Option<&str> {
     } else {
         Some(model)
     }
+}
+
+fn stable_gpu_model_from<'a>(
+    device_model: Option<&'a str>,
+    description: Option<&'a str>,
+) -> Option<&'a str> {
+    stable_gpu_model(device_model).or_else(|| stable_gpu_model(description))
 }
 
 fn is_generic_gpu_name(name: &str) -> bool {

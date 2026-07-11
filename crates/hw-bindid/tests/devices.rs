@@ -285,6 +285,44 @@ fn gpu_with_stable_name_and_software_renderer_model_uses_name_only() {
 }
 
 #[test]
+fn gpu_with_stable_name_falls_back_to_description_after_filtering_model() {
+    let mut device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "NVIDIA GeForce RTX 4090",
+        DeviceProperties::Gpu(GpuInfo {
+            description: Some("NVIDIA GeForce RTX 4090".to_string()),
+            ..GpuInfo::default()
+        }),
+    );
+    device.model = Some("swiftshader".to_string());
+
+    assert_eq!(
+        component_keys_from_devices(&[device]),
+        vec!["gpu:model=NVIDIA GeForce RTX 4090|name=NVIDIA GeForce RTX 4090".to_string()]
+    );
+}
+
+#[test]
+fn gpu_with_generic_name_falls_back_to_description_after_filtering_model() {
+    let mut device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "GPU 0000:00:02.0",
+        DeviceProperties::Gpu(GpuInfo {
+            description: Some("NVIDIA GeForce RTX 4090".to_string()),
+            ..GpuInfo::default()
+        }),
+    );
+    device.model = Some("swiftshader".to_string());
+
+    assert_eq!(
+        component_keys_from_devices(&[device]),
+        vec!["gpu:model=NVIDIA GeForce RTX 4090".to_string()]
+    );
+}
+
+#[test]
 fn ignores_gpu_with_topology_name_and_no_model() {
     let device = Device::new(
         "gpu0",
