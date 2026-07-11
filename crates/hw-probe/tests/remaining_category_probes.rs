@@ -881,6 +881,69 @@ async fn bios_probe_outputs_bios_and_motherboard_devices() {
         .any(|d| d.kind == DeviceKind::Motherboard));
 }
 
+#[tokio::test]
+async fn bios_probe_drops_placeholder_bios_and_board_identity_fields() {
+    let runner = FakeSourceRunner::new().with_command(
+        "dmidecode",
+        ["-t", "0,1,2,3"],
+        "BIOS Information\n\
+             \tVendor: VMware, Inc.\n\
+             \tVersion: None\n\
+             \tRelease Date: 05/22/2023\n\
+             Base Board Information\n\
+             \tManufacturer: Intel Corporation\n\
+             \tProduct Name: 440BX Desktop Reference Platform\n\
+             \tVersion: None\n\
+             \tSerial Number: None\n\
+             \tAsset Tag: Not Specified\n\
+             \tLocation In Chassis: Not Specified\n\
+             Chassis Information\n\
+             \tManufacturer: No Enclosure\n\
+             \tType: Other\n\
+             \tVersion: N/A\n\
+             \tSerial Number: None\n\
+             \tAsset Tag: No Asset Tag\n\
+             \tSecurity Status: None\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = BiosProbe.probe(&ctx).await;
+
+    let bios = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Bios)
+        .expect("expected bios device");
+    assert_eq!(bios.name, "BIOS");
+    match &bios.properties {
+        DeviceProperties::Bios(info) => {
+            assert_eq!(info.version, None);
+            assert_eq!(info.release_date.as_deref(), Some("05/22/2023"));
+        }
+        other => panic!("expected bios properties, got {other:?}"),
+    }
+
+    let board = result
+        .devices
+        .iter()
+        .find(|device| device.kind == DeviceKind::Motherboard)
+        .expect("expected motherboard device");
+    assert_eq!(board.id, "motherboard:0");
+    match &board.properties {
+        DeviceProperties::Motherboard(info) => {
+            assert_eq!(info.version, None);
+            assert_eq!(info.serial, None);
+            assert_eq!(info.asset_tag, None);
+            assert_eq!(info.location_in_chassis, None);
+            assert_eq!(info.chassis_version, None);
+            assert_eq!(info.chassis_serial, None);
+            assert_eq!(info.chassis_asset_tag, None);
+            assert_eq!(info.chassis_security_status.as_deref(), Some("None"));
+        }
+        other => panic!("expected motherboard properties, got {other:?}"),
+    }
+}
+
 fn ddr4_spd_eeprom() -> Vec<u8> {
     let mut bytes = vec![0; 384];
     bytes[2] = 0x0c;

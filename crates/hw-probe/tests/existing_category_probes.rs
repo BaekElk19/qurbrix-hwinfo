@@ -89,6 +89,44 @@ async fn system_probe_outputs_runtime_and_dmi_system_fields() {
 }
 
 #[tokio::test]
+async fn system_probe_drops_placeholder_dmi_identity_fields() {
+    let runner = FakeSourceRunner::new()
+        .with_file("/proc/sys/kernel/hostname", "deepin-host\n")
+        .with_command(
+            "dmidecode",
+            ["-t", "1"],
+            "System Information\n\
+                 \tManufacturer: VMware, Inc.\n\
+                 \tProduct Name: VMware20,1\n\
+                 \tVersion: None\n\
+                 \tSerial Number: None\n\
+                 \tUUID: Not Settable\n\
+                 \tWake-up Type: Power Switch\n\
+                 \tSKU Number: Not Specified\n\
+                 \tFamily: Not Specified\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+
+    let result = SystemProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let device = &result.devices[0];
+    assert_eq!(device.id, "system:hostname:deepin-host");
+    assert_eq!(device.serial, None);
+    match &device.properties {
+        DeviceProperties::System(info) => {
+            assert_eq!(info.version, None);
+            assert_eq!(info.serial, None);
+            assert_eq!(info.uuid, None);
+            assert_eq!(info.sku_number, None);
+            assert_eq!(info.family, None);
+            assert_eq!(info.wake_up_type.as_deref(), Some("Power Switch"));
+        }
+        other => panic!("expected system properties, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn system_probe_uses_sysfs_dmi_when_dmidecode_is_missing() {
     let runner = FakeSourceRunner::new()
         .with_file("/sys/class/dmi/id/sys_vendor", "LENOVO\n")

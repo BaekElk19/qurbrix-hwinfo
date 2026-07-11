@@ -371,16 +371,15 @@ pub fn parse_dmidecode_system(input: &str) -> DmiSystemRecord {
         let Some((key, value)) = trimmed.split_once(':') else {
             continue;
         };
-        let value = value.trim().to_string();
         match key.trim() {
-            "Manufacturer" => record.manufacturer = Some(value),
-            "Product Name" => record.product_name = Some(value),
-            "Version" => record.version = Some(value),
-            "Serial Number" => record.serial = Some(value),
-            "UUID" => record.uuid = Some(value),
-            "Wake-up Type" => record.wake_up_type = Some(value),
-            "SKU Number" => record.sku_number = Some(value),
-            "Family" => record.family = Some(value),
+            "Manufacturer" => record.manufacturer = clean_dmi_identity_value(value),
+            "Product Name" => record.product_name = clean_dmi_identity_value(value),
+            "Version" => record.version = clean_dmi_identity_value(value),
+            "Serial Number" => record.serial = clean_dmi_identity_value(value),
+            "UUID" => record.uuid = clean_dmi_identity_value(value),
+            "Wake-up Type" => record.wake_up_type = clean_dmi_value(value),
+            "SKU Number" => record.sku_number = clean_dmi_identity_value(value),
+            "Family" => record.family = clean_dmi_identity_value(value),
             _ => {}
         }
     }
@@ -443,80 +442,113 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
         let Some((key, value)) = trimmed.split_once(':') else {
             continue;
         };
-        let value = value.trim().to_string();
         collecting_installable_languages = false;
         collecting_bios_characteristics = false;
         collecting_board_features = false;
         match (section, key) {
-            ("BIOS Information", "Vendor") => record.bios_vendor = Some(value),
-            ("BIOS Information", "Version") => record.bios_version = Some(value),
-            ("BIOS Information", "Release Date") => record.bios_release_date = Some(value),
-            ("BIOS Information", "Address") => record.bios_address = Some(value),
-            ("BIOS Information", "Runtime Size") => record.bios_runtime_size = Some(value),
-            ("BIOS Information", "ROM Size") => record.bios_rom_size = Some(value),
+            ("BIOS Information", "Vendor") => record.bios_vendor = clean_dmi_identity_value(value),
+            ("BIOS Information", "Version") => {
+                record.bios_version = clean_dmi_identity_value(value)
+            }
+            ("BIOS Information", "Release Date") => {
+                record.bios_release_date = clean_dmi_value(value)
+            }
+            ("BIOS Information", "Address") => record.bios_address = clean_dmi_value(value),
+            ("BIOS Information", "Runtime Size") => {
+                record.bios_runtime_size = clean_dmi_value(value)
+            }
+            ("BIOS Information", "ROM Size") => record.bios_rom_size = clean_dmi_value(value),
             ("BIOS Information", "Characteristics") => collecting_bios_characteristics = true,
-            ("BIOS Information", "BIOS Revision") => record.bios_revision = Some(value),
-            ("BIOS Information", "Firmware Revision") => record.firmware_revision = Some(value),
+            ("BIOS Information", "BIOS Revision") => record.bios_revision = clean_dmi_value(value),
+            ("BIOS Information", "Firmware Revision") => {
+                record.firmware_revision = clean_dmi_value(value)
+            }
             ("BIOS Language Information", "Language Description Format") => {
-                record.bios_language_description_format = Some(value)
+                record.bios_language_description_format = clean_dmi_value(value)
             }
             ("BIOS Language Information", "Installable Languages") => {
                 collecting_installable_languages = true
             }
             ("BIOS Language Information", "Currently Installed Language") => {
-                record.bios_currently_installed_language = Some(value)
+                record.bios_currently_installed_language = clean_dmi_value(value)
             }
-            ("Base Board Information", "Manufacturer") => record.board_manufacturer = Some(value),
-            ("Base Board Information", "Product Name") => record.board_product_name = Some(value),
-            ("Base Board Information", "Version") => record.board_version = Some(value),
-            ("Base Board Information", "Serial Number") => record.board_serial = Some(value),
-            ("Base Board Information", "Asset Tag") => record.board_asset_tag = Some(value),
+            ("Base Board Information", "Manufacturer") => {
+                record.board_manufacturer = clean_dmi_identity_value(value)
+            }
+            ("Base Board Information", "Product Name") => {
+                record.board_product_name = clean_dmi_identity_value(value)
+            }
+            ("Base Board Information", "Version") => {
+                record.board_version = clean_dmi_identity_value(value)
+            }
+            ("Base Board Information", "Serial Number") => {
+                record.board_serial = clean_dmi_identity_value(value)
+            }
+            ("Base Board Information", "Asset Tag") => {
+                record.board_asset_tag = clean_dmi_identity_value(value)
+            }
             ("Base Board Information", "Features") => collecting_board_features = true,
-            ("Base Board Information", "Type") => record.board_type = Some(value),
+            ("Base Board Information", "Type") => record.board_type = clean_dmi_value(value),
             ("Base Board Information", "Location In Chassis") => {
-                record.board_location_in_chassis = Some(value)
+                record.board_location_in_chassis = clean_dmi_identity_value(value)
             }
             ("Base Board Information", "Chassis Handle") => {
-                record.board_chassis_handle = Some(value)
+                record.board_chassis_handle = clean_dmi_value(value)
             }
-            ("Chassis Information", "Manufacturer") => record.chassis_manufacturer = Some(value),
-            ("Chassis Information", "Type") => record.chassis_type = Some(value),
-            ("Chassis Information", "Version") => record.chassis_version = Some(value),
-            ("Chassis Information", "Serial Number") => record.chassis_serial = Some(value),
-            ("Chassis Information", "Asset Tag") => record.chassis_asset_tag = Some(value),
-            ("Chassis Information", "Lock") => record.chassis_lock = Some(value),
-            ("Chassis Information", "Boot-up State") => record.chassis_boot_up_state = Some(value),
+            ("Chassis Information", "Manufacturer") => {
+                record.chassis_manufacturer = clean_dmi_identity_value(value)
+            }
+            ("Chassis Information", "Type") => record.chassis_type = clean_dmi_value(value),
+            ("Chassis Information", "Version") => {
+                record.chassis_version = clean_dmi_identity_value(value)
+            }
+            ("Chassis Information", "Serial Number") => {
+                record.chassis_serial = clean_dmi_identity_value(value)
+            }
+            ("Chassis Information", "Asset Tag") => {
+                record.chassis_asset_tag = clean_dmi_identity_value(value)
+            }
+            ("Chassis Information", "Lock") => record.chassis_lock = clean_dmi_value(value),
+            ("Chassis Information", "Boot-up State") => {
+                record.chassis_boot_up_state = clean_dmi_value(value)
+            }
             ("Chassis Information", "Power Supply State") => {
-                record.chassis_power_supply_state = Some(value)
+                record.chassis_power_supply_state = clean_dmi_value(value)
             }
-            ("Chassis Information", "Thermal State") => record.chassis_thermal_state = Some(value),
+            ("Chassis Information", "Thermal State") => {
+                record.chassis_thermal_state = clean_dmi_value(value)
+            }
             ("Chassis Information", "Security Status") => {
-                record.chassis_security_status = Some(value)
+                record.chassis_security_status = clean_dmi_value(value)
             }
             ("Chassis Information", "OEM Information") => {
-                record.chassis_oem_information = Some(value)
+                record.chassis_oem_information = clean_dmi_value(value)
             }
-            ("Chassis Information", "Height") => record.chassis_height = Some(value),
+            ("Chassis Information", "Height") => record.chassis_height = clean_dmi_value(value),
             ("Chassis Information", "Number Of Power Cords") => {
-                record.chassis_power_cords = Some(value)
+                record.chassis_power_cords = clean_dmi_value(value)
             }
             ("Chassis Information", "Contained Elements") => {
-                record.chassis_contained_elements = Some(value)
+                record.chassis_contained_elements = clean_dmi_value(value)
             }
-            ("Chassis Information", "SKU Number") => record.chassis_sku_number = Some(value),
-            ("Physical Memory Array", "Location") => record.memory_array_location = Some(value),
-            ("Physical Memory Array", "Use") => record.memory_array_use = Some(value),
+            ("Chassis Information", "SKU Number") => {
+                record.chassis_sku_number = clean_dmi_identity_value(value)
+            }
+            ("Physical Memory Array", "Location") => {
+                record.memory_array_location = clean_dmi_value(value)
+            }
+            ("Physical Memory Array", "Use") => record.memory_array_use = clean_dmi_value(value),
             ("Physical Memory Array", "Error Correction Type") => {
-                record.memory_array_error_correction_type = Some(value)
+                record.memory_array_error_correction_type = clean_dmi_value(value)
             }
             ("Physical Memory Array", "Maximum Capacity") => {
-                record.memory_array_maximum_capacity = Some(value)
+                record.memory_array_maximum_capacity = clean_dmi_value(value)
             }
             ("Physical Memory Array", "Error Information Handle") => {
-                record.memory_array_error_information_handle = Some(value)
+                record.memory_array_error_information_handle = clean_dmi_value(value)
             }
             ("Physical Memory Array", "Number Of Devices") => {
-                record.memory_array_number_of_devices = Some(value)
+                record.memory_array_number_of_devices = clean_dmi_value(value)
             }
             _ => {}
         }
@@ -528,6 +560,26 @@ fn parse_smbios_version_line(value: &str) -> Option<String> {
     let rest = value.strip_prefix("SMBIOS ")?;
     let version = rest.strip_suffix(" present.")?;
     (!version.trim().is_empty()).then(|| version.trim().to_string())
+}
+
+fn clean_dmi_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn clean_dmi_identity_value(value: &str) -> Option<String> {
+    let value = clean_dmi_value(value)?;
+    (!matches!(
+        value.to_ascii_lowercase().as_str(),
+        "none"
+            | "n/a"
+            | "not specified"
+            | "no asset tag"
+            | "not settable"
+            | "to be filled by o.e.m."
+            | "system serial number"
+    ))
+    .then_some(value)
 }
 
 pub fn parse_size_to_bytes(value: Option<&str>) -> Option<u64> {

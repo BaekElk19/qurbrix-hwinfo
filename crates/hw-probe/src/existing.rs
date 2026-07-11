@@ -4214,7 +4214,18 @@ async fn read_sysfs_dmi_value(ctx: &ProbeContext<'_>, name: &str) -> Option<Stri
 
 fn clean_sysfs_dmi_value(value: &str) -> Option<String> {
     let value = value.trim();
-    (!value.is_empty() && !value.eq_ignore_ascii_case("Not Specified")).then(|| value.to_string())
+    (!value.is_empty()
+        && !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "none"
+                | "n/a"
+                | "not specified"
+                | "no asset tag"
+                | "not settable"
+                | "to be filled by o.e.m."
+                | "system serial number"
+        ))
+    .then(|| value.to_string())
 }
 
 fn normalize_sysfs_chassis_type(value: String) -> String {
