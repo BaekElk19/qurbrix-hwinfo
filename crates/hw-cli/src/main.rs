@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use hw_cli::args::{Cli, Command, ListFormat, OutputFormat};
 use hw_cli::exit::{classify_parse_error, exit_code_for_status, ExitCode};
+use hw_cli::permission::{command_requires_hardware_access, ensure_root};
 use hw_model::ScanConfig;
 
 #[tokio::main]
@@ -21,6 +22,14 @@ async fn main() -> Result<()> {
             std::process::exit(code);
         }
     };
+
+    if command_requires_hardware_access(&cli.command) {
+        if let Err(err) = ensure_root() {
+            eprintln!("{err}");
+            std::process::exit(ExitCode::Permission.code());
+        }
+    }
+
     match cli.command {
         Command::Scan(args) => {
             let config = ScanConfig {
@@ -70,6 +79,17 @@ async fn main() -> Result<()> {
         Command::Table(args) => {
             let report = hw_collect::collect_scan_report(ScanConfig::default()).await?;
             print!("{}", hw_output::table_text(&report, args.kind));
+        }
+        Command::BindId(args) => {
+            let report = hw_bindid::collect_bindid_report(args.timeout).await?;
+            if args.pretty {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}", serde_json::to_string(&report)?);
+            }
+            if report.status == hw_bindid::BindIdStatus::Failed {
+                std::process::exit(ExitCode::ScanFailed.code());
+            }
         }
         Command::ListKinds { format } => match format {
             ListFormat::Text => println!("{}", hw_output::list_kinds().join("\n")),
