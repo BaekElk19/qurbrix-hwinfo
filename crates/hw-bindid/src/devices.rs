@@ -85,7 +85,9 @@ fn stable_gpu_name(name: &str) -> Option<&str> {
 }
 
 fn is_generic_gpu_name(name: &str) -> bool {
-    if name.eq_ignore_ascii_case("intel")
+    if name.eq_ignore_ascii_case("gpu")
+        || name.eq_ignore_ascii_case("device")
+        || name.eq_ignore_ascii_case("intel")
         || name.eq_ignore_ascii_case("amd")
         || name.eq_ignore_ascii_case("nvidia")
     {

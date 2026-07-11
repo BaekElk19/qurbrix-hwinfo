@@ -262,6 +262,30 @@ fn ignores_gpu_with_vendor_only_name_and_no_model() {
 }
 
 #[test]
+fn ignores_gpu_with_exact_gpu_name_and_no_model() {
+    let device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "GPU",
+        DeviceProperties::Gpu(GpuInfo::default()),
+    );
+
+    assert!(component_keys_from_devices(&[device]).is_empty());
+}
+
+#[test]
+fn ignores_gpu_with_exact_device_name_and_no_model() {
+    let device = Device::new(
+        "gpu0",
+        DeviceKind::Gpu,
+        "Device",
+        DeviceProperties::Gpu(GpuInfo::default()),
+    );
+
+    assert!(component_keys_from_devices(&[device]).is_empty());
+}
+
+#[test]
 fn gpu_with_generic_name_and_description_uses_model_only() {
     let device = Device::new(
         "gpu0",
