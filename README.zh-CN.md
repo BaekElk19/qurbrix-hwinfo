@@ -72,7 +72,8 @@ sudo qurbrix-hw bindid --timeout 30s
 `partial` 仍返回退出码 `0`，方便脚本继续消费已有结果。
 
 `bindid` 输出 `schema_version: qurbrix.hw.bindid.v1`，生成 16 位小写 SHA1
-十六进制前缀作为轻量业务绑定 ID，用于常规读取和低频硬件绑定检查。它只覆盖窄组件集：
+十六进制前缀作为轻量业务绑定 ID，用于常规读取和低频硬件绑定检查。
+它不是 `fingerprint`，也不是完整机器指纹。它只覆盖窄组件集：
 必需 `system`、`motherboard`、`memory`、`storage`、`network`，可选 `gpu`。
 CPU 和显示器/显示设备不参与；网络只使用 MAC，不使用网络类型、接口、IP、速率或链路状态。
 缺少必需组件时 `status` 为 `failed`、`value` 为 `null`，仍会输出 JSON 并返回退出码 `2`。

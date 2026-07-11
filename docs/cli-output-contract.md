@@ -59,7 +59,8 @@ sudo qurbrix-hw bindid --timeout 30s
 ```
 
 `bindid` emits one JSON object. It is a lightweight business binding ID for
-routine reads and low-frequency hardware binding checks.
+routine reads and low-frequency hardware binding checks. It is intentionally
+not named `fingerprint` and is not a complete machine fingerprint.
 
 The component set is intentionally narrow and is inspired by the original
 binding behavior:
