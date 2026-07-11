@@ -12,7 +12,7 @@ const PLACEHOLDERS: &[&str] = &[
 ];
 
 pub fn normalize_value(value: &str) -> Option<String> {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = collapse_whitespace(value);
     if normalized.is_empty() || is_placeholder_value(&normalized) {
         None
     } else {
@@ -21,9 +21,10 @@ pub fn normalize_value(value: &str) -> Option<String> {
 }
 
 pub fn is_placeholder_value(value: &str) -> bool {
+    let normalized = collapse_whitespace(value);
     PLACEHOLDERS
         .iter()
-        .any(|placeholder| value.trim().eq_ignore_ascii_case(placeholder))
+        .any(|placeholder| normalized.eq_ignore_ascii_case(placeholder))
 }
 
 pub fn normalize_mac(value: &str) -> Option<String> {
@@ -58,10 +59,21 @@ pub fn component_key(kind: &str, fields: &[(&str, Option<&str>)]) -> Option<Stri
         "{kind}:{}",
         normalized
             .into_iter()
-            .map(|(name, value)| format!("{name}={value}"))
+            .map(|(name, value)| format!("{name}={}", escape_value(&value)))
             .collect::<Vec<_>>()
             .join("|")
     ))
+}
+
+fn collapse_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn escape_value(value: &str) -> String {
+    value
+        .replace('%', "%25")
+        .replace('|', "%7C")
+        .replace('=', "%3D")
 }
 
 fn normalize_field(name: &str, value: Option<&str>) -> Option<String> {
