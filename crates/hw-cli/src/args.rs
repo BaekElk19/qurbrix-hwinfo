@@ -18,6 +18,8 @@ pub enum Command {
     Scan(ScanArgs),
     Summary,
     Table(TableArgs),
+    #[command(name = "bindid")]
+    BindId(BindIdArgs),
     ListKinds {
         #[arg(long, value_enum, default_value_t = ListFormat::Text)]
         format: ListFormat,
@@ -56,6 +58,14 @@ pub struct ScanArgs {
 pub struct TableArgs {
     #[arg(long, value_parser = parse_kind)]
     pub kind: Option<DeviceKind>,
+}
+
+#[derive(Debug, Args)]
+pub struct BindIdArgs {
+    #[arg(long)]
+    pub pretty: bool,
+    #[arg(long, default_value = "30s", value_parser = parse_duration)]
+    pub timeout: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
