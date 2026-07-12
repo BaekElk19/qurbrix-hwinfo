@@ -1472,7 +1472,7 @@ async fn network_probe_warns_when_json_output_is_malformed() {
 async fn storage_probe_outputs_storage_device() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",
-        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
         r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
     );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
@@ -1484,7 +1484,7 @@ async fn storage_probe_outputs_storage_device() {
 async fn storage_probe_preserves_wwn_and_firmware_from_lsblk_success_path() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",
-        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
         r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata","wwn":"0x5002538F00000000","rev":"1.0A"}]}"#,
     );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
@@ -1512,7 +1512,7 @@ async fn storage_probe_reports_deepin_size_display_rounding() {
     for (size, expected, tran) in cases {
         let runner = FakeSourceRunner::new().with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             format!(
                 r#"{{"blockdevices":[{{"name":"sda","type":"disk","size":{size},"model":"Disk","serial":"S1","tran":"{tran}"}}]}}"#
             ),
@@ -1533,7 +1533,7 @@ async fn storage_probe_reports_deepin_size_display_rounding() {
 async fn storage_probe_infers_longsys_vendor_from_rs_model_prefix() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",
-        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
         r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"RSYE3836N-480G","serial":"S1","tran":"sata"}]}"#,
     );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
@@ -1578,7 +1578,7 @@ async fn storage_probe_infers_vendor_from_kylin_disk_model_prefix() {
     for (model, vendor) in cases {
         let runner = FakeSourceRunner::new().with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             format!(
                 r#"{{"blockdevices":[{{"name":"sda","type":"disk","size":1024,"model":"{model}","serial":"S1","tran":"sata"}}]}}"#
             ),
@@ -1597,7 +1597,7 @@ async fn storage_probe_infers_vendor_from_kylin_disk_model_prefix() {
 async fn storage_probe_does_not_infer_vendor_from_kernel_name_without_model() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",
-        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
         r#"{"blockdevices":[{"name":"st0","type":"disk","size":1024,"serial":"S1","tran":"sata"}]}"#,
     );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
@@ -1614,7 +1614,7 @@ async fn storage_probe_keeps_explicit_vendor_over_model_prefix_fallback() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"WDC WD10EZEX-08WN4A0","serial":"S1","tran":"sata"}]}"#,
         )
         .with_command(
@@ -1643,7 +1643,7 @@ async fn storage_probe_reads_smart_health_and_temperature() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
         )
         .with_command(
@@ -1671,7 +1671,7 @@ async fn storage_probe_enriches_identity_from_smartctl() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"USB SATA Bridge","tran":"sata"}]}"#,
         )
         .with_command(
@@ -1709,7 +1709,7 @@ async fn storage_probe_reads_nvme_smart_health_details() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"nvme0n1","type":"disk","size":1024,"model":"NVMe SSD","serial":"N1","tran":"nvme"}]}"#,
         )
         .with_command(
@@ -1760,7 +1760,7 @@ async fn storage_probe_splits_transport_interface_from_rotational_media_type() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
         )
         .with_file("/sys/block/sda/queue/rotational", "0\n");
@@ -1780,7 +1780,7 @@ async fn storage_probe_reads_smart_health_from_nonzero_smartctl_json() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
         )
         .with_command_status(
@@ -1810,7 +1810,7 @@ async fn storage_probe_retries_usb_bridge_smartctl_with_sat_device_type() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"USB SSD","serial":"S1","tran":"usb"}]}"#,
         )
         .with_command_status(
@@ -1843,7 +1843,7 @@ async fn storage_probe_records_warning_when_smartctl_json_is_malformed() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
         )
         .with_command("smartctl", ["-a", "-j", "/dev/sda"], "not json");
@@ -1863,7 +1863,7 @@ async fn storage_probe_reads_driver_from_sysfs_for_lsblk_disk() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
         )
         .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n");
@@ -1896,7 +1896,7 @@ async fn storage_probe_preserves_sata_parent_pci_identity_from_sysfs() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
         )
         .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
@@ -1933,7 +1933,7 @@ async fn storage_probe_uses_unique_sysfs_storage_controller_when_parent_uevent_i
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
         )
         .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
@@ -1975,7 +1975,7 @@ async fn storage_probe_uses_unique_matching_sysfs_storage_controller() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
         )
         .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
@@ -2027,7 +2027,7 @@ async fn storage_probe_uses_sysfs_device_path_pci_ancestor_for_same_media_contro
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
         )
         .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
@@ -2083,7 +2083,7 @@ async fn storage_probe_preserves_nvme_controller_pci_identity_from_sysfs() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"nvme0n1","type":"disk","size":1024,"model":"NVMe Disk","serial":"N1","tran":"nvme"}]}"#,
         )
         .with_file(
@@ -2117,7 +2117,7 @@ async fn storage_probe_enriches_controller_identity_from_lshw_storage() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"nvme0n1","type":"disk","size":1024,"model":"NVMe Disk","serial":"N1","tran":"nvme"}]}"#,
         )
         .with_file(
@@ -2162,7 +2162,7 @@ async fn storage_probe_enriches_controller_identity_from_lspci_when_lshw_storage
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SATA SSD","serial":"S1","tran":"sata"}]}"#,
         )
         .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
@@ -2198,7 +2198,7 @@ async fn storage_probe_enriches_human_readable_lshw_fields() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"tran":"sata"}]}"#,
         )
         .with_command(
@@ -2241,7 +2241,7 @@ async fn storage_probe_enriches_human_readable_hwinfo_fields() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"nvme0n1","type":"disk","size":1024,"tran":"nvme"}]}"#,
         )
         .with_command(
@@ -2294,7 +2294,7 @@ async fn storage_probe_enriches_hdparm_identity_fields() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"tran":"sata"}]}"#,
         )
         .with_command(
@@ -2356,7 +2356,7 @@ async fn storage_probe_uses_hwinfo_when_lsblk_and_sysfs_are_missing() {
     assert!(result.warnings.iter().any(|warning| {
         warning.code == "source_missing"
             && warning.source.as_deref()
-                == Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV")
+                == Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL")
     }));
 }
 
@@ -2420,7 +2420,7 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
     assert_eq!(
         warning_pairs(&result),
         vec![(
-            Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"),
+            Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"),
             "source_missing"
         )]
     );
@@ -2487,7 +2487,7 @@ async fn storage_probe_uses_sysfs_when_lsblk_parses_no_disks() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             r#"{"blockdevices":[]}"#,
         )
         .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/sda")])
@@ -2507,7 +2507,7 @@ async fn storage_probe_uses_sysfs_when_lsblk_parses_no_disks() {
     assert_eq!(
         warning_pairs(&result),
         vec![(
-            Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"),
+            Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"),
             "source_empty"
         )]
     );
@@ -2545,7 +2545,7 @@ async fn storage_probe_warns_when_json_output_is_malformed() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
             "not json",
         )
         .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/sda")])
@@ -2558,6 +2558,6 @@ async fn storage_probe_warns_when_json_output_is_malformed() {
     assert_eq!(result.warnings[0].code, "parse_failed");
     assert_eq!(
         result.warnings[0].source.as_deref(),
-        Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV")
+        Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL")
     );
 }

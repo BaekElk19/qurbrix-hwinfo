@@ -2871,7 +2871,12 @@ impl Probe for StorageProbe {
             .run_command(
                 &CommandSpec::new(
                     "lsblk",
-                    ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+                    [
+                        "-J",
+                        "-b",
+                        "-o",
+                        "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+                    ],
                 ),
                 ctx.timeout,
             )

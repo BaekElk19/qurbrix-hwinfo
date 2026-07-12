@@ -40,7 +40,12 @@ async fn collector_returns_failed_report_when_required_sources_are_missing() {
 async fn collector_converts_narrow_probe_devices_into_component_keys() {
     let runner = FakeSourceRunner::new().with_command(
         "lsblk",
-        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV"],
+        [
+            "-J",
+            "-b",
+            "-o",
+            "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+        ],
         r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
     );
     let report = collect_bindid_report_with_runner(&runner, Duration::from_secs(1))
@@ -72,9 +77,10 @@ async fn collector_keeps_bindid_source_surface_narrow() {
     assert!(calls.commands.contains(&"dmidecode -t 1".to_string()));
     assert!(calls.commands.contains(&"dmidecode -t 0,1,2,3".to_string()));
     assert!(calls.commands.contains(&"dmidecode -t memory".to_string()));
-    assert!(calls
-        .commands
-        .contains(&"lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV".to_string()));
+    assert!(calls.commands.contains(
+        &"lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"
+            .to_string()
+    ));
     assert!(calls.commands.contains(&"ip -j link".to_string()));
     assert!(calls.commands.contains(&"lspci -nn -k".to_string()));
     assert!(!calls.commands.contains(&"lscpu".to_string()));

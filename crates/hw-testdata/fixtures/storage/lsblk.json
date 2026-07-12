@@ -8,7 +8,22 @@
       "serial": "S6P0TEST123",
       "tran": "nvme",
       "wwn": "eui.002538b111111111",
-      "rev": "3B4QFXO7"
+      "rev": "3B4QFXO7",
+      "mountpoint": null,
+      "fstype": null,
+      "partuuid": null,
+      "label": null,
+      "children": [
+        {
+          "name": "nvme0n1p1",
+          "type": "part",
+          "size": 511080529920,
+          "mountpoint": "/",
+          "fstype": "ext4",
+          "partuuid": "12345678-90ab-cdef-1234-567890abcdef",
+          "label": "root"
+        }
+      ]
     }
   ]
 }

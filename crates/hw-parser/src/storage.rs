@@ -17,6 +17,16 @@ pub struct LsblkDevice {
     pub tran: Option<String>,
     pub wwn: Option<String>,
     pub rev: Option<String>,
+    #[serde(default)]
+    pub mountpoint: Option<String>,
+    #[serde(default)]
+    pub fstype: Option<String>,
+    #[serde(default)]
+    pub partuuid: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub children: Vec<LsblkDevice>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

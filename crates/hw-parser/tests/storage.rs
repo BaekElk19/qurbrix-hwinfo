@@ -42,3 +42,20 @@ fn storage_fixtures_cover_lsblk_smartctl_hwinfo_and_lshw_sources() {
     assert_eq!(lshw.len(), 1);
     assert_eq!(lshw[0].logical_name.as_deref(), Some("/dev/nvme0n1"));
 }
+
+#[test]
+fn lsblk_parses_mountpoint_fstype_partuuid_label() {
+    let input = hw_testdata::fixture("storage/lsblk.json");
+    let records = parse_lsblk_json_result(&input).expect("parses");
+    let root_partition = records
+        .iter()
+        .flat_map(|d| std::iter::once(d).chain(d.children.iter()))
+        .find(|d| d.mountpoint.as_deref() == Some("/"))
+        .expect("root partition present");
+    assert_eq!(root_partition.fstype.as_deref(), Some("ext4"));
+    assert_eq!(
+        root_partition.partuuid.as_deref(),
+        Some("12345678-90ab-cdef-1234-567890abcdef"),
+    );
+    assert_eq!(root_partition.label.as_deref(), Some("root"));
+}
