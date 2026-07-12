@@ -7,6 +7,11 @@ pub struct BluetoothControllerRecord {
     pub address: Option<String>,
     pub bus: Option<String>,
     pub flags: Vec<String>,
+    pub hci_version: Option<String>,
+    pub lmp_version: Option<String>,
+    pub manufacturer: Option<String>,
+    pub device_class: Option<String>,
+    pub features: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +49,20 @@ pub fn parse_hciconfig(input: &str) -> Vec<BluetoothControllerRecord> {
                 record.address = Some(caps[1].to_string());
             } else if let Some(caps) = name_re.captures(line) {
                 record.name = Some(caps[1].to_string());
-            } else {
+            } else if let Some(rest) = line.trim_start().strip_prefix("HCI Version:") {
+                record.hci_version = Some(rest.trim().to_string());
+            } else if let Some(rest) = line.trim_start().strip_prefix("LMP Version:") {
+                record.lmp_version = Some(rest.trim().to_string());
+            } else if let Some(rest) = line.trim_start().strip_prefix("Manufacturer:") {
+                record.manufacturer = Some(rest.trim().to_string());
+            } else if let Some(rest) = line.trim_start().strip_prefix("Class:") {
+                record.device_class = Some(rest.trim().to_string());
+            } else if let Some(rest) = line.trim_start().strip_prefix("Features:") {
+                record.features = rest
+                    .split_whitespace()
+                    .map(ToOwned::to_owned)
+                    .collect();
+            } else if record.flags.is_empty() {
                 let flags: Vec<String> = line
                     .split_whitespace()
                     .filter(|v| v.chars().all(|c| c.is_ascii_uppercase()))

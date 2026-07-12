@@ -550,7 +550,7 @@ fn parses_bluetooth_and_video() {
     let paired =
         parse_bluetoothctl_paired_devices(&hw_testdata::fixture("bluetooth/paired-devices.txt"));
     let cameras = parse_v4l2_list_devices(&hw_testdata::fixture("video/v4l2-list-devices.txt"));
-    assert_eq!(controllers[0].address.as_deref(), Some("00:11:22:33:44:55"));
+    assert_eq!(controllers[0].address.as_deref(), Some("3C:F0:11:80:9E:19"));
     assert_eq!(paired.len(), 2);
     assert_eq!(cameras[0].nodes, vec!["/dev/video0", "/dev/video1"]);
 }

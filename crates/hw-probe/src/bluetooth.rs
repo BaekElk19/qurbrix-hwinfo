@@ -80,6 +80,11 @@ impl Probe for BluetoothProbe {
                         discoverable: Some(ctrl.flags.iter().any(|f| f == "ISCAN")),
                         paired_device_count: Some(paired_names.len() as u32),
                         paired_devices: paired_names.clone(),
+                        hci_version: ctrl.hci_version,
+                        lmp_version: ctrl.lmp_version,
+                        manufacturer: ctrl.manufacturer,
+                        device_class: ctrl.device_class,
+                        features: ctrl.features,
                     }),
                 )
                 .with_source(SourceEvidence {
@@ -213,6 +218,11 @@ async fn probe_sysfs_bluetooth(ctx: &ProbeContext<'_>) -> Vec<Device> {
                     discoverable: None,
                     paired_device_count: None,
                     paired_devices: Vec::new(),
+                    hci_version: None,
+                    lmp_version: None,
+                    manufacturer: None,
+                    device_class: None,
+                    features: Vec::new(),
                 }),
             )
             .with_source(SourceEvidence {

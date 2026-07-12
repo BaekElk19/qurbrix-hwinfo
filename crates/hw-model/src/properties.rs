@@ -340,6 +340,16 @@ pub struct BluetoothInfo {
     pub discoverable: Option<bool>,
     pub paired_device_count: Option<u32>,
     pub paired_devices: Vec<String>,
+    #[serde(default)]
+    pub hci_version: Option<String>,
+    #[serde(default)]
+    pub lmp_version: Option<String>,
+    #[serde(default)]
+    pub manufacturer: Option<String>,
+    #[serde(default)]
+    pub device_class: Option<String>,
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

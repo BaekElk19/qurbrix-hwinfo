@@ -1,4 +1,16 @@
 hci0:   Type: Primary  Bus: USB
-        BD Address: 00:11:22:33:44:55  ACL MTU: 1021:4  SCO MTU: 96:6
+        BD Address: 3C:F0:11:80:9E:19  ACL MTU: 1021:4  SCO MTU: 96:6
         UP RUNNING PSCAN ISCAN
-        Name: 'host-bluetooth'
+        RX bytes:47228 acl:1090 sco:0 events:1929 errors:0
+        TX bytes:16388 acl:1039 sco:0 commands:277 errors:0
+        Features: 0xff 0xff 0xff 0xfe 0xdb 0xff 0x7b 0x87
+        Packet type: DM1 DM3 DM5 DH1 DH3 DH5 HV1 HV2 HV3
+        Link policy: RSWITCH SNIFF
+        Link mode: SLAVE ACCEPT
+        Name: 'thinkpad-x1'
+        Class: 0x7c010c
+        Service Classes: Rendering, Capturing, Object Transfer, Audio, Telephony
+        Device Class: Computer, Laptop
+        HCI Version: 5.3 (0xc)  Revision: 0x1234
+        LMP Version: 5.3 (0xc)  Subversion: 0x100
+        Manufacturer: Intel Corp. (2)
