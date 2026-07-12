@@ -132,3 +132,20 @@ fn parses_glxinfo_basic_renderer_vendor_and_version() {
     assert_eq!(record.egl_version.as_deref(), Some("1.5"));
     assert_eq!(record.egl_client_apis.as_deref(), Some("OpenGL OpenGL_ES"));
 }
+
+#[test]
+fn modinfo_version_extracts_first_version_line() {
+    let input = hw_testdata::fixture("gpu/modinfo-nvidia.txt");
+    assert_eq!(
+        hw_parser::parse_modinfo_version(&input).as_deref(),
+        Some("550.90.07"),
+    );
+}
+
+#[test]
+fn modinfo_version_returns_none_when_missing() {
+    assert_eq!(
+        hw_parser::parse_modinfo_version("filename: /foo\nlicense: GPL"),
+        None
+    );
+}

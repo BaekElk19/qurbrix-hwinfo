@@ -343,3 +343,15 @@ fn clean_lshw_display_value(value: &str) -> Option<String> {
         Some(value.to_string())
     }
 }
+
+pub fn parse_modinfo_version(input: &str) -> Option<String> {
+    for line in input.lines() {
+        if let Some(rest) = line.strip_prefix("version:") {
+            let trimmed = rest.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}

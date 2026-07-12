@@ -1,0 +1,6 @@
+filename:       /lib/modules/6.6.30-1-desktop/updates/nvidia.ko.zst
+alias:          char-major-195-*
+version:        550.90.07
+supported:      external
+license:        NVIDIA
+srcversion:     ABCDEF0123456789

@@ -19,8 +19,9 @@ use hw_parser::{
     parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
     parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k,
-    parse_nvidia_settings_memory_interface, parse_nvidia_settings_videoram,
-    parse_nvidia_smi_memory_csv, parse_phytium1500a_info, parse_proc_cpuinfo, parse_proc_hardware,
+    parse_modinfo_version, parse_nvidia_settings_memory_interface,
+    parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv, parse_phytium1500a_info,
+    parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
     parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_voltage_v, parse_width_bits,
     parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord,
@@ -4526,10 +4527,14 @@ impl Probe for GpuProbe {
                 subsystem_vendor_id: gpu.subsystem_vendor_id,
                 subsystem_device_id: gpu.subsystem_device_id,
                 class: gpu.class_id,
-            })
-            .with_driver(DriverInfo {
-                name: gpu.kernel_driver,
-                version: None,
+            });
+            let driver_version = match gpu.kernel_driver.as_deref() {
+                Some(driver) => gpu_driver_version(ctx, driver).await,
+                None => None,
+            };
+            let device = device.with_driver(DriverInfo {
+                name: gpu.kernel_driver.clone(),
+                version: driver_version,
                 modules: gpu.kernel_modules,
                 provider: None,
                 status: DriverStatus::InUse,
@@ -4819,6 +4824,25 @@ fn apply_gpu_xrandr_enrichment(
         });
     }
     device
+}
+
+async fn gpu_driver_version(ctx: &ProbeContext<'_>, driver_name: &str) -> Option<String> {
+    let sysfs_path = Path::new("/sys/module").join(driver_name).join("version");
+    let sysfs_result = ctx.runner.read_file(&sysfs_path).await;
+    if sysfs_result.is_success() {
+        let value = sysfs_result.stdout.trim();
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    let modinfo_result = ctx
+        .runner
+        .run_command(&CommandSpec::new("modinfo", [driver_name]), ctx.timeout)
+        .await;
+    if modinfo_result.is_success() {
+        return parse_modinfo_version(&modinfo_result.stdout);
+    }
+    None
 }
 
 fn apply_gpu_kylin_gpuinfo_enrichment(
