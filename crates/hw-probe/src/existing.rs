@@ -5934,7 +5934,7 @@ impl Probe for MonitorProbe {
         let hwinfo = monitor_hwinfo_records(ctx).await;
 
         let mut warnings = Vec::new();
-        let mut edids: HashMap<String, Vec<(Vec<u8>, String)>> = HashMap::new();
+        let mut edids: HashMap<String, Vec<(Vec<u8>, String, String)>> = HashMap::new();
         let mut sysfs_paths: HashMap<String, Vec<_>> = HashMap::new();
         for path in ctx.runner.glob("/sys/class/drm/*/edid").await.paths {
             let Some(connector) = normalize_sysfs_connector(&path) else {
@@ -5946,10 +5946,11 @@ impl Probe for MonitorProbe {
             if paths.len() == 1 {
                 let bytes_result = ctx.runner.read_file_bytes(&paths[0]).await;
                 if bytes_result.is_success() {
+                    let hex = bytes_to_hex(&bytes_result.bytes);
                     edids
                         .entry(connector)
                         .or_default()
-                        .push((bytes_result.bytes, bytes_result.source));
+                        .push((bytes_result.bytes, bytes_result.source, hex));
                 } else {
                     warnings.push(source_bytes_failure(self.name(), &bytes_result));
                 }
@@ -5965,7 +5966,8 @@ impl Probe for MonitorProbe {
             }
             if readable.len() == 1 {
                 let (bytes, source, _) = readable.remove(0);
-                edids.entry(connector).or_default().push((bytes, source));
+                let hex = bytes_to_hex(&bytes);
+                edids.entry(connector).or_default().push((bytes, source, hex));
                 continue;
             }
 
@@ -5984,7 +5986,8 @@ impl Probe for MonitorProbe {
             }
             if connected.len() == 1 {
                 let (bytes, source, _) = readable.swap_remove(connected[0]);
-                edids.entry(connector).or_default().push((bytes, source));
+                let hex = bytes_to_hex(&bytes);
+                edids.entry(connector).or_default().push((bytes, source, hex));
                 continue;
             }
 
@@ -6004,22 +6007,24 @@ impl Probe for MonitorProbe {
             }
             if enabled.len() == 1 {
                 let (bytes, source, _) = readable.swap_remove(enabled[0]);
-                edids.entry(connector).or_default().push((bytes, source));
+                let hex = bytes_to_hex(&bytes);
+                edids.entry(connector).or_default().push((bytes, source, hex));
                 continue;
             }
 
             edids.entry(connector).or_default().extend(
-                readable
-                    .into_iter()
-                    .map(|(bytes, source, _)| (bytes, source)),
+                readable.into_iter().map(|(bytes, source, _)| {
+                    let hex = bytes_to_hex(&bytes);
+                    (bytes, source, hex)
+                }),
             );
         }
         if verbose_result.is_success() {
             for record in parse_xrandr_verbose(&verbose_result.stdout) {
-                edids
-                    .entry(record.connector)
-                    .or_default()
-                    .insert(0, (record.edid, verbose_result.source.clone()));
+                edids.entry(record.connector).or_default().insert(
+                    0,
+                    (record.edid, verbose_result.source.clone(), record.edid_hex),
+                );
             }
         }
 
@@ -6275,16 +6280,17 @@ fn is_ignored_network_interface(ifname: &str) -> bool {
 fn apply_first_edid(
     info: &mut MonitorInfo,
     id: &str,
-    candidates: &[(Vec<u8>, String)],
+    candidates: &[(Vec<u8>, String, String)],
     warnings: &mut Vec<ScanWarning>,
 ) -> Option<String> {
-    for (bytes, source) in candidates
+    for (bytes, source, hex) in candidates
         .iter()
-        .filter(|(_, source)| !is_sysfs_edid_source(source))
+        .filter(|(_, source, _)| !is_sysfs_edid_source(source))
     {
         match parse_edid(bytes) {
             Ok(edid) => {
                 apply_edid(info, edid);
+                info.edid_hex = Some(hex.clone());
                 return Some(source.clone());
             }
             Err(err) => warnings.push(
@@ -6300,19 +6306,20 @@ fn apply_first_edid(
 
     let sysfs_count = candidates
         .iter()
-        .filter(|(_, source)| is_sysfs_edid_source(source))
+        .filter(|(_, source, _)| is_sysfs_edid_source(source))
         .count();
     if sysfs_count > 1 {
         return apply_unique_resolution_matched_edid(info, id, candidates, warnings);
     }
 
-    for (bytes, source) in candidates
+    for (bytes, source, hex) in candidates
         .iter()
-        .filter(|(_, source)| is_sysfs_edid_source(source))
+        .filter(|(_, source, _)| is_sysfs_edid_source(source))
     {
         match parse_edid(bytes) {
             Ok(edid) => {
                 apply_edid(info, edid);
+                info.edid_hex = Some(hex.clone());
                 return Some(source.clone());
             }
             Err(err) => warnings.push(
@@ -6331,7 +6338,7 @@ fn apply_first_edid(
 fn apply_unique_resolution_matched_edid(
     info: &mut MonitorInfo,
     id: &str,
-    candidates: &[(Vec<u8>, String)],
+    candidates: &[(Vec<u8>, String, String)],
     warnings: &mut Vec<ScanWarning>,
 ) -> Option<String> {
     let (width, height) = info
@@ -6339,16 +6346,16 @@ fn apply_unique_resolution_matched_edid(
         .as_deref()
         .and_then(parse_monitor_resolution)?;
     let mut matched = None;
-    for (bytes, source) in candidates
+    for (bytes, source, hex) in candidates
         .iter()
-        .filter(|(_, source)| is_sysfs_edid_source(source))
+        .filter(|(_, source, _)| is_sysfs_edid_source(source))
     {
         match parse_edid(bytes) {
             Ok(edid) if edid_preferred_mode_matches(&edid, width, height) => {
                 if matched.is_some() {
                     return None;
                 }
-                matched = Some((edid, source.clone()));
+                matched = Some((edid, source.clone(), hex.clone()));
             }
             Ok(_) => {}
             Err(err) => warnings.push(
@@ -6361,8 +6368,9 @@ fn apply_unique_resolution_matched_edid(
             ),
         }
     }
-    let (edid, source) = matched?;
+    let (edid, source, hex) = matched?;
     apply_edid(info, edid);
+    info.edid_hex = Some(hex);
     Some(source)
 }
 
@@ -6373,6 +6381,15 @@ fn parse_monitor_resolution(value: &str) -> Option<(u16, u16)> {
 
 fn is_sysfs_edid_source(source: &str) -> bool {
     source.starts_with("/sys/")
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(out, "{:02x}", byte);
+    }
+    out
 }
 
 fn edid_preferred_mode_matches(edid: &hw_parser::EdidRecord, width: u16, height: u16) -> bool {

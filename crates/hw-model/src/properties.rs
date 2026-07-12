@@ -308,6 +308,8 @@ pub struct MonitorInfo {
     pub preferred_width: Option<u16>,
     pub preferred_height: Option<u16>,
     pub preferred_refresh_hz: Option<u16>,
+    #[serde(default)]
+    pub edid_hex: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

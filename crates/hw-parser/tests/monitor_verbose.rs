@@ -163,3 +163,14 @@ fn parse_hex_fixture(input: &str) -> Vec<u8> {
         })
         .collect()
 }
+
+#[test]
+fn xrandr_verbose_returns_lowercase_edid_hex() {
+    let input = hw_testdata::fixture("xrandr/verbose.txt");
+    let records = hw_parser::parse_xrandr_verbose(&input);
+    let record = records.first().expect("one record");
+    assert!(!record.edid_hex.is_empty());
+    assert!(record.edid_hex.chars().all(|c| c.is_ascii_hexdigit()));
+    assert!(record.edid_hex.chars().all(|c| !c.is_ascii_uppercase()));
+    assert_eq!(record.edid_hex.len(), record.edid.len() * 2);
+}

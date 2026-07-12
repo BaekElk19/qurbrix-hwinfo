@@ -16,6 +16,7 @@ pub struct XrandrMonitorRecord {
 pub struct XrandrVerboseMonitorRecord {
     pub connector: String,
     pub edid: Vec<u8>,
+    pub edid_hex: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -92,9 +93,18 @@ pub fn parse_xrandr_verbose(input: &str) -> Vec<XrandrVerboseMonitorRecord> {
 
         if matches!(state, Some("connected" | "disconnected")) {
             if let Some(connector) = connector.take() {
-                let edid = hex_to_bytes(&edid_hex);
-                if edid_valid && !edid.is_empty() {
-                    records.push(XrandrVerboseMonitorRecord { connector, edid });
+                let edid_bytes = hex_to_bytes(&edid_hex);
+                if edid_valid && !edid_bytes.is_empty() {
+                    let normalized_hex = edid_hex
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .flat_map(|c| c.to_lowercase())
+                        .collect::<String>();
+                    records.push(XrandrVerboseMonitorRecord {
+                        connector,
+                        edid: edid_bytes,
+                        edid_hex: normalized_hex,
+                    });
                 }
             }
 
@@ -132,9 +142,18 @@ pub fn parse_xrandr_verbose(input: &str) -> Vec<XrandrVerboseMonitorRecord> {
     }
 
     if let Some(connector) = connector {
-        let edid = hex_to_bytes(&edid_hex);
-        if edid_valid && !edid.is_empty() {
-            records.push(XrandrVerboseMonitorRecord { connector, edid });
+        let edid_bytes = hex_to_bytes(&edid_hex);
+        if edid_valid && !edid_bytes.is_empty() {
+            let normalized_hex = edid_hex
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .flat_map(|c| c.to_lowercase())
+                .collect::<String>();
+            records.push(XrandrVerboseMonitorRecord {
+                connector,
+                edid: edid_bytes,
+                edid_hex: normalized_hex,
+            });
         }
     }
 
