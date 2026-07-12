@@ -93,6 +93,8 @@ pub struct BiosInfo {
     pub language_description_format: Option<String>,
     pub installable_languages: Vec<String>,
     pub currently_installed_language: Option<String>,
+    #[serde(default)]
+    pub oem_strings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

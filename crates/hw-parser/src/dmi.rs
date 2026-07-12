@@ -817,3 +817,27 @@ fn lshw_clock_speed(value: &str) -> Option<String> {
         .collect();
     (!digits.is_empty()).then(|| format!("{digits} MT/s"))
 }
+
+pub fn parse_dmi_oem_strings(input: &str) -> Vec<String> {
+    let mut strings = Vec::new();
+    let mut in_section = false;
+    for line in input.lines() {
+        if line.starts_with("Handle ") {
+            in_section = line.contains("DMI type 11");
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("String ") {
+            if let Some((_, value)) = rest.split_once(':') {
+                let value = value.trim();
+                if !value.is_empty() && !value.eq_ignore_ascii_case("Not Specified") {
+                    strings.push(value.to_string());
+                }
+            }
+        }
+    }
+    strings
+}

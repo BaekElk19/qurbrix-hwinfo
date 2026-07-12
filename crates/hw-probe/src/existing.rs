@@ -19,7 +19,7 @@ use hw_parser::{
     parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
     parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k,
-    parse_modinfo_version, parse_nvidia_settings_memory_interface,
+    parse_dmi_oem_strings, parse_modinfo_version, parse_nvidia_settings_memory_interface,
     parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv, parse_phytium1500a_info,
     parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
@@ -3961,6 +3961,7 @@ impl Probe for BiosProbe {
                     None,
                     None,
                     None,
+                    Vec::new(),
                 );
             }
             return fallback;
@@ -3978,6 +3979,7 @@ impl Probe for BiosProbe {
                         None,
                         None,
                         None,
+                        Vec::new(),
                     ),
                     warnings: vec![ScanWarning::new(
                         "source_empty",
@@ -4000,6 +4002,7 @@ impl Probe for BiosProbe {
         let bios_language_source = enrich_dmi_bios_language(ctx, &mut dmi).await;
         let memory_array_source = enrich_dmi_memory_array(ctx, &mut dmi).await;
         let chipset_source = enrich_dmi_chipset_family(ctx, &mut dmi).await;
+        let oem_strings = read_dmi_oem_strings(ctx).await;
         let runtime = read_bios_runtime_info(ctx).await;
         ProbeResult::with_devices(bios_board_devices(
             dmi,
@@ -4009,6 +4012,7 @@ impl Probe for BiosProbe {
             bios_language_source,
             memory_array_source,
             chipset_source,
+            oem_strings,
         ))
     }
 }
@@ -4047,6 +4051,17 @@ async fn enrich_dmi_bios_language(
         status: SourceStatus::Success,
         summary: None,
     })
+}
+
+async fn read_dmi_oem_strings(ctx: &ProbeContext<'_>) -> Vec<String> {
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("dmidecode", ["-t", "11"]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return Vec::new();
+    }
+    parse_dmi_oem_strings(&result.stdout)
 }
 
 async fn enrich_dmi_memory_array(
@@ -4287,6 +4302,7 @@ fn bios_board_devices(
     bios_language_source: Option<SourceEvidence>,
     memory_array_source: Option<SourceEvidence>,
     chipset_source: Option<SourceEvidence>,
+    oem_strings: Vec<String>,
 ) -> Vec<Device> {
     let bios_vendor = normalize_board_vendor_option(dmi.bios_vendor);
     let board_manufacturer = normalize_board_vendor_option(dmi.board_manufacturer);
@@ -4313,6 +4329,7 @@ fn bios_board_devices(
             language_description_format: dmi.bios_language_description_format,
             installable_languages: dmi.bios_installable_languages,
             currently_installed_language: dmi.bios_currently_installed_language,
+            oem_strings,
         }),
     )
     .with_source(SourceEvidence {

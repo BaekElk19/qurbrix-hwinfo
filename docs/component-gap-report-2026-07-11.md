@@ -582,7 +582,7 @@ kylin：无结构化产物。
 | Q3 | 显示器 `edid_hex: Option<String>` 输出 | `crates/hw-model/src/properties.rs` | EDID 已抓取只需暴露 (fixed) |
 | Q4 | GPU `DriverInfo.version` 从 `/sys/module/<driver>/version` 或 `nvidia-smi --query-gpu=driver_version` 填充 | `crates/hw-probe/src/existing.rs:4530` | 消灭"始终为空"字段 (fixed) |
 | Q5 | 存储 `ufs_spec_version` 从 sysfs 或 hwinfo 回填 | `crates/hw-probe/src/existing.rs` | 消灭"始终为空"字段 |
-| Q6 | `dmidecode -t 11` OEM Strings 采集 | 主板/BIOS 探针 | OEM 机型识别 |
+| Q6 | `dmidecode -t 11` OEM Strings 采集 | 主板/BIOS 探针 | OEM 机型识别 (fixed) |
 | Q7 | 存储分区 & 挂载：`lsblk -O -J` 加 `MOUNTPOINT/FSTYPE/PARTUUID/LABEL` | `existing.rs:2872` | 主流工具基础特性 |
 
 ### 14.2 中期补齐（有独立特性，1-2 周）
