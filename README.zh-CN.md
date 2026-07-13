@@ -132,7 +132,7 @@ sudo qurbrix-hw scan --format json --pretty
       "id": "cpu:0",
       "kind": "cpu",
       "name": "AMD Ryzen 7 5800H with Radeon Graphics",
-      "properties": { "data": { "cores": 36, "threads": 6, ... } }
+      "properties": { "data": { "cores": 8, "threads": 16, ... } }
     }
   ]
 }
