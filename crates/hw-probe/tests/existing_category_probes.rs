@@ -2198,7 +2198,12 @@ async fn storage_probe_enriches_human_readable_lshw_fields() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
+            [
+                "-J",
+                "-b",
+                "-o",
+                "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+            ],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"tran":"sata"}]}"#,
         )
         .with_command(
@@ -2241,7 +2246,12 @@ async fn storage_probe_enriches_human_readable_hwinfo_fields() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
+            [
+                "-J",
+                "-b",
+                "-o",
+                "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+            ],
             r#"{"blockdevices":[{"name":"nvme0n1","type":"disk","size":1024,"tran":"nvme"}]}"#,
         )
         .with_command(
@@ -2294,7 +2304,12 @@ async fn storage_probe_enriches_hdparm_identity_fields() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
+            [
+                "-J",
+                "-b",
+                "-o",
+                "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+            ],
             r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"tran":"sata"}]}"#,
         )
         .with_command(
@@ -2487,7 +2502,12 @@ async fn storage_probe_uses_sysfs_when_lsblk_parses_no_disks() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
+            [
+                "-J",
+                "-b",
+                "-o",
+                "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+            ],
             r#"{"blockdevices":[]}"#,
         )
         .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/sda")])
@@ -2545,7 +2565,12 @@ async fn storage_probe_warns_when_json_output_is_malformed() {
     let runner = FakeSourceRunner::new()
         .with_command(
             "lsblk",
-            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
+            [
+                "-J",
+                "-b",
+                "-o",
+                "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+            ],
             "not json",
         )
         .with_glob("/sys/block/*", vec![PathBuf::from("/sys/block/sda")])

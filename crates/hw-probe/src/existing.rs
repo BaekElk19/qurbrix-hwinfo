@@ -12,16 +12,15 @@ use hw_model::{
 use hw_parser::{
     cpu_extensions_from_flags, infer_cpu_vendor_from_name, lookup_pnp_manufacturer,
     merge_cpu_records, normalize_arch, normalize_board_vendor, normalize_cpu_vendor_id,
-    normalize_gpu_vendor, normalize_gpu_vendor_id, parse_dmesg_gpu_vram,
+    normalize_gpu_vendor, normalize_gpu_vendor_id, parse_dmesg_gpu_vram, parse_dmi_oem_strings,
     parse_dmidecode_bios_board, parse_dmidecode_memory, parse_dmidecode_processor,
     parse_dmidecode_system, parse_edid, parse_glxinfo_basic, parse_gpu_lspci,
     parse_hdparm_identify, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
     parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
-    parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k,
-    parse_dmi_oem_strings, parse_modinfo_version, parse_nvidia_settings_memory_interface,
-    parse_nvidia_settings_videoram, parse_nvidia_smi_memory_csv, parse_phytium1500a_info,
-    parse_proc_cpuinfo, parse_proc_hardware,
+    parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k, parse_modinfo_version,
+    parse_nvidia_settings_memory_interface, parse_nvidia_settings_videoram,
+    parse_nvidia_smi_memory_csv, parse_phytium1500a_info, parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
     parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_voltage_v, parse_width_bits,
     parse_xrandr_query, parse_xrandr_verbose, DmesgGpuVramRecord, DmiBiosBoardRecord,
@@ -4556,19 +4555,20 @@ impl Probe for GpuProbe {
                 Some(driver) => gpu_driver_version(ctx, driver).await,
                 None => None,
             };
-            let device = device.with_driver(DriverInfo {
-                name: gpu.kernel_driver.clone(),
-                version: driver_version,
-                modules: gpu.kernel_modules,
-                provider: None,
-                status: DriverStatus::InUse,
-            })
-            .with_source(SourceEvidence {
-                source: result.source.clone(),
-                kind: SourceKind::Command,
-                status: SourceStatus::Success,
-                summary: None,
-            });
+            let device = device
+                .with_driver(DriverInfo {
+                    name: gpu.kernel_driver.clone(),
+                    version: driver_version,
+                    modules: gpu.kernel_modules,
+                    provider: None,
+                    status: DriverStatus::InUse,
+                })
+                .with_source(SourceEvidence {
+                    source: result.source.clone(),
+                    kind: SourceKind::Command,
+                    status: SourceStatus::Success,
+                    summary: None,
+                });
             probe_result.devices.push(apply_gpu_xrandr_enrichment(
                 apply_gpu_kylin_gpuinfo_enrichment(
                     apply_gpu_pci_detail_enrichment(
@@ -5995,10 +5995,11 @@ impl Probe for MonitorProbe {
                 let bytes_result = ctx.runner.read_file_bytes(&paths[0]).await;
                 if bytes_result.is_success() {
                     let hex = bytes_to_hex(&bytes_result.bytes);
-                    edids
-                        .entry(connector)
-                        .or_default()
-                        .push((bytes_result.bytes, bytes_result.source, hex));
+                    edids.entry(connector).or_default().push((
+                        bytes_result.bytes,
+                        bytes_result.source,
+                        hex,
+                    ));
                 } else {
                     warnings.push(source_bytes_failure(self.name(), &bytes_result));
                 }
@@ -6015,7 +6016,10 @@ impl Probe for MonitorProbe {
             if readable.len() == 1 {
                 let (bytes, source, _) = readable.remove(0);
                 let hex = bytes_to_hex(&bytes);
-                edids.entry(connector).or_default().push((bytes, source, hex));
+                edids
+                    .entry(connector)
+                    .or_default()
+                    .push((bytes, source, hex));
                 continue;
             }
 
@@ -6035,7 +6039,10 @@ impl Probe for MonitorProbe {
             if connected.len() == 1 {
                 let (bytes, source, _) = readable.swap_remove(connected[0]);
                 let hex = bytes_to_hex(&bytes);
-                edids.entry(connector).or_default().push((bytes, source, hex));
+                edids
+                    .entry(connector)
+                    .or_default()
+                    .push((bytes, source, hex));
                 continue;
             }
 
@@ -6056,16 +6063,20 @@ impl Probe for MonitorProbe {
             if enabled.len() == 1 {
                 let (bytes, source, _) = readable.swap_remove(enabled[0]);
                 let hex = bytes_to_hex(&bytes);
-                edids.entry(connector).or_default().push((bytes, source, hex));
+                edids
+                    .entry(connector)
+                    .or_default()
+                    .push((bytes, source, hex));
                 continue;
             }
 
-            edids.entry(connector).or_default().extend(
-                readable.into_iter().map(|(bytes, source, _)| {
+            edids
+                .entry(connector)
+                .or_default()
+                .extend(readable.into_iter().map(|(bytes, source, _)| {
                     let hex = bytes_to_hex(&bytes);
                     (bytes, source, hex)
-                }),
-            );
+                }));
         }
         if verbose_result.is_success() {
             for record in parse_xrandr_verbose(&verbose_result.stdout) {

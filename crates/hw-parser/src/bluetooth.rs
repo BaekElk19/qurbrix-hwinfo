@@ -58,10 +58,7 @@ pub fn parse_hciconfig(input: &str) -> Vec<BluetoothControllerRecord> {
             } else if let Some(rest) = line.trim_start().strip_prefix("Class:") {
                 record.device_class = Some(rest.trim().to_string());
             } else if let Some(rest) = line.trim_start().strip_prefix("Features:") {
-                record.features = rest
-                    .split_whitespace()
-                    .map(ToOwned::to_owned)
-                    .collect();
+                record.features = rest.split_whitespace().map(ToOwned::to_owned).collect();
             } else if record.flags.is_empty() {
                 let flags: Vec<String> = line
                     .split_whitespace()

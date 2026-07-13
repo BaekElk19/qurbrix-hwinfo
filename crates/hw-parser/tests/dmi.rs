@@ -18,8 +18,7 @@ fn dmi_oem_strings_are_parsed_and_filtered() {
 
 #[test]
 fn dmi_oem_strings_returns_empty_when_section_missing() {
-    assert!(parse_dmi_oem_strings(
-        "Handle 0x0001, DMI type 0, 20 bytes\nBIOS Information"
-    )
-    .is_empty());
+    assert!(
+        parse_dmi_oem_strings("Handle 0x0001, DMI type 0, 20 bytes\nBIOS Information").is_empty()
+    );
 }
