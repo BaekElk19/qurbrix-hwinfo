@@ -1,7 +1,7 @@
 # Qurbrix HW Info
 
-[![CI](https://github.com/BaekRui/qurbrix-hwinfo/actions/workflows/ci.yml/badge.svg)](https://github.com/BaekRui/qurbrix-hwinfo/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/BaekRui/qurbrix-hwinfo)](https://github.com/BaekRui/qurbrix-hwinfo/releases)
+[![CI](https://github.com/BaekElk19/qurbrix-hwinfo/actions/workflows/ci.yml/badge.svg)](https://github.com/BaekElk19/qurbrix-hwinfo/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/BaekElk19/qurbrix-hwinfo)](https://github.com/BaekElk19/qurbrix-hwinfo/releases)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
 Qurbrix HW Info is a set of Rust crates for collecting, parsing, normalizing, and reporting Linux hardware information. It turns command output, `/proc`, `/sys`, PCI, USB, DMI, display, power, and peripheral data into a typed `ScanReport` plus flat JSON, JSONL, summary, and table views.
@@ -57,7 +57,7 @@ possible. Returned fields may be less complete.
 ### Prebuilt binaries
 
 Download the latest release from
-[GitHub Releases](https://github.com/BaekRui/qurbrix-hwinfo/releases). Pick
+[GitHub Releases](https://github.com/BaekElk19/qurbrix-hwinfo/releases). Pick
 the archive matching your machine:
 
 | Archive | Architecture |
@@ -288,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
 Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for local
 setup, test commands, and commit conventions. Bug reports and feature
 requests go to
-[GitHub Issues](https://github.com/BaekRui/qurbrix-hwinfo/issues); code
+[GitHub Issues](https://github.com/BaekElk19/qurbrix-hwinfo/issues); code
 changes come through pull requests.
 
 ## License

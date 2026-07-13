@@ -1,7 +1,7 @@
 # Qurbrix HW Info
 
-[![CI](https://github.com/BaekRui/qurbrix-hwinfo/actions/workflows/ci.yml/badge.svg)](https://github.com/BaekRui/qurbrix-hwinfo/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/BaekRui/qurbrix-hwinfo)](https://github.com/BaekRui/qurbrix-hwinfo/releases)
+[![CI](https://github.com/BaekElk19/qurbrix-hwinfo/actions/workflows/ci.yml/badge.svg)](https://github.com/BaekElk19/qurbrix-hwinfo/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/BaekElk19/qurbrix-hwinfo)](https://github.com/BaekElk19/qurbrix-hwinfo/releases)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#许可证)
 
 Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和输出的 Rust crate。项目把命令输出、`/proc`、`/sys`、PCI、USB、DMI、显示、电源和外设信息整理为 typed `ScanReport`，并提供 flat JSON、JSONL、summary 和 table 输出。
@@ -51,7 +51,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 
 ### 下载预编译二进制
 
-去 [GitHub Releases](https://github.com/BaekRui/qurbrix-hwinfo/releases) 下载最新版本，
+去 [GitHub Releases](https://github.com/BaekElk19/qurbrix-hwinfo/releases) 下载最新版本，
 根据机器架构选择对应压缩包：
 
 | 压缩包 | 适用架构 |
@@ -298,7 +298,7 @@ async fn main() -> anyhow::Result<()> {
 
 欢迎贡献代码。本地开发环境、测试命令与提交约定见
 [`CONTRIBUTING.md`](CONTRIBUTING.md)（英文）。缺陷和需求走
-[GitHub Issues](https://github.com/BaekRui/qurbrix-hwinfo/issues)，
+[GitHub Issues](https://github.com/BaekElk19/qurbrix-hwinfo/issues)，
 代码变更通过 pull request 提交。
 
 ## 许可证

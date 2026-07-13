@@ -41,7 +41,7 @@ keeps release notes readable.
 ## Issues
 
 Bug reports and feature requests go to
-<https://github.com/BaekRui/qurbrix-hwinfo/issues>. Include:
+<https://github.com/BaekElk19/qurbrix-hwinfo/issues>. Include:
 
 - What you ran (command line, environment).
 - What you expected.
