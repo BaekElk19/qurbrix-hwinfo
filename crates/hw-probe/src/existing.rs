@@ -1120,11 +1120,11 @@ fn format_cache_bytes(bytes: u64) -> Option<String> {
     const KIB: u64 = 1024;
     const MIB: u64 = KIB * 1024;
     const GIB: u64 = MIB * 1024;
-    if bytes >= GIB && bytes % GIB == 0 {
+    if bytes >= GIB && bytes.is_multiple_of(GIB) {
         Some(format!("{} GiB", bytes / GIB))
-    } else if bytes >= MIB && bytes % MIB == 0 {
+    } else if bytes >= MIB && bytes.is_multiple_of(MIB) {
         Some(format!("{} MiB", bytes / MIB))
-    } else if bytes >= KIB && bytes % KIB == 0 {
+    } else if bytes >= KIB && bytes.is_multiple_of(KIB) {
         Some(format!("{} KiB", bytes / KIB))
     } else if bytes > 0 {
         Some(format!("{bytes} B"))
@@ -3299,7 +3299,7 @@ fn parse_device_tree_memory_reg_size(
 ) -> Option<u64> {
     let tuple_cells = address_cells.checked_add(size_cells)?;
     let tuple_bytes = tuple_cells.checked_mul(4)?;
-    if tuple_bytes == 0 || bytes.len() % tuple_bytes != 0 {
+    if tuple_bytes == 0 || !bytes.len().is_multiple_of(tuple_bytes) {
         return None;
     }
 
