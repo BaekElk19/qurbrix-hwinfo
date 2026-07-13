@@ -1363,6 +1363,7 @@ impl Probe for NetworkProbe {
                     duplex: enrichment.duplex.clone(),
                     ipv4: address_info.ipv4,
                     ipv6: address_info.ipv6,
+                    mtu: net.mtu,
                     ..Default::default()
                 }),
             )

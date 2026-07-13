@@ -326,6 +326,8 @@ pub struct NetworkInfo {
     pub firmware: Option<String>,
     pub ipv4: Vec<String>,
     pub ipv6: Vec<String>,
+    #[serde(default)]
+    pub mtu: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

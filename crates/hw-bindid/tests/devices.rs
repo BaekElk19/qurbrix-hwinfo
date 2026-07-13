@@ -102,6 +102,7 @@ fn network_keys_use_only_mac_and_normalize_to_lowercase() {
             firmware: Some("1.0.0".to_string()),
             ipv4: vec!["192.168.1.10".to_string()],
             ipv6: vec!["fe80::1".to_string()],
+            mtu: Some(1500),
         }),
     );
 
