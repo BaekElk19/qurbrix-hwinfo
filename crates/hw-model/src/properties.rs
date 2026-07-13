@@ -245,6 +245,8 @@ pub struct StorageInfo {
     pub data_units_written: Option<u64>,
     pub media_errors: Option<u64>,
     pub error_log_entries: Option<u64>,
+    #[serde(default)]
+    pub temperature_sensors_celsius: Vec<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

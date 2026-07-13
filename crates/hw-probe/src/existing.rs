@@ -2704,6 +2704,7 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
         }
         storage.smart_status = storage.smart_status.take().or(smart.smart_status);
         storage.temperature_celsius = storage.temperature_celsius.or(smart.temperature_celsius);
+        storage.temperature_sensors_celsius = smart.temperature_sensors_celsius;
         storage.power_on_hours = storage.power_on_hours.or(smart.power_on_hours);
         storage.power_cycle_count = storage.power_cycle_count.or(smart.power_cycle_count);
         storage.available_spare_percent = storage

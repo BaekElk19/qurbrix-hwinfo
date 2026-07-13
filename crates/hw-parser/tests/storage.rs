@@ -59,3 +59,33 @@ fn lsblk_parses_mountpoint_fstype_partuuid_label() {
     );
     assert_eq!(root_partition.label.as_deref(), Some("root"));
 }
+
+#[test]
+fn smartctl_json_maps_temperature_sensors_from_kelvin() {
+    let info = parse_smartctl_json(&hw_testdata::fixture(
+        "storage/smartctl-nvme-multi-sensor.json",
+    ))
+    .expect("fixture parses");
+    assert_eq!(info.temperature_sensors_celsius, vec![39, 32]);
+}
+
+#[test]
+fn smartctl_json_maps_temperature_sensors_from_kelvin_x10() {
+    // Inline JSON — no separate fixture needed, single-purpose test.
+    let raw = r#"{
+        "nvme_smart_health_information_log": {
+            "temperature_sensors": [3120, 3050]
+        }
+    }"#;
+    let info = parse_smartctl_json(raw).expect("valid smartctl json");
+    assert_eq!(info.temperature_sensors_celsius, vec![39, 32]);
+}
+
+#[test]
+fn smartctl_json_without_temperature_sensors_yields_empty_vec() {
+    let raw = r#"{
+        "nvme_smart_health_information_log": {}
+    }"#;
+    let info = parse_smartctl_json(raw).expect("valid smartctl json");
+    assert!(info.temperature_sensors_celsius.is_empty());
+}
