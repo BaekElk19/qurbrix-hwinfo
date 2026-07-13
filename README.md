@@ -35,15 +35,22 @@ Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 
 ## Runtime Requirements
 
-The target platform is Linux. Collection quality depends on available commands and permissions:
+The target platform is Linux.
+
+**Root is required for `scan`, `summary`, `table`, and `bindid`** — they refuse to run
+otherwise with `root access is required for this command; rerun with sudo`. Use `sudo`
+or run as root. The `list-kinds`, `schema`, and `sources` commands do not need root.
+
+Collection quality depends on available commands and permissions:
 
 - Basic system data: `lscpu`, `/proc/bus/input/devices`, `/proc/asound/cards`
-- BIOS, baseboard, memory slots: `dmidecode`, usually requiring root
+- BIOS, baseboard, memory slots: `dmidecode` (requires root)
 - Storage: `lsblk`
 - Monitor/GPU: `xrandr`, `lspci`, `/sys/class/drm`
 - Network: `ip`
 
-When some commands are unavailable, the collector tries to fall back to other sources where possible. Returned fields may be less complete.
+When some commands are unavailable, the collector falls back to other sources where
+possible. Returned fields may be less complete.
 
 ## Installation
 
@@ -84,31 +91,151 @@ cargo check --workspace
 cargo test --workspace
 ```
 
-## Basic Usage
+## Commands
 
-Run a machine-readable scan:
+At a glance:
+
+| Command      | Root? | What it does                                    | Output              |
+|--------------|-------|-------------------------------------------------|---------------------|
+| `scan`       | yes   | Collect all hardware and emit structured data   | JSON / JSONL / typed-JSON / summary-JSON |
+| `summary`    | yes   | Human-readable device count per kind            | Plain text          |
+| `table`      | yes   | Two-column table of devices (optionally by kind)| Plain text          |
+| `bindid`     | yes   | Stable machine binding ID derived from hardware | JSON                |
+| `list-kinds` | no    | List every device kind the scanner knows        | Text or JSON        |
+| `schema`     | no    | Print scan output schema version                | Text                |
+| `sources`    | no    | List raw sources used during collection         | JSON                |
+
+Global: `qurbrix-hw --help`, `qurbrix-hw <command> --help`, `qurbrix-hw --version`.
+
+### `scan` — structured hardware report
 
 ```bash
-qurbrix-hw scan --format json --pretty
+sudo qurbrix-hw scan --format json --pretty
 ```
 
-Stream one JSON object per device:
+Flags:
 
-```bash
-qurbrix-hw scan --format jsonl
+- `--format json|jsonl|typed-json|summary-json` (default `json`)
+  - `json` — flat schema, best for other tools
+  - `jsonl` — one device per line, best for streaming
+  - `typed-json` — internal Rust model shape (may change; not the stable contract)
+  - `summary-json` — same counts as `summary` command in JSON
+- `--pretty` — pretty-print JSON
+- `--kind <k>` / `--exclude-kind <k>` — repeatable; e.g. `--kind cpu --kind memory`
+- `--timeout 30s` — per-source timeout
+- `--no-optional-sources` — skip optional/slow probes
+- `--no-sources` — omit the raw `sources` block from the report
+- `--no-warnings` — suppress non-fatal warnings
+
+Example (truncated):
+
+```json
+{
+  "schema_version": "qurbrix.hw.scan.v1",
+  "status": "complete",
+  "summary": { "device_count": 1, "counts_by_kind": {"cpu": 1}, "warning_count": 0 },
+  "devices": [
+    {
+      "id": "cpu:0",
+      "kind": "cpu",
+      "name": "AMD Ryzen 7 5800H with Radeon Graphics",
+      "properties": { "data": { "cores": 36, "threads": 6, ... } }
+    }
+  ]
+}
 ```
 
-Show a human summary:
+### `summary` — quick device counts
 
 ```bash
-qurbrix-hw summary
-qurbrix-hw table --kind storage
+sudo qurbrix-hw summary
 ```
 
-List supported device kinds:
+```text
+Status: Partial
+Devices: 65
+Warnings: 5
+audio: 1
+battery: 1
+bios: 1
+cpu: 1
+gpu: 1
+memory: 2
+storage: 1
+...
+```
+
+### `table` — devices as a table
 
 ```bash
-qurbrix-hw list-kinds
+sudo qurbrix-hw table                # all devices
+sudo qurbrix-hw table --kind storage # one kind only
+```
+
+```text
+KIND       ID                           NAME
+storage    storage:dev:/dev/sda         VMware, VMware Virtual S
+```
+
+### `bindid` — stable machine ID
+
+Derives a stable ID from motherboard/memory/storage/network identifiers. Useful for
+license binding, telemetry deduplication, or fleet inventory. Missing components are
+reported so callers can decide whether the ID is trustworthy for their use case.
+
+```bash
+sudo qurbrix-hw bindid --pretty
+```
+
+```json
+{
+  "schema_version": "qurbrix.hw.bindid.v1",
+  "algorithm": "qurbrix-hw-bindid-sha1-hex16-v1",
+  "status": "complete",
+  "value": "a05173f4b72b4597",
+  "required_kinds": ["system","motherboard","memory","storage","network"],
+  "optional_kinds": ["gpu"],
+  "covered_kinds": ["gpu","memory","motherboard","network","storage","system"],
+  "missing_required_kinds": [],
+  "missing_optional_kinds": []
+}
+```
+
+### `list-kinds` — supported device kinds
+
+```bash
+qurbrix-hw list-kinds                # text, one per line
+qurbrix-hw list-kinds --format json  # JSON array
+```
+
+```text
+system
+motherboard
+bios
+cpu
+memory
+storage
+gpu
+monitor
+network
+audio
+bluetooth
+input
+camera
+battery
+printer
+cdrom
+usb
+pci
+other-pci
+other-device
+```
+
+### `schema` / `sources`
+
+```bash
+qurbrix-hw schema             # -> qurbrix.hw.scan.v1
+qurbrix-hw sources            # -> {"sources":[]}
 ```
 
 ## Integration Contract

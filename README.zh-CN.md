@@ -84,18 +84,58 @@ cargo check --workspace
 cargo test --workspace
 ```
 
-## 命令行用法
+## 命令总览
 
-默认输出面向脚本和 agent，结构化结果写入 stdout，日志写入 stderr：
+| 命令         | 需要 root | 用途                                        | 输出                                  |
+|--------------|-----------|---------------------------------------------|---------------------------------------|
+| `scan`       | 是        | 采集全部硬件并输出结构化报告                | JSON / JSONL / typed-JSON / summary-JSON |
+| `summary`    | 是        | 按类别打印设备数量，便于人读                | 纯文本                                |
+| `table`      | 是        | 以两列表格列出设备（可按类别过滤）          | 纯文本                                |
+| `bindid`     | 是        | 从硬件生成轻量业务绑定 ID                   | JSON                                  |
+| `list-kinds` | 否        | 列出扫描器支持的所有设备类别                | 文本或 JSON                           |
+| `schema`     | 否        | 打印扫描输出的 schema 版本                  | 文本                                  |
+| `sources`    | 否        | 列出采集过程用到的原始 source               | JSON                                  |
+
+通用参数：`qurbrix-hw --help`、`qurbrix-hw <command> --help`、`qurbrix-hw --version`。
+
+结构化结果写入 stdout，日志写入 stderr，方便脚本消费。
+
+### `scan` — 结构化硬件报告
 
 ```bash
 sudo qurbrix-hw scan --format json --pretty
-sudo qurbrix-hw scan --format jsonl
-sudo qurbrix-hw summary
-sudo qurbrix-hw table --kind storage
-qurbrix-hw list-kinds
-sudo qurbrix-hw bindid --pretty
-sudo qurbrix-hw bindid --timeout 30s
+```
+
+参数：
+
+- `--format json|jsonl|typed-json|summary-json`（默认 `json`）
+  - `json`：flat schema，推荐外部程序消费
+  - `jsonl`：一行一个设备，便于流式处理
+  - `typed-json`：Rust 内部模型形状（可能变更，非稳定合约）
+  - `summary-json`：`summary` 命令的 JSON 版
+- `--pretty`：格式化 JSON
+- `--kind <k>` / `--exclude-kind <k>`：可重复，如 `--kind cpu --kind memory`
+- `--timeout 30s`：单个 source 的超时
+- `--no-optional-sources`：跳过可选/较慢的 probe
+- `--no-sources`：不在报告中输出原始 `sources` 段
+- `--no-warnings`：抑制非致命 warning
+
+示例（截断）：
+
+```json
+{
+  "schema_version": "qurbrix.hw.scan.v1",
+  "status": "complete",
+  "summary": { "device_count": 1, "counts_by_kind": {"cpu": 1}, "warning_count": 0 },
+  "devices": [
+    {
+      "id": "cpu:0",
+      "kind": "cpu",
+      "name": "AMD Ryzen 7 5800H with Radeon Graphics",
+      "properties": { "data": { "cores": 36, "threads": 6, ... } }
+    }
+  ]
+}
 ```
 
 扫描状态：
@@ -106,13 +146,105 @@ sudo qurbrix-hw bindid --timeout 30s
 
 `partial` 仍返回退出码 `0`，方便脚本继续消费已有结果。
 
-`bindid` 输出 `schema_version: qurbrix.hw.bindid.v1`，生成 16 位小写 SHA1
-十六进制前缀作为轻量业务绑定 ID，用于常规读取和低频硬件绑定检查。
-它不是 `fingerprint`，也不是完整机器指纹。它只覆盖窄组件集：
-必需 `system`、`motherboard`、`memory`、`storage`、`network`，可选 `gpu`。
-CPU 和显示器/显示设备不参与；网络只使用 MAC，不使用网络类型、接口、IP、速率或链路状态。
-缺少必需组件时 `status` 为 `failed`、`value` 为 `null`，仍会输出 JSON 并返回退出码 `2`。
-权限失败会在探测前返回退出码 `4`，stdout 为空。
+### `summary` — 设备数量速览
+
+```bash
+sudo qurbrix-hw summary
+```
+
+```text
+Status: Partial
+Devices: 65
+Warnings: 5
+audio: 1
+battery: 1
+bios: 1
+cpu: 1
+gpu: 1
+memory: 2
+storage: 1
+...
+```
+
+### `table` — 表格视图
+
+```bash
+sudo qurbrix-hw table                # 全部设备
+sudo qurbrix-hw table --kind storage # 指定类别
+```
+
+```text
+KIND       ID                           NAME
+storage    storage:dev:/dev/sda         VMware, VMware Virtual S
+```
+
+### `bindid` — 硬件绑定 ID
+
+从主板/内存/存储/网络等信息生成稳定 ID，可用于授权绑定、遥测去重、机器盘点。
+缺失的组件会显式列出，调用方可自行决定该 ID 是否满足业务需求。
+
+```bash
+sudo qurbrix-hw bindid --pretty
+```
+
+```json
+{
+  "schema_version": "qurbrix.hw.bindid.v1",
+  "algorithm": "qurbrix-hw-bindid-sha1-hex16-v1",
+  "status": "complete",
+  "value": "a05173f4b72b4597",
+  "required_kinds": ["system","motherboard","memory","storage","network"],
+  "optional_kinds": ["gpu"],
+  "covered_kinds": ["gpu","memory","motherboard","network","storage","system"],
+  "missing_required_kinds": [],
+  "missing_optional_kinds": []
+}
+```
+
+`bindid` 输出 16 位小写 SHA1 十六进制前缀，用作轻量业务绑定 ID，
+用于常规读取和低频硬件绑定检查。它不是 `fingerprint`，也不是完整机器指纹。
+它只覆盖窄组件集：必需 `system`、`motherboard`、`memory`、`storage`、`network`，
+可选 `gpu`。CPU 和显示器/显示设备不参与；网络只使用 MAC，
+不使用网络类型、接口、IP、速率或链路状态。缺少必需组件时 `status` 为 `failed`、
+`value` 为 `null`，仍会输出 JSON 并返回退出码 `2`。权限失败会在探测前返回
+退出码 `4`，stdout 为空。
+
+### `list-kinds` — 支持的设备类别
+
+```bash
+qurbrix-hw list-kinds                # 文本，每行一个
+qurbrix-hw list-kinds --format json  # JSON 数组
+```
+
+```text
+system
+motherboard
+bios
+cpu
+memory
+storage
+gpu
+monitor
+network
+audio
+bluetooth
+input
+camera
+battery
+printer
+cdrom
+usb
+pci
+other-pci
+other-device
+```
+
+### `schema` / `sources`
+
+```bash
+qurbrix-hw schema             # -> qurbrix.hw.scan.v1
+qurbrix-hw sources            # -> {"sources":[]}
+```
 
 ## 集成合约
 
