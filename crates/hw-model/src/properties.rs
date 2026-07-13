@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "kebab-case")]
+#[allow(clippy::large_enum_variant)]
 pub enum DeviceProperties {
     System(SystemDeviceInfo),
     Motherboard(Box<MotherboardInfo>),

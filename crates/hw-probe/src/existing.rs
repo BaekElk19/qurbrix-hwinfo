@@ -4299,6 +4299,7 @@ fn normalize_board_vendor_option(vendor: Option<String>) -> Option<String> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bios_board_devices(
     dmi: DmiBiosBoardRecord,
     source: &str,
