@@ -130,10 +130,8 @@ fn parse_hwinfo_input_section(lines: &[&str]) -> Option<HwinfoInputRecord> {
             "Device" => record.device = clean_hwinfo_input_value(value),
             "Driver" => record.driver = clean_hwinfo_input_value(value),
             "Driver Modules" => record.driver_modules = clean_hwinfo_input_modules(value),
-            "Device File" | "Device Files" => {
-                if record.event_node.is_none() {
-                    record.event_node = hwinfo_input_event_node(value);
-                }
+            "Device File" | "Device Files" if record.event_node.is_none() => {
+                record.event_node = hwinfo_input_event_node(value);
             }
             _ => {}
         }
