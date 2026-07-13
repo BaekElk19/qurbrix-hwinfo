@@ -578,7 +578,7 @@ kylin：无结构化产物。
 | 编号 | 差距 | 涉及模块 | 收益 |
 |---|---|---|---|
 | Q1 | 蓝牙 parser 恢复 HCI/LMP Version、Manufacturer、Class、Features 字段 | `crates/hw-parser/src/bluetooth.rs` | 蓝牙完成度 50%→85% (fixed in 92cd9f4) |
-| Q2 | 网络 MTU 落库（`IpLinkRecord.mtu` → `NetworkInfo.mtu`） | `crates/hw-probe/src/existing.rs:1352-1366` | 一行改动 |
+| Q2 | 网络 MTU 落库（`IpLinkRecord.mtu` → `NetworkInfo.mtu`） | `crates/hw-probe/src/existing.rs:1352-1366` | 一行改动 (fixed in fda5398) |
 | Q3 | 显示器 `edid_hex: Option<String>` 输出 | `crates/hw-model/src/properties.rs` | EDID 已抓取只需暴露 (fixed in baf03c2) |
 | Q4 | GPU `DriverInfo.version` 从 `/sys/module/<driver>/version` 或 `nvidia-smi --query-gpu=driver_version` 填充 | `crates/hw-probe/src/existing.rs:4530` | 消灭"始终为空"字段 (fixed in cb627a4) |
 | Q5 | 存储 `ufs_spec_version` 从 sysfs 或 hwinfo 回填 | `crates/hw-probe/src/existing.rs` | 消灭"始终为空"字段 |
