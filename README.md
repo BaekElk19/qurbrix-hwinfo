@@ -1,5 +1,9 @@
 # Qurbrix HW Info
 
+[![CI](https://github.com/BaekRui/qurbrix-hwinfo/actions/workflows/ci.yml/badge.svg)](https://github.com/BaekRui/qurbrix-hwinfo/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/BaekRui/qurbrix-hwinfo)](https://github.com/BaekRui/qurbrix-hwinfo/releases)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+
 Qurbrix HW Info is a set of Rust crates for collecting, parsing, normalizing, and reporting Linux hardware information. It turns command output, `/proc`, `/sys`, PCI, USB, DMI, display, power, and peripheral data into a typed `ScanReport` plus flat JSON, JSONL, summary, and table views.
 
 Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
@@ -40,6 +44,38 @@ The target platform is Linux. Collection quality depends on available commands a
 - Network: `ip`
 
 When some commands are unavailable, the collector tries to fall back to other sources where possible. Returned fields may be less complete.
+
+## Installation
+
+### Prebuilt binaries
+
+Download the latest release from
+[GitHub Releases](https://github.com/BaekRui/qurbrix-hwinfo/releases). Pick
+the archive matching your machine:
+
+| Archive | Architecture |
+|---|---|
+| `qurbrix-hw-<version>-x86_64-unknown-linux-gnu.tar.gz` | 64-bit Intel/AMD |
+| `qurbrix-hw-<version>-aarch64-unknown-linux-gnu.tar.gz` | 64-bit ARM |
+| `qurbrix-hw-<version>-loongarch64-unknown-linux-gnu.tar.gz` | LoongArch64 |
+
+Verify and install:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf qurbrix-hw-<version>-<target>.tar.gz
+sudo install -m 0755 qurbrix-hw-<version>-<target>/qurbrix-hw /usr/local/bin/
+```
+
+Prebuilt binaries are glibc dynamically-linked. They target the glibc shipped
+by GitHub `ubuntu-latest` runners (currently 2.35+); older distros may need
+to build from source.
+
+### From source
+
+```bash
+cargo install --path .
+```
 
 ## Build
 
@@ -119,3 +155,29 @@ async fn main() -> anyhow::Result<()> {
 - Monitor collection uses EDID and optional `xrandr`; without a graphical session it still attempts sysfs reads.
 - `partial` reports are still intended to be machine-consumable.
 - Logs and diagnostics should go to stderr; structured command output goes to stdout.
+
+## Contributing
+
+Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for local
+setup, test commands, and commit conventions. Bug reports and feature
+requests go to
+[GitHub Issues](https://github.com/BaekRui/qurbrix-hwinfo/issues); code
+changes come through pull requests.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or
+  <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+license, shall be dual licensed as above, without any additional terms or
+conditions.

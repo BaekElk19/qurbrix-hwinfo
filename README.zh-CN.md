@@ -1,5 +1,9 @@
 # Qurbrix HW Info
 
+[![CI](https://github.com/BaekRui/qurbrix-hwinfo/actions/workflows/ci.yml/badge.svg)](https://github.com/BaekRui/qurbrix-hwinfo/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/BaekRui/qurbrix-hwinfo)](https://github.com/BaekRui/qurbrix-hwinfo/releases)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#许可证)
+
 Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和输出的 Rust crate。项目把命令输出、`/proc`、`/sys`、PCI、USB、DMI、显示、电源和外设信息整理为 typed `ScanReport`，并提供 flat JSON、JSONL、summary 和 table 输出。
 
 ## 能力范围
@@ -42,6 +46,36 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 缺少部分命令时，采集器会尽量回退到可用的数据源，返回的字段可能减少。
 `scan`、`summary`、`table` 和 `bindid` 这类硬件访问命令需要 root 权限；
 `schema`、`list-kinds` 和 `sources` 这类元数据命令不需要 root。
+
+## 安装
+
+### 下载预编译二进制
+
+去 [GitHub Releases](https://github.com/BaekRui/qurbrix-hwinfo/releases) 下载最新版本，
+根据机器架构选择对应压缩包：
+
+| 压缩包 | 适用架构 |
+|---|---|
+| `qurbrix-hw-<version>-x86_64-unknown-linux-gnu.tar.gz` | 64 位 Intel/AMD |
+| `qurbrix-hw-<version>-aarch64-unknown-linux-gnu.tar.gz` | 64 位 ARM |
+| `qurbrix-hw-<version>-loongarch64-unknown-linux-gnu.tar.gz` | LoongArch64 |
+
+校验并安装：
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf qurbrix-hw-<version>-<target>.tar.gz
+sudo install -m 0755 qurbrix-hw-<version>-<target>/qurbrix-hw /usr/local/bin/
+```
+
+预编译二进制为 glibc 动态链接版本，仅保证在不老于 GitHub `ubuntu-latest`
+运行器所提供的 glibc（当前 2.35+）的发行版上运行；较老发行版请自行从源码构建。
+
+### 从源码构建
+
+```bash
+cargo install --path .
+```
 
 ## 构建
 
@@ -127,3 +161,24 @@ async fn main() -> anyhow::Result<()> {
 - 显示器采集依赖 EDID 和可选的 `xrandr` 输出；无图形会话时仍会尝试读取 sysfs。
 - `partial` 报告仍然应当可以被机器消费。
 - 日志和诊断信息写入 stderr；结构化命令输出写入 stdout。
+
+## 贡献
+
+欢迎贡献代码。本地开发环境、测试命令与提交约定见
+[`CONTRIBUTING.md`](CONTRIBUTING.md)（英文）。缺陷和需求走
+[GitHub Issues](https://github.com/BaekRui/qurbrix-hwinfo/issues)，
+代码变更通过 pull request 提交。
+
+## 许可证
+
+按下列任一许可证发布，用户可自行选择：
+
+- Apache License, Version 2.0（[LICENSE-APACHE](LICENSE-APACHE)
+  或 <https://www.apache.org/licenses/LICENSE-2.0>）
+- MIT License（[LICENSE-MIT](LICENSE-MIT)
+  或 <https://opensource.org/licenses/MIT>）
+
+### 贡献者授权
+
+除非贡献者明确声明，任何以 Apache-2.0 定义方式提交的贡献均按上述双许可证发布，
+不附加任何额外条款。
