@@ -131,7 +131,7 @@ Example (truncated):
 
 ```json
 {
-  "schema_version": "qurbrix.hw.scan.v1",
+  "schema_version": "qurbrix.hw.scan.v2",
   "status": "complete",
   "summary": { "device_count": 1, "counts_by_kind": {"cpu": 1}, "warning_count": 0 },
   "devices": [
@@ -234,7 +234,7 @@ other-device
 ### `schema` / `sources`
 
 ```bash
-qurbrix-hw schema             # -> qurbrix.hw.scan.v1
+qurbrix-hw schema             # -> qurbrix.hw.scan.v2
 qurbrix-hw sources            # -> {"sources":[]}
 ```
 

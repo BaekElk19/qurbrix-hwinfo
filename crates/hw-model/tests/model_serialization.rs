@@ -62,9 +62,9 @@ fn pci_device_has_stable_flat_fields() {
 }
 
 #[test]
-fn empty_report_uses_schema_v1() {
+fn empty_report_uses_schema_v2() {
     let report = ScanReport::empty();
-    assert_eq!(report.schema_version, "qurbrix.hw.scan.v1");
+    assert_eq!(report.schema_version, "qurbrix.hw.scan.v2");
     assert_eq!(report.devices.len(), 0);
     assert_eq!(serde_json::to_value(report.status).unwrap(), "complete");
 }

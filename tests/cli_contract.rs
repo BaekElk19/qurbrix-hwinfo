@@ -18,7 +18,7 @@ fn schema_command_writes_stable_json_to_stdout_only() {
         serde_json::from_slice(&output.stdout).expect("schema stdout should be JSON");
     assert_eq!(
         value.get("schema_version").and_then(|value| value.as_str()),
-        Some("qurbrix.hw.scan.v1")
+        Some("qurbrix.hw.scan.v2")
     );
 }
 

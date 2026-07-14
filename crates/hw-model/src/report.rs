@@ -2,7 +2,7 @@ use crate::{Device, DeviceKind, ScanWarning};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-pub const SCHEMA_VERSION: &str = "qurbrix.hw.scan.v1";
+pub const SCHEMA_VERSION: &str = "qurbrix.hw.scan.v2";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScanReport {
