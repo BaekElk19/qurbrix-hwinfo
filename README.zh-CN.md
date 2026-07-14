@@ -54,22 +54,26 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 去 [GitHub Releases](https://github.com/BaekElk19/qurbrix-hwinfo/releases) 下载最新版本，
 根据机器架构选择对应压缩包：
 
-| 压缩包 | 适用架构 |
-|---|---|
-| `qurbrix-hw-<version>-x86_64-unknown-linux-gnu.tar.gz` | 64 位 Intel/AMD |
-| `qurbrix-hw-<version>-aarch64-unknown-linux-gnu.tar.gz` | 64 位 ARM |
-| `qurbrix-hw-<version>-loongarch64-unknown-linux-gnu.tar.gz` | LoongArch64 |
+| 压缩包 | 适用架构 | glibc 下限 |
+|---|---|---|
+| `qurbrix-hw-<version>-x86_64-unknown-linux-gnu-glibc2.28.tar.gz` | 64 位 Intel/AMD | 2.28 |
+| `qurbrix-hw-<version>-aarch64-unknown-linux-gnu-glibc2.28.tar.gz` | 64 位 ARM | 2.28 |
+| `qurbrix-hw-<version>-loongarch64-unknown-linux-gnu-glibc2.36.tar.gz` | LoongArch64 | 2.36 |
 
 校验并安装：
 
 ```bash
+ARCHIVE="qurbrix-hw-0.1.4-x86_64-unknown-linux-gnu-glibc2.28" # 从上表选择
 sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf qurbrix-hw-<version>-<target>.tar.gz
-sudo install -m 0755 qurbrix-hw-<version>-<target>/qurbrix-hw /usr/local/bin/
+tar -xzf "${ARCHIVE}.tar.gz"
+sudo install -m 0755 "${ARCHIVE}/qurbrix-hw" /usr/local/bin/
 ```
 
-预编译二进制为 glibc 动态链接版本，仅保证在不老于 GitHub `ubuntu-latest`
-运行器所提供的 glibc（当前 2.35+）的发行版上运行；较老发行版请自行从源码构建。
+预编译二进制采用 glibc 动态链接。x86_64 与 aarch64 产物使用固定版本的
+`cargo-zigbuild` 构建，需要 glibc **2.28** 或更高版本；LoongArch64 使用固定版本的
+`cross` 工具链构建，需要 glibc **2.36** 或更高版本。每个 release job 都会
+验证产物中最高的 `GLIBC_*` 符号不超过表中声明的下限。更老的发行版需要从
+源码构建。
 
 ### 从源码构建
 
