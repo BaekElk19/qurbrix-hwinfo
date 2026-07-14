@@ -2,7 +2,7 @@ use crate::{Probe, ProbeContext, ProbeResult};
 use async_trait::async_trait;
 use hw_model::{
     device_id, BluetoothInfo, Device, DeviceKind, DeviceProperties, DriverInfo, DriverStatus,
-    ScanWarning, SourceEvidence, SourceKind, SourceStatus,
+    PairedDeviceInfo, ScanWarning, SourceEvidence, SourceKind, SourceStatus,
 };
 use hw_parser::{
     parse_bluetoothctl_paired_devices, parse_hciconfig, parse_lshw_communication,
@@ -42,10 +42,13 @@ impl Probe for BluetoothProbe {
             )
             .await;
         let mut warnings = Vec::new();
-        let paired_names: Vec<String> = if paired.is_success() {
+        let paired_devices: Vec<PairedDeviceInfo> = if paired.is_success() {
             parse_bluetoothctl_paired_devices(&paired.stdout)
                 .into_iter()
-                .map(|p| p.name)
+                .map(|record| PairedDeviceInfo {
+                    address: record.address,
+                    name: record.name,
+                })
                 .collect()
         } else {
             warnings.extend(ProbeResult::source_failure(self.name(), &paired).warnings);
@@ -78,8 +81,8 @@ impl Probe for BluetoothProbe {
                         controller_name: ctrl.name,
                         powered: Some(ctrl.flags.iter().any(|f| f == "UP")),
                         discoverable: Some(ctrl.flags.iter().any(|f| f == "ISCAN")),
-                        paired_device_count: Some(paired_names.len() as u32),
-                        paired_devices: paired_names.clone(),
+                        paired_device_count: Some(paired_devices.len() as u32),
+                        paired_devices: paired_devices.clone(),
                         hci_version: ctrl.hci_version,
                         lmp_version: ctrl.lmp_version,
                         manufacturer: ctrl.manufacturer,
