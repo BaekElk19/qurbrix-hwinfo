@@ -60,23 +60,27 @@ Download the latest release from
 [GitHub Releases](https://github.com/BaekElk19/qurbrix-hwinfo/releases). Pick
 the archive matching your machine:
 
-| Archive | Architecture |
-|---|---|
-| `qurbrix-hw-<version>-x86_64-unknown-linux-gnu.tar.gz` | 64-bit Intel/AMD |
-| `qurbrix-hw-<version>-aarch64-unknown-linux-gnu.tar.gz` | 64-bit ARM |
-| `qurbrix-hw-<version>-loongarch64-unknown-linux-gnu.tar.gz` | LoongArch64 |
+| Archive | Architecture | glibc floor |
+|---|---|---|
+| `qurbrix-hw-<version>-x86_64-unknown-linux-gnu-glibc2.28.tar.gz` | 64-bit Intel/AMD | 2.28 |
+| `qurbrix-hw-<version>-aarch64-unknown-linux-gnu-glibc2.28.tar.gz` | 64-bit ARM | 2.28 |
+| `qurbrix-hw-<version>-loongarch64-unknown-linux-gnu-glibc2.36.tar.gz` | LoongArch64 | 2.36 |
 
 Verify and install:
 
 ```bash
+ARCHIVE="qurbrix-hw-0.1.4-x86_64-unknown-linux-gnu-glibc2.28" # choose from the table above
 sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf qurbrix-hw-<version>-<target>.tar.gz
-sudo install -m 0755 qurbrix-hw-<version>-<target>/qurbrix-hw /usr/local/bin/
+tar -xzf "${ARCHIVE}.tar.gz"
+sudo install -m 0755 "${ARCHIVE}/qurbrix-hw" /usr/local/bin/
 ```
 
-Prebuilt binaries are glibc dynamically-linked. They target the glibc shipped
-by GitHub `ubuntu-latest` runners (currently 2.35+); older distros may need
-to build from source.
+Prebuilt binaries are dynamically linked against glibc. The x86_64 and aarch64
+artifacts are built with pinned `cargo-zigbuild` and require glibc **2.28** or
+newer. The LoongArch64 artifact uses the pinned `cross` toolchain and requires
+glibc **2.36** or newer. Every release job verifies that the
+highest `GLIBC_*` symbol does not exceed the floor shown in the table. Older
+distributions need to build from source.
 
 ### From source
 
@@ -131,7 +135,7 @@ Example (truncated):
 
 ```json
 {
-  "schema_version": "qurbrix.hw.scan.v1",
+  "schema_version": "qurbrix.hw.scan.v2",
   "status": "complete",
   "summary": { "device_count": 1, "counts_by_kind": {"cpu": 1}, "warning_count": 0 },
   "devices": [
@@ -139,7 +143,7 @@ Example (truncated):
       "id": "cpu:0",
       "kind": "cpu",
       "name": "AMD Ryzen 7 5800H with Radeon Graphics",
-      "properties": { "data": { "cores": 36, "threads": 6, ... } }
+      "properties": { "data": { "cores": 8, "threads": 16, ... } }
     }
   ]
 }
@@ -234,7 +238,7 @@ other-device
 ### `schema` / `sources`
 
 ```bash
-qurbrix-hw schema             # -> qurbrix.hw.scan.v1
+qurbrix-hw schema             # -> qurbrix.hw.scan.v2
 qurbrix-hw sources            # -> {"sources":[]}
 ```
 

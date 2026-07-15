@@ -45,6 +45,7 @@ pub struct SmartctlInfo {
     pub data_units_written: Option<u64>,
     pub media_errors: Option<u64>,
     pub error_log_entries: Option<u64>,
+    pub temperature_sensors_celsius: Vec<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -122,6 +123,8 @@ struct NvmeSmartHealthInformationLog {
     data_units_written: Option<u64>,
     media_errors: Option<u64>,
     num_err_log_entries: Option<u64>,
+    #[serde(default)]
+    temperature_sensors: Vec<u16>,
 }
 
 pub fn parse_lsblk_json(input: &str) -> Vec<LsblkDevice> {
@@ -165,9 +168,35 @@ pub fn parse_smartctl_json(input: &str) -> Result<SmartctlInfo, serde_json::Erro
             data_units_read: nvme.as_ref().and_then(|value| value.data_units_read),
             data_units_written: nvme.as_ref().and_then(|value| value.data_units_written),
             media_errors: nvme.as_ref().and_then(|value| value.media_errors),
-            error_log_entries: nvme.and_then(|value| value.num_err_log_entries),
+            error_log_entries: nvme.as_ref().and_then(|value| value.num_err_log_entries),
+            temperature_sensors_celsius: nvme
+                .map(|value| {
+                    value
+                        .temperature_sensors
+                        .iter()
+                        .copied()
+                        .map(kelvin_or_kelvin_x10_to_celsius)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     })
+}
+
+fn kelvin_or_kelvin_x10_to_celsius(raw: u16) -> i32 {
+    let celsius = if raw >= 1000 {
+        (raw as i32) / 10 - 273
+    } else {
+        (raw as i32) - 273
+    };
+    if !(-50..=150).contains(&celsius) {
+        tracing::warn!(
+            "smartctl temperature sensor decoded to out-of-range {}°C from raw {}",
+            celsius,
+            raw
+        );
+    }
+    celsius
 }
 
 fn clean_smartctl_value(value: String) -> Option<String> {

@@ -13,18 +13,21 @@ env:
 
 jobs:
   build:
-    name: build ${{ matrix.target }}
+    name: build ${{ matrix.target }} glibc${{ matrix.glibc }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            use_cross: false
+            glibc: "2.28"
+            builder: zig
           - target: aarch64-unknown-linux-gnu
-            use_cross: true
+            glibc: "2.28"
+            builder: zig
           - target: loongarch64-unknown-linux-gnu
-            use_cross: true
+            glibc: "2.36"
+            builder: cross
     steps:
       - uses: actions/checkout@v4
 
@@ -35,25 +38,56 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.target }}-${{ matrix.builder }}-glibc${{ matrix.glibc }}
+
+      - name: Install Zig
+        if: matrix.builder == 'zig'
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild
+        if: matrix.builder == 'zig'
+        run: cargo install cargo-zigbuild --version 0.19.7 --locked
 
       - name: Install cross
-        if: matrix.use_cross
+        if: matrix.builder == 'cross'
         run: cargo install cross --git https://github.com/cross-rs/cross --rev 64b5bb4d3d34de062552b9a2093affe77b4ad16a --locked
 
-      - name: Build (cargo)
-        if: ${{ !matrix.use_cross }}
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Build with cargo-zigbuild
+        if: matrix.builder == 'zig'
+        run: cargo zigbuild --release --target ${{ matrix.target }}.${{ matrix.glibc }}
 
-      - name: Build (cross)
-        if: matrix.use_cross
+      - name: Build with cross
+        if: matrix.builder == 'cross'
         run: cross build --release --target ${{ matrix.target }}
+
+      - name: Verify glibc floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/qurbrix-hw"
+          HIGHEST="$(
+            objdump -T "${BIN}" \
+              | awk 'match($0, /GLIBC_[0-9]+(\.[0-9]+)+/) { print substr($0, RSTART, RLENGTH) }' \
+              | sort -V \
+              | tail -1
+          )"
+          if [[ -z "${HIGHEST}" ]]; then
+            echo "::error::No GLIBC symbol versions found in ${BIN}" >&2
+            exit 1
+          fi
+          FLOOR="GLIBC_${{ matrix.glibc }}"
+          if [[ "$(printf '%s\n%s\n' "${FLOOR}" "${HIGHEST}" | sort -V | tail -1)" != "${FLOOR}" ]]; then
+            echo "::error::Highest required GLIBC symbol ${HIGHEST} exceeds floor ${FLOOR}" >&2
+            exit 1
+          fi
 
       - name: Package
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGE="qurbrix-hw-${VERSION}-${{ matrix.target }}"
+          STAGE="qurbrix-hw-${VERSION}-${{ matrix.target }}-glibc${{ matrix.glibc }}"
           mkdir -p "${STAGE}"
           cp "target/${{ matrix.target }}/release/qurbrix-hw" "${STAGE}/"
           cp README.md README.zh-CN.md LICENSE-MIT LICENSE-APACHE "${STAGE}/"
@@ -62,7 +96,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qurbrix-hw-${{ matrix.target }}
+          name: qurbrix-hw-${{ matrix.target }}-glibc${{ matrix.glibc }}
           path: qurbrix-hw-*.tar.gz
           if-no-files-found: error
 

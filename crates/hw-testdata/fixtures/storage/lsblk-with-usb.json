@@ -1,0 +1,32 @@
+{
+  "blockdevices": [
+    {
+      "name": "nvme0n1",
+      "type": "disk",
+      "size": 512110190592,
+      "model": "Samsung SSD 980 500GB",
+      "serial": "S6P0TEST123",
+      "tran": "nvme",
+      "wwn": "eui.0025385811420f0c",
+      "rev": "3B4QFXO7",
+      "mountpoint": null,
+      "fstype": null,
+      "partuuid": null,
+      "label": null
+    },
+    {
+      "name": "sda",
+      "type": "disk",
+      "size": 16008609792,
+      "model": "USB DISK 3.0",
+      "serial": "AA00000000000123",
+      "tran": "usb",
+      "wwn": null,
+      "rev": "PMAP",
+      "mountpoint": null,
+      "fstype": null,
+      "partuuid": null,
+      "label": null
+    }
+  ]
+}

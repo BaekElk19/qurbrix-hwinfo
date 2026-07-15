@@ -1588,3 +1588,31 @@ async fn cdrom_probe_sysfs_fallback_sorts_and_filters_sr_numbered_nodes() {
     assert_eq!(result.devices[0].name, "sr0");
     assert_eq!(result.devices[1].name, "sr1");
 }
+
+#[tokio::test]
+async fn bluetooth_probe_preserves_paired_device_address() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "hciconfig",
+            ["-a"],
+            "hci0:\tType: Primary  Bus: USB\n        BD Address: 00:11:22:33:44:55\n        UP RUNNING PSCAN\n",
+        )
+        .with_command(
+            "bluetoothctl",
+            ["paired-devices"],
+            hw_testdata::fixture("bluetooth/paired-devices-multi.txt"),
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BluetoothProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
+    let DeviceProperties::Bluetooth(info) = &result.devices[0].properties else {
+        panic!("expected bluetooth properties");
+    };
+    assert_eq!(info.paired_device_count, Some(2));
+    assert_eq!(info.paired_devices.len(), 2);
+    assert_eq!(info.paired_devices[0].address, "AA:BB:CC:DD:EE:FF");
+    assert_eq!(info.paired_devices[0].name, "Sony WH-1000XM4");
+    assert_eq!(info.paired_devices[1].address, "11:22:33:44:55:66");
+    assert_eq!(info.paired_devices[1].name, "Logitech MX Master 3");
+}

@@ -2050,6 +2050,36 @@ async fn apply_storage_sysfs_enrichment(
     device
 }
 
+async fn apply_storage_usb_bus(ctx: &ProbeContext<'_>, device: Device, name: &str) -> Device {
+    let interface_matches = matches!(
+        &device.properties,
+        DeviceProperties::Storage(storage)
+            if storage.interface.as_deref() == Some("usb")
+    );
+    if !interface_matches {
+        return device;
+    }
+    let base = Path::new("/sys/block").join(name);
+    let usb_dev = base.join("device/../..");
+    let usb_iface = base.join("device/..");
+    let bus = read_optional_trimmed(ctx, &usb_dev.join("busnum")).await;
+    let device_num = read_optional_trimmed(ctx, &usb_dev.join("devnum")).await;
+    let vendor_id = read_optional_trimmed(ctx, &usb_dev.join("idVendor")).await;
+    let product_id = read_optional_trimmed(ctx, &usb_dev.join("idProduct")).await;
+    let speed = read_optional_trimmed(ctx, &usb_dev.join("speed")).await;
+    let iface_class = read_optional_trimmed(ctx, &usb_iface.join("bInterfaceClass")).await;
+    let iface_subclass = read_optional_trimmed(ctx, &usb_iface.join("bInterfaceSubClass")).await;
+    device.with_bus(BusInfo::Usb {
+        bus,
+        device: device_num,
+        vendor_id,
+        product_id,
+        speed,
+        interface: iface_subclass,
+        class: iface_class,
+    })
+}
+
 async fn apply_storage_driver(ctx: &ProbeContext<'_>, device: Device, name: &str) -> Device {
     let sysfs_path = Path::new("/sys/block").join(name);
     let mut device = device;
@@ -2674,6 +2704,7 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
         }
         storage.smart_status = storage.smart_status.take().or(smart.smart_status);
         storage.temperature_celsius = storage.temperature_celsius.or(smart.temperature_celsius);
+        storage.temperature_sensors_celsius = smart.temperature_sensors_celsius;
         storage.power_on_hours = storage.power_on_hours.or(smart.power_on_hours);
         storage.power_cycle_count = storage.power_cycle_count.or(smart.power_cycle_count);
         storage.available_spare_percent = storage
@@ -2946,6 +2977,7 @@ impl Probe for StorageProbe {
             device.serial = serial;
             let device = apply_storage_sysfs_enrichment(ctx, device, &name).await;
             let device = apply_storage_driver(ctx, device, &name).await;
+            let device = apply_storage_usb_bus(ctx, device, &name).await;
             let device = apply_storage_lshw_storage_enrichment(device, &lshw_storage);
             let device = apply_storage_lspci_enrichment(device, &lspci);
             let device = apply_storage_lshw_enrichment(device, &lshw);

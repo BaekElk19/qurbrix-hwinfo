@@ -245,6 +245,8 @@ pub struct StorageInfo {
     pub data_units_written: Option<u64>,
     pub media_errors: Option<u64>,
     pub error_log_entries: Option<u64>,
+    #[serde(default)]
+    pub temperature_sensors_celsius: Vec<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -339,6 +341,12 @@ pub struct AudioInfo {
     pub profiles: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PairedDeviceInfo {
+    pub address: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct BluetoothInfo {
     pub address: Option<String>,
@@ -346,7 +354,7 @@ pub struct BluetoothInfo {
     pub powered: Option<bool>,
     pub discoverable: Option<bool>,
     pub paired_device_count: Option<u32>,
-    pub paired_devices: Vec<String>,
+    pub paired_devices: Vec<PairedDeviceInfo>,
     #[serde(default)]
     pub hci_version: Option<String>,
     #[serde(default)]

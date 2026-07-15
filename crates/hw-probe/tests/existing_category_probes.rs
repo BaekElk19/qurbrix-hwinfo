@@ -2586,3 +2586,97 @@ async fn storage_probe_warns_when_json_output_is_malformed() {
         Some("lsblk -J -b -o NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL")
     );
 }
+
+#[tokio::test]
+async fn storage_probe_sets_usb_bus_for_usb_flash_drive() {
+    let lsblk = hw_testdata::fixture("storage/lsblk-with-usb.json");
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            [
+                "-J",
+                "-b",
+                "-o",
+                "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+            ],
+            lsblk,
+        )
+        .with_file("/sys/block/sda/device/../../idVendor", "0781\n")
+        .with_file("/sys/block/sda/device/../../idProduct", "5591\n")
+        .with_file("/sys/block/sda/device/../../busnum", "1\n")
+        .with_file("/sys/block/sda/device/../../devnum", "4\n")
+        .with_file("/sys/block/sda/device/../../speed", "5000\n")
+        .with_file("/sys/block/sda/device/../bInterfaceClass", "08\n")
+        .with_file("/sys/block/sda/device/../bInterfaceSubClass", "06\n");
+
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let usb_disk = result
+        .devices
+        .iter()
+        .find(|d| matches!(d.bus.as_ref(), Some(BusInfo::Usb { .. })))
+        .expect("expected exactly one storage device with BusInfo::Usb");
+    let BusInfo::Usb {
+        bus,
+        device,
+        vendor_id,
+        product_id,
+        speed,
+        interface,
+        class,
+    } = usb_disk.bus.as_ref().unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(bus.as_deref(), Some("1"));
+    assert_eq!(device.as_deref(), Some("4"));
+    assert_eq!(vendor_id.as_deref(), Some("0781"));
+    assert_eq!(product_id.as_deref(), Some("5591"));
+    assert_eq!(speed.as_deref(), Some("5000"));
+    assert_eq!(interface.as_deref(), Some("06"));
+    assert_eq!(class.as_deref(), Some("08"));
+}
+
+#[tokio::test]
+async fn storage_probe_sets_usb_bus_even_when_sysfs_missing() {
+    let lsblk = hw_testdata::fixture("storage/lsblk-with-usb.json");
+    let runner = FakeSourceRunner::new().with_command(
+        "lsblk",
+        [
+            "-J",
+            "-b",
+            "-o",
+            "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL",
+        ],
+        lsblk,
+    );
+
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let usb_disk = result
+        .devices
+        .iter()
+        .find(|d| matches!(d.bus.as_ref(), Some(BusInfo::Usb { .. })))
+        .expect("USB TRAN alone should still produce BusInfo::Usb");
+    let BusInfo::Usb {
+        bus,
+        device,
+        vendor_id,
+        product_id,
+        speed,
+        interface,
+        class,
+    } = usb_disk.bus.as_ref().unwrap()
+    else {
+        unreachable!()
+    };
+    assert!(bus.is_none());
+    assert!(device.is_none());
+    assert!(vendor_id.is_none());
+    assert!(product_id.is_none());
+    assert!(speed.is_none());
+    assert!(interface.is_none());
+    assert!(class.is_none());
+}

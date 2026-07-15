@@ -36,7 +36,7 @@ fn flat_report_counts_devices_by_kind() {
 #[test]
 fn flat_report_preserves_json_contract_fields() {
     let json = serde_json::to_value(to_flat_report(&sample_report())).unwrap();
-    assert_eq!(json["schema_version"], "qurbrix.hw.scan.v1");
+    assert_eq!(json["schema_version"], "qurbrix.hw.scan.v2");
     assert_eq!(json["status"], "complete");
     assert_eq!(json["summary"]["device_count"], 1);
     assert_eq!(json["summary"]["counts_by_kind"]["pci"], 1);
