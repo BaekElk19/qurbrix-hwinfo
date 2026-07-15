@@ -238,6 +238,44 @@ async fn usb_probe_filters_root_hubs_and_usb_hubs() {
 }
 
 #[tokio::test]
+async fn usb_probe_enriches_device_fields_from_lsusb_verbose_without_sysfs() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsusb",
+            std::iter::empty::<&str>(),
+            "Bus 002 Device 003: ID 0e0f:0003 VMware, Inc. Virtual Mouse\n",
+        )
+        .with_command(
+            "lsusb",
+            ["-v"],
+            "Bus 002 Device 003: ID 0e0f:0003 VMware, Inc. Virtual Mouse\n\
+             Device Descriptor:\n\
+               iManufacturer           1 VMware\n\
+               iProduct                2 VMware Virtual USB Mouse\n\
+               iSerial                 3 VMOUSE123\n\
+               Negotiated speed: Full Speed (12Mbps)\n\
+             Configuration Descriptor:\n\
+               MaxPower                100mA\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = UsbProbe.probe(&ctx).await;
+
+    let device = &result.devices[0];
+    assert_eq!(device.name, "VMware Virtual USB Mouse");
+    let DeviceProperties::Usb(info) = &device.properties else {
+        panic!("expected usb properties");
+    };
+    assert_eq!(info.manufacturer.as_deref(), Some("VMware"));
+    assert_eq!(info.serial.as_deref(), Some("VMOUSE123"));
+    assert_eq!(info.speed.as_deref(), Some("12"));
+    assert_eq!(info.max_power_ma, Some(100));
+    assert!(device
+        .sources
+        .iter()
+        .any(|source| source.source == "lsusb -v"));
+}
+
+#[tokio::test]
 async fn usb_probe_keeps_host_controller_text_from_lsusb_success_path() {
     let runner = FakeSourceRunner::new().with_command(
         "lsusb",

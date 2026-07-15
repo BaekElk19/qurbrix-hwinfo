@@ -18,8 +18,8 @@ use hw_parser::{
     parse_hdparm_identify, parse_hwinfo_disk, parse_hwinfo_monitor, parse_ip_j_addr_result,
     parse_ip_j_link_result, parse_lsblk_json_result, parse_lscpu, parse_lshw_disk,
     parse_lshw_display, parse_lshw_memory, parse_lshw_network, parse_lshw_processor,
-    parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k, parse_modinfo_version,
-    parse_nvidia_settings_memory_interface, parse_nvidia_settings_videoram,
+    parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k, parse_lspci_vmm_nn_k,
+    parse_modinfo_version, parse_nvidia_settings_memory_interface, parse_nvidia_settings_videoram,
     parse_nvidia_smi_memory_csv, parse_phytium1500a_info, parse_proc_cpuinfo, parse_proc_hardware,
     parse_proc_meminfo_total_bytes, parse_size_to_bytes, parse_smartctl_json,
     parse_spd_decode_dimms, parse_spd_eeprom, parse_speed_mtps, parse_voltage_v, parse_width_bits,
@@ -1386,6 +1386,7 @@ impl Probe for NetworkProbe {
                 lshw.by_interface.get(&net.ifname),
                 &lshw.source,
             );
+            device = apply_network_ethtool_enrichment(ctx, device, &net.ifname).await;
             devices.push(device);
         }
         ProbeResult {
@@ -1551,6 +1552,7 @@ async fn network_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
         let device = apply_network_enrichment(device, enrichment);
         let device =
             apply_network_lshw_enrichment(device, lshw.by_interface.get(ifname), &lshw.source);
+        let device = apply_network_ethtool_enrichment(ctx, device, ifname).await;
         devices.push(device);
     }
 
@@ -1692,6 +1694,48 @@ fn apply_network_lshw_enrichment(
         });
     }
     device
+}
+
+async fn apply_network_ethtool_enrichment(
+    ctx: &ProbeContext<'_>,
+    mut device: Device,
+    ifname: &str,
+) -> Device {
+    if matches!(
+        &device.properties,
+        DeviceProperties::Network(network) if network.firmware.is_some()
+    ) {
+        return device;
+    }
+
+    let result = ctx
+        .runner
+        .run_command(&CommandSpec::new("ethtool", ["-i", ifname]), ctx.timeout)
+        .await;
+    if !result.is_success() {
+        return device;
+    }
+    let firmware = result.stdout.lines().find_map(|line| {
+        let (key, value) = line.trim().split_once(':')?;
+        let value = value.trim();
+        (key.eq_ignore_ascii_case("firmware-version")
+            && !value.is_empty()
+            && !value.eq_ignore_ascii_case("n/a"))
+        .then(|| value.to_string())
+    });
+    let Some(firmware) = firmware else {
+        return device;
+    };
+    let DeviceProperties::Network(network) = &mut device.properties else {
+        return device;
+    };
+    network.firmware = Some(firmware);
+    device.with_source(SourceEvidence {
+        source: result.source,
+        kind: SourceKind::Command,
+        status: SourceStatus::Success,
+        summary: None,
+    })
 }
 
 fn lshw_network_pci_bus(value: &str) -> Option<BusInfo> {
@@ -1893,6 +1937,26 @@ async fn storage_lshw_storage_records(ctx: &ProbeContext<'_>) -> StorageLshwStor
 }
 
 async fn storage_lspci_records(ctx: &ProbeContext<'_>) -> StorageLspciRecords {
+    let machine_result = ctx
+        .runner
+        .run_command(
+            &CommandSpec::new("lspci", ["-D", "-vmm", "-nn", "-k"]),
+            ctx.timeout,
+        )
+        .await;
+    if machine_result.is_success() {
+        let by_pci_address = parse_lspci_vmm_nn_k(&machine_result.stdout)
+            .into_iter()
+            .map(|record| (record.address.clone(), record))
+            .collect::<HashMap<_, _>>();
+        if !by_pci_address.is_empty() {
+            return StorageLspciRecords {
+                source: machine_result.source,
+                by_pci_address,
+            };
+        }
+    }
+
     let result = ctx
         .runner
         .run_command(&CommandSpec::new("lspci", ["-nn", "-k"]), ctx.timeout)
@@ -2664,7 +2728,7 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
         return device;
     }
 
-    let Ok(smart) = parse_smartctl_json(&result.stdout) else {
+    let Ok(mut smart) = parse_smartctl_json(&result.stdout) else {
         device.warnings.push(
             ScanWarning::new(
                 "parse_failed",
@@ -2674,6 +2738,14 @@ async fn apply_storage_smartctl(ctx: &ProbeContext<'_>, mut device: Device) -> D
         );
         return device;
     };
+    if !result.is_success()
+        && smart.smart_status.is_none()
+        && smart
+            .temperature_celsius
+            .is_some_and(|temperature| temperature <= 0.0)
+    {
+        smart.temperature_celsius = None;
+    }
     if smart.smart_status.is_none()
         && smart.model.is_none()
         && smart.serial.is_none()
@@ -6550,6 +6622,8 @@ fn monitor_connector_interface(connector: &str) -> Option<String> {
         Some("VGA".to_string())
     } else if upper.starts_with("DVI") {
         Some("DVI".to_string())
+    } else if upper.starts_with("VIRTUAL") {
+        Some("virtual".to_string())
     } else {
         None
     }
@@ -6603,5 +6677,9 @@ fn normalize_sysfs_connector(path: &Path) -> Option<String> {
         .strip_prefix("card")
         .and_then(|rest| rest.split_once('-').map(|(_, connector)| connector))
         .unwrap_or(name);
-    Some(connector.replace("HDMI-A-", "HDMI-"))
+    Some(
+        connector
+            .replace("HDMI-A-", "HDMI-")
+            .replace("Virtual-", "Virtual"),
+    )
 }

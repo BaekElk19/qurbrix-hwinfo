@@ -15,6 +15,7 @@ pub struct UsbRecord {
     pub subclass: Option<String>,
     pub protocol: Option<String>,
     pub speed: Option<String>,
+    pub max_power_ma: Option<u32>,
 }
 
 pub fn parse_lsusb(input: &str) -> Vec<UsbRecord> {
@@ -56,13 +57,27 @@ pub fn parse_lsusb_verbose(input: &str) -> Vec<UsbRecord> {
             in_interface = true;
             continue;
         }
-        if !in_interface {
-            continue;
-        }
 
         let Some(record) = current.as_mut() else {
             continue;
         };
+        if !in_interface {
+            if let Some(value) = descriptor_string_field(trimmed, "iManufacturer") {
+                record.manufacturer = Some(value);
+            } else if let Some(value) = descriptor_string_field(trimmed, "iProduct") {
+                record.product = Some(value);
+            } else if let Some(value) = descriptor_string_field(trimmed, "iSerial") {
+                record.serial = Some(value);
+            } else if let Some(value) = descriptor_field(trimmed, "MaxPower") {
+                record.max_power_ma = parse_max_power_ma(value);
+            } else if let Some(value) = trimmed.strip_prefix("Negotiated speed:") {
+                record.speed = parse_negotiated_speed_mbps(value);
+            }
+        }
+        if !in_interface {
+            continue;
+        }
+
         if record.class.is_some() && record.subclass.is_some() && record.protocol.is_some() {
             continue;
         }
@@ -89,6 +104,41 @@ pub fn parse_lsusb_verbose(input: &str) -> Vec<UsbRecord> {
         records.push(current);
     }
     records
+}
+
+fn descriptor_string_field(line: &str, key: &str) -> Option<String> {
+    let mut parts = line.strip_prefix(key)?.split_whitespace();
+    let index = parts.next()?;
+    if index == "0" {
+        return None;
+    }
+    let value = parts.collect::<Vec<_>>().join(" ");
+    (!value.is_empty()).then_some(value)
+}
+
+fn parse_max_power_ma(value: &str) -> Option<u32> {
+    value.trim().trim_end_matches("mA").trim().parse().ok()
+}
+
+fn parse_negotiated_speed_mbps(value: &str) -> Option<String> {
+    let speed_re = Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*([gmk]?)bps").unwrap();
+    let captures = speed_re.captures(value)?;
+    let number = captures.get(1)?.as_str().parse::<f64>().ok()?;
+    let multiplier = match captures
+        .get(2)
+        .map(|unit| unit.as_str().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("g") => 1000.0,
+        Some("k") => 0.001,
+        _ => 1.0,
+    };
+    let mbps = number * multiplier;
+    if mbps.fract() == 0.0 {
+        Some(format!("{mbps:.0}"))
+    } else {
+        Some(mbps.to_string())
+    }
 }
 
 fn descriptor_byte_field(line: &str, key: &str) -> Option<String> {

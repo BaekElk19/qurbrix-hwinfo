@@ -2401,6 +2401,29 @@ async fn monitor_probe_uses_sysfs_edid_when_xrandr_verbose_is_missing() {
 }
 
 #[tokio::test]
+async fn monitor_probe_matches_virtual_connector_name_between_sysfs_and_xrandr() {
+    let path = PathBuf::from("/sys/class/drm/card0-Virtual-1/edid");
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "xrandr",
+            ["--query"],
+            "Virtual1 connected primary 1920x1080+0+0\n",
+        )
+        .with_glob("/sys/class/drm/*/edid", vec![path.clone()])
+        .with_file_bytes(path, monitor_test_edid("VMWARE DISPLAY"));
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = MonitorProbe.probe(&ctx).await;
+
+    let DeviceProperties::Monitor(monitor) = &result.devices[0].properties else {
+        panic!("expected monitor properties");
+    };
+    assert_eq!(monitor.connector.as_deref(), Some("Virtual1"));
+    assert_eq!(monitor.interface.as_deref(), Some("virtual"));
+    assert_eq!(monitor.product.as_deref(), Some("VMWARE DISPL"));
+    assert!(monitor.edid_hex.is_some());
+}
+
+#[tokio::test]
 async fn monitor_probe_reports_xrandr_max_resolution() {
     let runner = FakeSourceRunner::new().with_command(
         "xrandr",

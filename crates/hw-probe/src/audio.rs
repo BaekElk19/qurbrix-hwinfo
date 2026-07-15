@@ -269,7 +269,7 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
 async fn read_audio_codec(ctx: &ProbeContext<'_>, index: u32) -> (Option<String>, Option<String>) {
     let mut paths = ctx
         .runner
-        .glob(&format!("/proc/asound/card{index}/codec#*"))
+        .glob(&format!("/proc/asound/card{index}/codec*"))
         .await
         .paths;
     paths.sort();

@@ -1363,6 +1363,41 @@ async fn network_probe_enriches_human_readable_lshw_fields() {
 }
 
 #[tokio::test]
+async fn network_probe_reads_firmware_from_ethtool_when_lshw_omits_it() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "ip",
+            ["-j", "link"],
+            r#"[{"ifname":"ens192","address":"aa:bb:cc:dd:ee:ff","operstate":"UP","mtu":1500}]"#,
+        )
+        .with_command("ip", ["-j", "addr"], "[]")
+        .with_command(
+            "lshw",
+            ["-class", "network"],
+            "  *-network\n\
+                  product: VMXNET3 Ethernet Controller\n\
+                  logical name: ens192\n\
+                  configuration: driver=vmxnet3 driverversion=1.9.0.0-k-NAPI\n",
+        )
+        .with_command(
+            "ethtool",
+            ["-i", "ens192"],
+            "driver: vmxnet3\nversion: 1.9.0.0-k-NAPI\nfirmware-version: 1.9.0.0\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = NetworkProbe.probe(&ctx).await;
+
+    let DeviceProperties::Network(network) = &result.devices[0].properties else {
+        panic!("expected network properties");
+    };
+    assert_eq!(network.firmware.as_deref(), Some("1.9.0.0"));
+    assert!(result.devices[0]
+        .sources
+        .iter()
+        .any(|source| source.source == "ethtool -i ens192"));
+}
+
+#[tokio::test]
 async fn network_probe_filters_loopback_and_common_virtual_interfaces() {
     let runner = FakeSourceRunner::new().with_command(
         "ip",
@@ -1806,6 +1841,29 @@ async fn storage_probe_reads_smart_health_from_nonzero_smartctl_json() {
 }
 
 #[tokio::test]
+async fn storage_probe_ignores_zero_temperature_from_failed_smartctl() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"scsi"}]}"#,
+        )
+        .with_command_status(
+            "smartctl",
+            ["-a", "-j", "/dev/sda"],
+            r#"{"temperature":{"current":0}}"#,
+            4,
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.temperature_celsius, None);
+}
+
+#[tokio::test]
 async fn storage_probe_retries_usb_bridge_smartctl_with_sat_device_type() {
     let runner = FakeSourceRunner::new()
         .with_command(
@@ -2191,6 +2249,42 @@ async fn storage_probe_enriches_controller_identity_from_lspci_when_lshw_storage
         .sources
         .iter()
         .any(|source| source.kind == SourceKind::Command && source.source == "lspci -nn -k"));
+}
+
+#[tokio::test]
+async fn storage_probe_separates_controller_vendor_from_machine_readable_lspci() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"SCSI Disk","serial":"S1","tran":"scsi"}]}"#,
+        )
+        .with_file("/sys/block/sda/device/uevent", "DRIVER=sd\n")
+        .with_file(
+            "/sys/block/sda/device/../../../uevent",
+            "DRIVER=mptspi\nPCI_CLASS=10000\nPCI_ID=1000:0030\nPCI_SLOT_NAME=0000:00:10.0\n",
+        )
+        .with_command(
+            "lspci",
+            ["-D", "-vmm", "-nn", "-k"],
+            "Slot:\t0000:00:10.0\n\
+             Class:\tSCSI storage controller [0100]\n\
+             Vendor:\tBroadcom / LSI [1000]\n\
+             Device:\t53c1030 PCI-X Fusion-MPT Dual Ultra320 SCSI [0030]\n\
+             Driver:\tmptspi\n\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = StorageProbe.probe(&ctx).await;
+
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.controller_vendor.as_deref(), Some("Broadcom / LSI"));
+    assert_eq!(
+        storage.controller_model.as_deref(),
+        Some("53c1030 PCI-X Fusion-MPT Dual Ultra320 SCSI")
+    );
+    assert_eq!(storage.controller_driver.as_deref(), Some("mptspi"));
 }
 
 #[tokio::test]

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct PowerRecord {
     pub device_path: Option<String>,
     pub native_path: Option<String>,
+    pub power_supply: Option<bool>,
     pub vendor: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
@@ -39,6 +40,7 @@ pub fn parse_upower_dump(input: &str) -> Vec<PowerRecord> {
             let value = value.trim();
             match key.trim() {
                 "native-path" => record.native_path = Some(value.to_string()),
+                "power supply" => record.power_supply = parse_yes_no(value),
                 "vendor" => record.vendor = Some(value.to_string()),
                 "model" => record.model = Some(value.to_string()),
                 "serial" => record.serial = Some(value.to_string()),
@@ -58,6 +60,14 @@ pub fn parse_upower_dump(input: &str) -> Vec<PowerRecord> {
         records.push(record);
     }
     records
+}
+
+fn parse_yes_no(value: &str) -> Option<bool> {
+    match value.trim() {
+        "yes" => Some(true),
+        "no" => Some(false),
+        _ => None,
+    }
 }
 
 fn parse_number(value: &str) -> Option<f32> {

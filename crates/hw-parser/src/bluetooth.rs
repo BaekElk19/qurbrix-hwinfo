@@ -40,7 +40,12 @@ pub fn parse_hciconfig(input: &str) -> Vec<BluetoothControllerRecord> {
                 records.push(record);
             }
             let bus = line.split("Bus:").nth(1).map(|v| v.trim().to_string());
+            let name = line
+                .split_once(':')
+                .map(|(name, _)| name.trim().to_string())
+                .filter(|name| !name.is_empty());
             current = Some(BluetoothControllerRecord {
+                name,
                 bus,
                 ..Default::default()
             });

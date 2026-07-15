@@ -73,7 +73,9 @@ impl Probe for UsbProbe {
                     } else {
                         false
                     };
-                    let max_power_ma = sysfs.and_then(|record| record.max_power_ma);
+                    let max_power_ma = sysfs
+                        .and_then(|record| record.max_power_ma)
+                        .or(record.max_power_ma);
                     let id = device_id::usb(
                         record.bus.as_deref(),
                         record.device.as_deref(),
@@ -152,6 +154,11 @@ fn usb_record_key(record: &UsbRecord) -> Option<(String, String, String, String)
 
 fn merge_usb_verbose(record: &mut UsbRecord, verbose: &UsbRecord) -> bool {
     let mut contributed = false;
+    contributed |= set_if_missing(&mut record.manufacturer, verbose.manufacturer.clone());
+    contributed |= set_if_present(&mut record.product, verbose.product.clone());
+    contributed |= set_if_missing(&mut record.serial, verbose.serial.clone());
+    contributed |= set_if_missing(&mut record.speed, verbose.speed.clone());
+    contributed |= set_u32_if_missing(&mut record.max_power_ma, verbose.max_power_ma);
     contributed |= set_if_missing(&mut record.interface, verbose.interface.clone());
     if verbose.interface.is_some() {
         contributed |= set_if_present(&mut record.class, verbose.class.clone());
@@ -163,6 +170,15 @@ fn merge_usb_verbose(record: &mut UsbRecord, verbose: &UsbRecord) -> bool {
         contributed |= set_if_missing_or_zero(&mut record.protocol, verbose.protocol.clone());
     }
     contributed
+}
+
+fn set_u32_if_missing(field: &mut Option<u32>, value: Option<u32>) -> bool {
+    if field.is_none() && value.is_some() {
+        *field = value;
+        true
+    } else {
+        false
+    }
 }
 
 fn set_if_missing(field: &mut Option<String>, value: Option<String>) -> bool {

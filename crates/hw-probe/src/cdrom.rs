@@ -48,15 +48,21 @@ impl Probe for CdromProbe {
         }
         let mut devices = Vec::new();
         for drive in info.drive_names {
+            let sysfs_path = Path::new("/sys/class/block").join(&drive);
+            let capabilities = info
+                .capabilities_by_drive
+                .get(&drive)
+                .cloned()
+                .unwrap_or_else(|| info.capabilities.clone());
             let mut device = Device::new(
                 device_id::other("cdrom", &drive),
                 DeviceKind::Cdrom,
                 drive.clone(),
                 DeviceProperties::Cdrom(CdromInfo {
                     device_node: Some(format!("/dev/{drive}")),
-                    media_present: None,
+                    media_present: read_cdrom_media_present(ctx, &sysfs_path).await,
                     firmware: None,
-                    capabilities: info.capabilities.clone(),
+                    capabilities,
                 }),
             )
             .with_source(SourceEvidence {
@@ -65,7 +71,6 @@ impl Probe for CdromProbe {
                 status: SourceStatus::Success,
                 summary: None,
             });
-            let sysfs_path = Path::new("/sys/class/block").join(&drive);
             device.vendor = read_trimmed(ctx, &sysfs_path.join("device/vendor")).await;
             device.model = read_trimmed(ctx, &sysfs_path.join("device/model")).await;
             device.serial = read_trimmed(ctx, &sysfs_path.join("device/serial")).await;
@@ -287,7 +292,7 @@ async fn probe_sysfs_cdroms(
             name.to_string(),
             DeviceProperties::Cdrom(CdromInfo {
                 device_node: Some(device_node),
-                media_present: None,
+                media_present: read_cdrom_media_present(ctx, &path).await,
                 firmware: read_trimmed(ctx, &path.join("device/rev")).await,
                 capabilities: Vec::new(),
             }),
@@ -314,13 +319,14 @@ async fn probe_sysfs_cdroms(
         }) {
             continue;
         }
-        devices.push(cdrom_device_from_hwinfo(node, record, hwinfo));
+        devices.push(cdrom_device_from_hwinfo(ctx, node, record, hwinfo).await);
     }
 
     devices
 }
 
-fn cdrom_device_from_hwinfo(
+async fn cdrom_device_from_hwinfo(
+    ctx: &ProbeContext<'_>,
     node: &str,
     record: &HwinfoCdromRecord,
     hwinfo: &CdromHwinfoRecords,
@@ -334,13 +340,14 @@ fn cdrom_device_from_hwinfo(
         .clone()
         .or_else(|| record.device.clone())
         .unwrap_or_else(|| fallback_name.to_string());
+    let sysfs_path = Path::new("/sys/class/block").join(fallback_name);
     let mut device = Device::new(
         device_id::other("cdrom", fallback_name),
         DeviceKind::Cdrom,
         name,
         DeviceProperties::Cdrom(CdromInfo {
             device_node: Some(node.to_string()),
-            media_present: None,
+            media_present: read_cdrom_media_present(ctx, &sysfs_path).await,
             firmware: record.revision.clone(),
             capabilities: Vec::new(),
         }),
@@ -378,4 +385,12 @@ async fn read_trimmed(ctx: &ProbeContext<'_>, path: &Path) -> Option<String> {
     }
     let value = result.stdout.trim();
     (!value.is_empty()).then(|| value.to_string())
+}
+
+async fn read_cdrom_media_present(ctx: &ProbeContext<'_>, path: &Path) -> Option<bool> {
+    read_trimmed(ctx, &path.join("size"))
+        .await?
+        .parse::<u64>()
+        .ok()
+        .map(|sectors| sectors > 0)
 }

@@ -1,7 +1,7 @@
 use hw_parser::{
     parse_dmidecode_bios_board, parse_hdparm_identify, parse_hwinfo_disk, parse_lshw_disk,
-    parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k, parse_lsusb,
-    parse_lsusb_verbose, parse_smartctl_json,
+    parse_lshw_storage, parse_lspci_host_bridge_chipset, parse_lspci_nn_k, parse_lspci_vmm_nn_k,
+    parse_lsusb, parse_lsusb_verbose, parse_smartctl_json,
 };
 
 #[test]
@@ -24,6 +24,29 @@ fn parses_lspci_driver_and_modules() {
         records[0].kernel_modules,
         vec!["snd_hda_intel", "snd_soc_avs"]
     );
+}
+
+#[test]
+fn parses_machine_readable_lspci_vendor_and_device_separately() {
+    let records = parse_lspci_vmm_nn_k(
+        "Slot:\t0000:00:10.0\n\
+         Class:\tSCSI storage controller [0100]\n\
+         Vendor:\tBroadcom / LSI [1000]\n\
+         Device:\t53c1030 PCI-X Fusion-MPT Dual Ultra320 SCSI [0030]\n\
+         Driver:\tmptspi\n\
+         Module:\tmptspi\n\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].address, "0000:00:10.0");
+    assert_eq!(records[0].vendor.as_deref(), Some("Broadcom / LSI"));
+    assert_eq!(records[0].vendor_id.as_deref(), Some("1000"));
+    assert_eq!(
+        records[0].device.as_deref(),
+        Some("53c1030 PCI-X Fusion-MPT Dual Ultra320 SCSI")
+    );
+    assert_eq!(records[0].device_id.as_deref(), Some("0030"));
+    assert_eq!(records[0].kernel_driver.as_deref(), Some("mptspi"));
 }
 
 #[test]
@@ -53,6 +76,7 @@ fn parses_deepin_bios_board_detail_fields() {
     );
 
     assert_eq!(record.smbios_version.as_deref(), Some("3.4.0"));
+    assert_eq!(record.bios_version.as_deref(), Some("N2IET98W"));
     assert_eq!(record.bios_address.as_deref(), Some("0xE0000"));
     assert_eq!(record.bios_runtime_size.as_deref(), Some("128 kB"));
     assert_eq!(record.bios_rom_size.as_deref(), Some("16 MB"));
@@ -67,6 +91,77 @@ fn parses_deepin_bios_board_detail_fields() {
         ["Board is a hosting board", "Board is replaceable"]
     );
     assert_eq!(record.board_type.as_deref(), Some("Motherboard"));
+}
+
+#[test]
+fn bios_version_not_overwritten_by_system_information_version() {
+    let record = parse_dmidecode_bios_board(
+        "# dmidecode 3.6\n\
+         SMBIOS 2.7 present.\n\
+         \n\
+         Handle 0x0000, DMI type 0, 26 bytes\n\
+         BIOS Information\n\
+         \tVendor: VMware, Inc.\n\
+         \tVersion: VMW201.00V.21805430.B64.2305221830\n\
+         \tRelease Date: 05/22/2023\n\
+         \tROM Size: 2 MB\n\
+         \n\
+         Handle 0x0001, DMI type 1, 27 bytes\n\
+         System Information\n\
+         \tManufacturer: VMware, Inc.\n\
+         \tProduct Name: VMware20,1\n\
+         \tVersion: None\n\
+         \tSerial Number: VMware-56 4d 92\n\
+         \n\
+         Handle 0x0002, DMI type 2, 15 bytes\n\
+         Base Board Information\n\
+         \tManufacturer: Intel Corporation\n\
+         \tProduct Name: 440BX Desktop Reference Platform\n\
+         \tVersion: None\n",
+    );
+
+    assert_eq!(
+        record.bios_version.as_deref(),
+        Some("VMW201.00V.21805430.B64.2305221830")
+    );
+    assert_eq!(record.bios_vendor.as_deref(), Some("VMware, Inc."));
+    assert_eq!(record.bios_release_date.as_deref(), Some("05/22/2023"));
+    assert_eq!(
+        record.board_product_name.as_deref(),
+        Some("440BX Desktop Reference Platform")
+    );
+    assert_eq!(record.board_version, None);
+}
+
+#[test]
+fn memory_array_fields_not_overwritten_by_memory_device_keys() {
+    let record = parse_dmidecode_bios_board(
+        "# dmidecode 3.6\n\
+         Handle 0x0028, DMI type 16, 23 bytes\n\
+         Physical Memory Array\n\
+         \tLocation: System Board Or Motherboard\n\
+         \tUse: System Memory\n\
+         \tError Correction Type: None\n\
+         \tMaximum Capacity: 17 GB\n\
+         \tError Information Handle: Not Provided\n\
+         \tNumber Of Devices: 64\n\
+         \n\
+         Handle 0x0029, DMI type 17, 40 bytes\n\
+         Memory Device\n\
+         \tArray Handle: 0x0028\n\
+         \tError Information Handle: No Error\n\
+         \tTotal Width: 64 bits\n",
+    );
+
+    assert_eq!(
+        record.memory_array_error_information_handle.as_deref(),
+        Some("Not Provided")
+    );
+    assert_eq!(
+        record.memory_array_location.as_deref(),
+        Some("System Board Or Motherboard")
+    );
+    assert_eq!(record.memory_array_number_of_devices.as_deref(), Some("64"));
 }
 
 #[test]
@@ -114,6 +209,30 @@ fn parses_lsusb_verbose_interface_descriptors() {
     assert_eq!(records[0].class.as_deref(), Some("0e"));
     assert_eq!(records[0].subclass.as_deref(), Some("02"));
     assert_eq!(records[0].protocol.as_deref(), Some("00"));
+}
+
+#[test]
+fn parses_lsusb_verbose_device_descriptor_fields() {
+    let records = parse_lsusb_verbose(
+        "Bus 002 Device 003: ID 0e0f:0003 VMware, Inc. Virtual Mouse\n\
+         Device Descriptor:\n\
+           iManufacturer           1 VMware\n\
+           iProduct                2 VMware Virtual USB Mouse\n\
+           iSerial                 3 VMOUSE123\n\
+           Negotiated speed: Full Speed (12Mbps)\n\
+         Configuration Descriptor:\n\
+           MaxPower                100mA\n",
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].manufacturer.as_deref(), Some("VMware"));
+    assert_eq!(
+        records[0].product.as_deref(),
+        Some("VMware Virtual USB Mouse")
+    );
+    assert_eq!(records[0].serial.as_deref(), Some("VMOUSE123"));
+    assert_eq!(records[0].speed.as_deref(), Some("12"));
+    assert_eq!(records[0].max_power_ma, Some(100));
 }
 
 #[test]

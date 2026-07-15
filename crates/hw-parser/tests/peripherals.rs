@@ -481,6 +481,28 @@ fn parses_cdrom_capabilities() {
 }
 
 #[test]
+fn parses_all_cdrom_capabilities_per_drive() {
+    let info = parse_proc_cdrom_info(
+        "drive name:\t\tsr0\tsr1\n\
+         Can close tray:\t\t1\t0\n\
+         Can open tray:\t\t1\t1\n\
+         Can lock tray:\t\t0\t1\n\
+         Can read multisession:\t1\t0\n\
+         Can play audio:\t\t1\t1\n\
+         Can write DVD-RAM:\t0\t1\n",
+    );
+
+    assert_eq!(
+        info.capabilities_by_drive.get("sr0").unwrap(),
+        &vec!["close-tray", "open-tray", "read-multisession", "play-audio"]
+    );
+    assert_eq!(
+        info.capabilities_by_drive.get("sr1").unwrap(),
+        &vec!["open-tray", "lock-tray", "play-audio", "write-dvd-ram"]
+    );
+}
+
+#[test]
 fn parses_lshw_cdrom_records() {
     let records = parse_lshw_cdrom(
         "  *-cdrom\n\

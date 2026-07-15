@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CdromProcInfo {
     pub drive_names: Vec<String>,
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub capabilities_by_drive: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -32,12 +35,32 @@ pub fn parse_proc_cdrom_info(input: &str) -> CdromProcInfo {
     for line in input.lines() {
         if let Some(rest) = line.strip_prefix("drive name:") {
             info.drive_names = rest.split_whitespace().map(ToOwned::to_owned).collect();
-        } else if line.starts_with("Can read DVD:") && line.ends_with('1') {
-            info.capabilities.push("read-dvd".to_string());
-        } else if line.starts_with("Can write CD-R:") && line.ends_with('1') {
-            info.capabilities.push("write-cd-r".to_string());
-        } else if line.starts_with("Can open tray:") && line.ends_with('1') {
-            info.capabilities.push("open-tray".to_string());
+            for drive in &info.drive_names {
+                info.capabilities_by_drive.entry(drive.clone()).or_default();
+            }
+        } else if let Some(rest) = line.strip_prefix("Can ") {
+            let Some((label, values)) = rest.split_once(':') else {
+                continue;
+            };
+            let capability = label
+                .split_whitespace()
+                .map(str::to_ascii_lowercase)
+                .collect::<Vec<_>>()
+                .join("-");
+            for (index, value) in values.split_whitespace().enumerate() {
+                if value != "1" {
+                    continue;
+                }
+                if !info.capabilities.iter().any(|item| item == &capability) {
+                    info.capabilities.push(capability.clone());
+                }
+                if let Some(drive) = info.drive_names.get(index) {
+                    info.capabilities_by_drive
+                        .entry(drive.clone())
+                        .or_default()
+                        .push(capability.clone());
+                }
+            }
         }
     }
     info

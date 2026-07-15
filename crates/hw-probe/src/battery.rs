@@ -4,7 +4,7 @@ use hw_model::{
     device_id, BatteryInfo, Device, DeviceKind, DeviceProperties, SourceEvidence, SourceKind,
     SourceStatus,
 };
-use hw_parser::parse_upower_dump;
+use hw_parser::{parse_upower_dump, PowerRecord};
 use hw_source::CommandSpec;
 use std::path::Path;
 
@@ -32,9 +32,7 @@ impl Probe for BatteryProbe {
         }
         let devices = parse_upower_dump(&result.stdout)
             .into_iter()
-            .filter(|power| {
-                !is_line_power_device(power.device_path.as_deref(), power.native_path.as_deref())
-            })
+            .filter(is_battery_device)
             .map(|power| {
                 let name = power
                     .native_path
@@ -73,12 +71,27 @@ impl Probe for BatteryProbe {
     }
 }
 
-fn is_line_power_device(device_path: Option<&str>, native_path: Option<&str>) -> bool {
-    [device_path, native_path]
+fn is_battery_device(power: &PowerRecord) -> bool {
+    let excluded_path = [power.device_path.as_deref(), power.native_path.as_deref()]
         .into_iter()
         .flatten()
         .map(str::to_ascii_lowercase)
-        .any(|value| value.contains("line_power"))
+        .any(|value| value.contains("line_power") || value.contains("displaydevice"));
+    if excluded_path || power.power_supply == Some(false) {
+        return false;
+    }
+
+    power.state.is_some()
+        || power.technology.is_some()
+        || power.vendor.is_some()
+        || power.model.is_some()
+        || power.serial.is_some()
+        || power.capacity_percent.is_some()
+        || power.energy_full_wh.is_some()
+        || power.energy_design_wh.is_some()
+        || power.energy_now_wh.is_some()
+        || power.voltage_v.is_some()
+        || power.present.is_some()
 }
 
 async fn probe_sysfs_batteries(ctx: &ProbeContext<'_>) -> Vec<Device> {

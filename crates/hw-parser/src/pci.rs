@@ -78,6 +78,100 @@ pub fn parse_lspci_nn_k(input: &str) -> Vec<PciRecord> {
     records
 }
 
+pub fn parse_lspci_vmm_nn_k(input: &str) -> Vec<PciRecord> {
+    let mut records = Vec::new();
+    let mut current: Option<PciRecord> = None;
+
+    for line in input.lines().chain(std::iter::once("")) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if let Some(record) = current.take() {
+                if !record.address.is_empty() {
+                    records.push(record);
+                }
+            }
+            continue;
+        }
+        let Some((tag, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        if tag == "Slot" {
+            if let Some(record) = current.take() {
+                if !record.address.is_empty() {
+                    records.push(record);
+                }
+            }
+            current = Some(PciRecord {
+                address: normalize_pci_address(value),
+                ..Default::default()
+            });
+            continue;
+        }
+        let Some(record) = current.as_mut() else {
+            continue;
+        };
+        match tag {
+            "Class" => {
+                let (name, id) = split_lspci_name_and_id(value);
+                record.class_name = name;
+                record.class_id = id;
+            }
+            "Vendor" => {
+                let (name, id) = split_lspci_name_and_id(value);
+                record.vendor = name;
+                record.vendor_id = id;
+            }
+            "Device" => {
+                let (name, id) = split_lspci_name_and_id(value);
+                record.device = name;
+                record.device_id = id;
+            }
+            "SVendor" => {
+                let (_, id) = split_lspci_name_and_id(value);
+                record.subsystem_vendor_id = id;
+            }
+            "SDevice" => {
+                let (name, id) = split_lspci_name_and_id(value);
+                record.subsystem = name;
+                record.subsystem_device_id = id;
+            }
+            "Driver" => record.kernel_driver = clean_lspci_value(value),
+            "Module" => {
+                if let Some(module) = clean_lspci_value(value) {
+                    record.kernel_modules.push(module);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    records
+}
+
+fn normalize_pci_address(value: &str) -> String {
+    if value.matches(':').count() >= 2 {
+        value.to_string()
+    } else {
+        format!("0000:{value}")
+    }
+}
+
+fn split_lspci_name_and_id(value: &str) -> (Option<String>, Option<String>) {
+    let (name, id) = value
+        .rsplit_once(" [")
+        .and_then(|(name, id)| id.strip_suffix(']').map(|id| (name, id)))
+        .filter(|(_, id)| id.len() == 4 && id.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .map(|(name, id)| (name.trim(), Some(id.to_ascii_lowercase())))
+        .unwrap_or((value.trim(), None));
+    ((!name.is_empty()).then(|| name.to_string()), id)
+}
+
+fn clean_lspci_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 pub fn parse_lspci_host_bridge_chipset(input: &str) -> Option<String> {
     let records = parse_lspci_nn_k(input);
     if let Some(chipset) = records

@@ -17,7 +17,7 @@ async fn audio_probe_reads_proc_asound() {
             " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xa1230000 irq 145\n",
         )
         .with_glob(
-            "/proc/asound/card0/codec#*",
+            "/proc/asound/card0/codec*",
             vec![PathBuf::from("/proc/asound/card0/codec#0")],
         )
         .with_file("/proc/asound/card0/codec#0", "Codec: Realtek ALC256\n")
@@ -60,6 +60,30 @@ async fn audio_probe_reads_proc_asound() {
     assert!(result.devices[0].sources.iter().any(|source| source.source
         == "/sys/class/sound/card0"
         && source.kind == SourceKind::Sysfs));
+}
+
+#[tokio::test]
+async fn audio_probe_reads_ac97_codec_file() {
+    let runner = FakeSourceRunner::new()
+        .with_file(
+            "/proc/asound/cards",
+            " 0 [AC97           ]: ICH - Intel ICH\n                      Intel ICH at 0xa1230000 irq 145\n",
+        )
+        .with_glob(
+            "/proc/asound/card0/codec*",
+            vec![PathBuf::from("/proc/asound/card0/codec97#0")],
+        )
+        .with_file(
+            "/proc/asound/card0/codec97#0",
+            "Codec: SigmaTel STAC9700\n",
+        );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = AudioProbe.probe(&ctx).await;
+
+    let DeviceProperties::Audio(info) = &result.devices[0].properties else {
+        panic!("expected audio properties");
+    };
+    assert_eq!(info.codec.as_deref(), Some("SigmaTel STAC9700"));
 }
 
 #[tokio::test]
@@ -326,6 +350,28 @@ async fn battery_probe_filters_line_power_devices() {
 
     assert_eq!(result.devices.len(), 1);
     assert_eq!(result.devices[0].kind, DeviceKind::Battery);
+    assert_eq!(result.devices[0].name, "BAT0");
+}
+
+#[tokio::test]
+async fn battery_probe_filters_display_device_and_empty_records() {
+    let runner = FakeSourceRunner::new().with_command(
+        "upower",
+        ["--dump"],
+        "Device: /org/freedesktop/UPower/devices/DisplayDevice\n\
+           power supply: no\n\
+         Device: /org/freedesktop/UPower/devices/unknown_placeholder\n\
+           native-path: placeholder\n\
+         Device: /org/freedesktop/UPower/devices/battery_BAT0\n\
+           native-path: BAT0\n\
+           power supply: yes\n\
+           state: discharging\n\
+           capacity: 88%\n",
+    );
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BatteryProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices.len(), 1);
     assert_eq!(result.devices[0].name, "BAT0");
 }
 
@@ -672,6 +718,26 @@ async fn bluetooth_probe_warns_when_paired_devices_source_fails() {
         result.warnings[0].source.as_deref(),
         Some("bluetoothctl paired-devices")
     );
+}
+
+#[tokio::test]
+async fn bluetooth_probe_uses_hci_interface_name_when_controller_is_down() {
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "hciconfig",
+            ["-a"],
+            "hci0:   Type: Primary  Bus: USB\n        BD Address: AA:BB:CC:DD:EE:FF\n        DOWN\n",
+        )
+        .with_command("bluetoothctl", ["paired-devices"], "");
+    let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+    let result = BluetoothProbe.probe(&ctx).await;
+
+    assert_eq!(result.devices[0].name, "hci0");
+    let DeviceProperties::Bluetooth(info) = &result.devices[0].properties else {
+        panic!("expected bluetooth properties");
+    };
+    assert_eq!(info.controller_name.as_deref(), Some("hci0"));
+    assert_eq!(info.powered, Some(false));
 }
 
 #[tokio::test]
@@ -1352,6 +1418,22 @@ async fn cdrom_probe_enriches_proc_drives_from_sysfs_identity() {
         .sources
         .iter()
         .any(|source| source.kind == SourceKind::Sysfs && source.source == "/sys/class/block/sr0"));
+}
+
+#[tokio::test]
+async fn cdrom_probe_reads_media_presence_from_sysfs_size() {
+    for (size, expected) in [("0\n", false), ("2048\n", true)] {
+        let runner = FakeSourceRunner::new()
+            .with_file("/proc/sys/dev/cdrom/info", "drive name:\t\tsr0\n")
+            .with_file("/sys/class/block/sr0/size", size);
+        let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
+        let result = CdromProbe.probe(&ctx).await;
+
+        let DeviceProperties::Cdrom(info) = &result.devices[0].properties else {
+            panic!("expected cdrom properties");
+        };
+        assert_eq!(info.media_present, Some(expected));
+    }
 }
 
 #[tokio::test]

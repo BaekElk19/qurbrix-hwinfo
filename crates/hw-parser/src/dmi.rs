@@ -402,9 +402,11 @@ pub fn parse_dmidecode_bios_board(input: &str) -> DmiBiosBoardRecord {
         }
         if trimmed == "BIOS Information"
             || trimmed == "BIOS Language Information"
+            || trimmed == "System Information"
             || trimmed == "Base Board Information"
             || trimmed == "Chassis Information"
             || trimmed == "Physical Memory Array"
+            || trimmed == "Memory Device"
         {
             section = trimmed;
             collecting_installable_languages = false;
