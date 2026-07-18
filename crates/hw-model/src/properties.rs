@@ -247,6 +247,17 @@ pub struct StorageInfo {
     pub error_log_entries: Option<u64>,
     #[serde(default)]
     pub temperature_sensors_celsius: Vec<i32>,
+    // New fields to match deepin-devicemanager output
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_number: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_logical_block_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_physical_block_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware_class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -330,6 +341,13 @@ pub struct NetworkInfo {
     pub ipv6: Vec<String>,
     #[serde(default)]
     pub mtu: Option<u32>,
+    // New fields to match deepin-devicemanager output
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phys_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modalias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -339,6 +357,29 @@ pub struct AudioInfo {
     pub codec: Option<String>,
     pub subsystem: Option<String>,
     pub profiles: Vec<String>,
+    // New fields to match deepin-devicemanager output
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sysfs_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub irq: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phys_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modalias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_device: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_vendor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

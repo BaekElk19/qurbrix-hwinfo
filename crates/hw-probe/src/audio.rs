@@ -52,6 +52,7 @@ impl Probe for AudioProbe {
                     codec: enrichment.codec.clone(),
                     subsystem: enrichment.subsystem.clone(),
                     profiles: card_profiles.clone(),
+                    ..Default::default()
                 }),
             )
             .with_source(SourceEvidence {
@@ -104,6 +105,16 @@ struct AudioEnrichment {
     subsystem: Option<String>,
     sysfs_source: String,
     sysfs_contributed: bool,
+    // New fields for AudioInfo
+    sysfs_path: Option<String>,
+    revision: Option<String>,
+    irq: Option<String>,
+    memory_address: Option<String>,
+    capabilities: Option<String>,
+    phys_id: Option<String>,
+    modalias: Option<String>,
+    sub_device: Option<String>,
+    sub_vendor: Option<String>,
 }
 
 async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
@@ -143,6 +154,7 @@ async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
                 codec: enrichment.codec.clone(),
                 subsystem: enrichment.subsystem.clone(),
                 profiles: card_profiles.clone(),
+                ..Default::default()
             }),
         )
         .with_source(SourceEvidence {
@@ -243,11 +255,22 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
     let subsystem_device = read_trimmed(ctx, &sysfs_path.join("device/subsystem_device"))
         .await
         .map(normalize_hex_id);
-    let subsystem = match (subsystem_vendor, subsystem_device) {
+    let subsystem = match (subsystem_vendor.clone(), subsystem_device.clone()) {
         (Some(vendor), Some(device)) => Some(format!("{vendor}:{device}")),
         _ => None,
     };
     let (codec, codec_source) = read_audio_codec(ctx, index).await;
+
+    // Read additional sysfs fields for AudioInfo
+    let modalias = read_trimmed(ctx, &sysfs_path.join("device/modalias")).await;
+    let revision = read_trimmed(ctx, &sysfs_path.join("device/revision")).await;
+    let irq = read_trimmed(ctx, &sysfs_path.join("device/irq")).await;
+    let memory_address = read_trimmed(ctx, &sysfs_path.join("device/resource")).await;
+    let capabilities = read_trimmed(ctx, &sysfs_path.join("device/class")).await;
+    let phys_id = bus.as_ref().map(|b| match b {
+        BusInfo::Pci { address, .. } => address.clone(),
+        _ => String::new(),
+    });
 
     AudioEnrichment {
         sysfs_source: sysfs_path.display().to_string(),
@@ -262,7 +285,16 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
         vendor,
         codec,
         codec_source,
-        subsystem,
+        subsystem: subsystem.clone(),
+        sysfs_path: Some(sysfs_path.display().to_string()),
+        revision,
+        irq,
+        memory_address,
+        capabilities,
+        phys_id,
+        modalias,
+        sub_device: subsystem_device,
+        sub_vendor: subsystem_vendor,
     }
 }
 
@@ -303,6 +335,20 @@ fn apply_audio_enrichment(mut device: Device, enrichment: AudioEnrichment) -> De
             provider: None,
             status: DriverStatus::InUse,
         });
+    }
+
+    // Fill AudioInfo new fields
+    if let DeviceProperties::Audio(ref mut info) = device.properties {
+        info.sysfs_path = enrichment.sysfs_path;
+        info.revision = enrichment.revision;
+        info.irq = enrichment.irq;
+        info.memory_address = enrichment.memory_address;
+        info.capabilities = enrichment.capabilities;
+        info.phys_id = enrichment.phys_id;
+        info.modalias = enrichment.modalias;
+        info.driver_status = Some("active".to_string());
+        info.sub_device = enrichment.sub_device;
+        info.sub_vendor = enrichment.sub_vendor;
     }
 
     if enrichment.sysfs_contributed

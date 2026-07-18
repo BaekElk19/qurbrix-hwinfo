@@ -1499,6 +1499,9 @@ struct NetworkSysfsEnrichment {
     modules: Vec<String>,
     bus: Option<BusInfo>,
     contributed: bool,
+    // New fields for NetworkInfo
+    phys_id: Option<String>,
+    modalias: Option<String>,
 }
 
 impl NetworkSysfsEnrichment {
@@ -1580,6 +1583,13 @@ async fn network_sysfs_enrichment(ctx: &ProbeContext<'_>, ifname: &str) -> Netwo
     let ethernet = !wireless
         && (driver.is_some() || speed_mbps.is_some() || duplex.is_some() || bus.is_some());
 
+    // Read new sysfs fields for NetworkInfo
+    let modalias = read_optional_trimmed(ctx, &path.join("device/modalias")).await;
+    let phys_id = bus.as_ref().map(|b| match b {
+        BusInfo::Pci { address, .. } => address.clone(),
+        _ => String::new(),
+    });
+
     NetworkSysfsEnrichment {
         source: path.display().to_string(),
         speed_mbps,
@@ -1590,6 +1600,8 @@ async fn network_sysfs_enrichment(ctx: &ProbeContext<'_>, ifname: &str) -> Netwo
         modules,
         bus,
         contributed: false,
+        phys_id,
+        modalias,
     }
 }
 
@@ -1618,6 +1630,27 @@ fn apply_network_enrichment(mut device: Device, mut enrichment: NetworkSysfsEnri
     if enrichment.speed_mbps.is_some() || enrichment.duplex.is_some() {
         enrichment.contributed = true;
     }
+
+    // Fill NetworkInfo new fields
+    if let DeviceProperties::Network(ref mut network) = device.properties {
+        if network.phys_id.is_none() && enrichment.phys_id.is_some() {
+            network.phys_id = enrichment.phys_id;
+            enrichment.contributed = true;
+        }
+        if network.modalias.is_none() && enrichment.modalias.is_some() {
+            network.modalias = enrichment.modalias;
+            enrichment.contributed = true;
+        }
+        if network.duplex.is_none() && enrichment.duplex.is_some() {
+            network.duplex = enrichment.duplex;
+            enrichment.contributed = true;
+        }
+        if network.speed_mbps.is_none() && enrichment.speed_mbps.is_some() {
+            network.speed_mbps = enrichment.speed_mbps;
+            enrichment.contributed = true;
+        }
+    }
+
     if enrichment.contributed
         && !device
             .sources
@@ -1679,6 +1712,11 @@ fn apply_network_lshw_enrichment(
         }
         if network.firmware.is_none() && record.firmware.is_some() {
             network.firmware = record.firmware.clone();
+            contributed = true;
+        }
+        // Fill driver_version from lshw
+        if network.driver_version.is_none() && record.driver_version.is_some() {
+            network.driver_version = record.driver_version.clone();
             contributed = true;
         }
     }
@@ -2047,6 +2085,15 @@ async fn apply_storage_sysfs_enrichment(
     };
     let mut contributed = false;
 
+    // Read new sysfs fields for StorageInfo
+    let device_number = read_optional_trimmed(ctx, &sysfs_path.join("dev")).await;
+    let logical_block_size = read_optional_trimmed(ctx, &sysfs_path.join("queue/logical_block_size"))
+        .await
+        .and_then(|s| s.parse::<u64>().ok());
+    let physical_block_size = read_optional_trimmed(ctx, &sysfs_path.join("queue/physical_block_size"))
+        .await
+        .and_then(|s| s.parse::<u64>().ok());
+
     if let Some(serial) = serial_fallback {
         device.serial = Some(serial);
         if let DeviceProperties::Storage(storage) = &device.properties {
@@ -2092,6 +2139,27 @@ async fn apply_storage_sysfs_enrichment(
         if storage.vid_pid.is_none() && vid_pid.is_some() {
             storage.vid_pid = vid_pid.clone();
             storage.phys_id = storage.phys_id.take().or(vid_pid);
+            contributed = true;
+        }
+        // Fill new fields
+        if storage.device_number.is_none() && device_number.is_some() {
+            storage.device_number = device_number;
+            contributed = true;
+        }
+        if storage.geometry_logical_block_size.is_none() && logical_block_size.is_some() {
+            storage.geometry_logical_block_size = logical_block_size;
+            contributed = true;
+        }
+        if storage.geometry_physical_block_size.is_none() && physical_block_size.is_some() {
+            storage.geometry_physical_block_size = physical_block_size;
+            contributed = true;
+        }
+        if storage.hardware_class.is_none() {
+            storage.hardware_class = Some("disk".to_string());
+            contributed = true;
+        }
+        if storage.description.is_none() {
+            storage.description = Some("disk".to_string());
             contributed = true;
         }
     }
