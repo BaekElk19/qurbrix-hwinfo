@@ -2,10 +2,23 @@ use crate::{CommandSpec, GlobResult, SourceBytesResult, SourceErrorKind, SourceR
 use async_trait::async_trait;
 use std::{
     collections::HashMap,
+    io::Read,
     path::{Path, PathBuf},
     time::Duration,
 };
 use tokio::{fs, process::Command, time};
+
+/// Read a file into a Vec<u8> without relying on file metadata size.
+/// `std::fs::read` uses `small_probe_read` which can panic on virtual
+/// files in /proc and /sys that report misleading sizes.  This helper
+/// opens the file and calls `Read::read_to_end` with a generous initial
+/// capacity so it never depends on metadata.
+fn read_file_safe(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    let mut buf = Vec::with_capacity(4096);
+    file.read_to_end(&mut buf)?;
+    Ok(buf)
+}
 
 #[async_trait]
 pub trait SourceRunner: Send + Sync {
@@ -53,28 +66,32 @@ impl SourceRunner for RealSourceRunner {
 
     async fn read_file(&self, path: &Path) -> SourceResult {
         let source = path.display().to_string();
-        match fs::read(path).await {
-            Ok(bytes) => SourceResult::success(source, String::from_utf8_lossy(&bytes)),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+        let path = path.to_owned();
+        match tokio::task::spawn_blocking(move || read_file_safe(&path)).await {
+            Ok(Ok(bytes)) => SourceResult::success(source, String::from_utf8_lossy(&bytes)),
+            Ok(Err(err)) if err.kind() == std::io::ErrorKind::NotFound => {
                 SourceResult::error(source, SourceErrorKind::Missing, err.to_string())
             }
-            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            Ok(Err(err)) if err.kind() == std::io::ErrorKind::PermissionDenied => {
                 SourceResult::error(source, SourceErrorKind::PermissionDenied, err.to_string())
             }
+            Ok(Err(err)) => SourceResult::error(source, SourceErrorKind::Failed, err.to_string()),
             Err(err) => SourceResult::error(source, SourceErrorKind::Failed, err.to_string()),
         }
     }
 
     async fn read_file_bytes(&self, path: &Path) -> SourceBytesResult {
         let source = path.display().to_string();
-        match fs::read(path).await {
-            Ok(bytes) => SourceBytesResult::success(source, bytes),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+        let path = path.to_owned();
+        match tokio::task::spawn_blocking(move || read_file_safe(&path)).await {
+            Ok(Ok(bytes)) => SourceBytesResult::success(source, bytes),
+            Ok(Err(err)) if err.kind() == std::io::ErrorKind::NotFound => {
                 SourceBytesResult::error(source, SourceErrorKind::Missing, err.to_string())
             }
-            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            Ok(Err(err)) if err.kind() == std::io::ErrorKind::PermissionDenied => {
                 SourceBytesResult::error(source, SourceErrorKind::PermissionDenied, err.to_string())
             }
+            Ok(Err(err)) => SourceBytesResult::error(source, SourceErrorKind::Failed, err.to_string()),
             Err(err) => SourceBytesResult::error(source, SourceErrorKind::Failed, err.to_string()),
         }
     }
