@@ -23,11 +23,21 @@ async fn audio_probe_reads_proc_asound() {
         .with_file("/proc/asound/card0/codec#0", "Codec: Realtek ALC256\n")
         .with_file(
             "/sys/class/sound/card0/device/uevent",
-            "DRIVER=snd_hda_intel\n",
+            "DRIVER=snd_hda_intel\nPCI_CLASS=40300\nPCI_ID=8086:A0C8\nPCI_SUBSYS_ID=1028:087C\nPCI_SLOT_NAME=0000:00:1f.3\n",
+        )
+        .with_canonical_path(
+            "/sys/class/sound/card0",
+            "/sys/devices/pci0000:00/0000:00:1f.3/sound/card0",
         )
         .with_file("/sys/class/sound/card0/device/vendor", "0x8086\n")
         .with_file("/sys/class/sound/card0/device/subsystem_vendor", "0x1028\n")
-        .with_file("/sys/class/sound/card0/device/subsystem_device", "0x087c\n");
+        .with_file("/sys/class/sound/card0/device/subsystem_device", "0x087c\n")
+        .with_file("/sys/class/sound/card0/device/revision", "0x30\n")
+        .with_file("/sys/class/sound/card0/device/irq", "145\n")
+        .with_file(
+            "/sys/class/sound/card0/device/modalias",
+            "pci:v00008086d0000A0C8sv00001028sd0000087Cbc04sc03i80\n",
+        );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = AudioProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Audio);
@@ -52,6 +62,23 @@ async fn audio_probe_reads_proc_asound() {
     };
     assert_eq!(info.codec.as_deref(), Some("Realtek ALC256"));
     assert_eq!(info.subsystem.as_deref(), Some("1028:087c"));
+    assert_eq!(
+        info.sysfs_path.as_deref(),
+        Some("/devices/pci0000:00/0000:00:1f.3")
+    );
+    assert_eq!(info.revision.as_deref(), Some("30"));
+    assert_eq!(info.irq.as_deref(), Some("145"));
+    assert_eq!(info.phys_id.as_deref(), Some("0x8086a0c8"));
+    assert!(info
+        .modalias
+        .as_deref()
+        .is_some_and(|value| value.starts_with("pci:v00008086")));
+    assert_eq!(
+        info.driver_status.as_deref(),
+        Some("snd_hda_intel is active")
+    );
+    assert_eq!(info.sub_device.as_deref(), Some("pci 0x087c"));
+    assert_eq!(info.sub_vendor.as_deref(), Some("pci 0x1028"));
     assert!(result.devices[0]
         .sources
         .iter()
@@ -145,8 +172,11 @@ async fn audio_probe_enriches_human_readable_lshw_fields() {
                   description: Audio device\n\
                   product: Alder Lake PCH-P High Definition Audio Controller\n\
                   vendor: Intel Corporation\n\
+                  version: 30\n\
                   bus info: pci@0000:00:1f.3\n\
-                  configuration: driver=snd_hda_intel latency=64\n",
+                  capabilities: pm msi bus_master cap_list\n\
+                  configuration: driver=snd_hda_intel latency=64 irq=145\n\
+                  resources: irq:145 memory:a1230000-a1233fff\n",
         );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = AudioProbe.probe(&ctx).await;
@@ -157,6 +187,17 @@ async fn audio_probe_enriches_human_readable_lshw_fields() {
         device.model.as_deref(),
         Some("Alder Lake PCH-P High Definition Audio Controller")
     );
+    let DeviceProperties::Audio(info) = &device.properties else {
+        panic!("expected audio properties");
+    };
+    assert_eq!(info.revision.as_deref(), Some("30"));
+    assert_eq!(info.irq.as_deref(), Some("145"));
+    assert_eq!(
+        info.capabilities.as_deref(),
+        Some("pm msi bus_master cap_list")
+    );
+    assert_eq!(info.memory_address.as_deref(), Some("a1230000-a1233fff"));
+    assert_eq!(info.latency.as_deref(), Some("64"));
     assert!(device
         .sources
         .iter()
@@ -185,6 +226,13 @@ async fn audio_probe_enriches_human_readable_hwinfo_fields() {
              \tDevice: pci 0xa348 \"Cannon Lake PCH cAVS\"\n\
              \tDriver: \"snd_hda_intel\"\n\
              \tDriver Modules: \"snd_hda_intel\"\n\
+             \tRevision: 30\n\
+             \tIRQ: 145\n\
+             \tMemory Range: 0xa1230000-0xa1233fff (rw,non-prefetchable)\n\
+             \tDriver Status: snd_hda_intel is active\n\
+             \tSubDevice: pci 0x1234\n\
+             \tSubVendor: pci 0x8086 \"Intel Corporation\"\n\
+             \tModule Alias: pci:v00008086d0000A348sv00008086sd00001234bc04sc03i00\n\
              \tSysFS BusID: 0000:00:1f.3\n\
              \tSysFS ID: /class/sound/card0\n",
         );
@@ -208,6 +256,21 @@ async fn audio_probe_enriches_human_readable_hwinfo_fields() {
             .map(|driver| driver.modules.as_slice()),
         Some(&["snd_hda_intel".to_string()][..])
     );
+    let DeviceProperties::Audio(info) = &device.properties else {
+        panic!("expected audio properties");
+    };
+    assert_eq!(info.revision.as_deref(), Some("30"));
+    assert_eq!(info.irq.as_deref(), Some("145"));
+    assert_eq!(
+        info.memory_address.as_deref(),
+        Some("0xa1230000-0xa1233fff (rw,non-prefetchable)")
+    );
+    assert_eq!(
+        info.driver_status.as_deref(),
+        Some("snd_hda_intel is active")
+    );
+    assert_eq!(info.sub_device.as_deref(), Some("pci 0x1234"));
+    assert_eq!(info.sub_vendor.as_deref(), Some("Intel Corporation"));
     assert!(device
         .sources
         .iter()

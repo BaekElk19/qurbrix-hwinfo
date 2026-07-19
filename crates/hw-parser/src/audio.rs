@@ -13,8 +13,14 @@ pub struct AsoundCardRecord {
 pub struct LshwMultimediaRecord {
     pub product: Option<String>,
     pub vendor: Option<String>,
+    pub description: Option<String>,
+    pub version: Option<String>,
     pub bus_info: Option<String>,
     pub driver: Option<String>,
+    pub irq: Option<String>,
+    pub capabilities: Vec<String>,
+    pub memory_address: Option<String>,
+    pub latency: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -26,6 +32,13 @@ pub struct HwinfoSoundRecord {
     pub driver_modules: Vec<String>,
     pub pci_address: Option<String>,
     pub card_index: Option<u32>,
+    pub revision: Option<String>,
+    pub irq: Option<String>,
+    pub memory_address: Option<String>,
+    pub driver_status: Option<String>,
+    pub sub_device: Option<String>,
+    pub sub_vendor: Option<String>,
+    pub modalias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -77,8 +90,17 @@ pub fn parse_lshw_multimedia(input: &str) -> Vec<LshwMultimediaRecord> {
         match key.trim() {
             "product" => record.product = clean_lshw_multimedia_value(value),
             "vendor" => record.vendor = clean_lshw_multimedia_value(value),
+            "description" => record.description = clean_lshw_multimedia_value(value),
+            "version" => record.version = clean_lshw_multimedia_value(value),
             "bus info" => record.bus_info = clean_lshw_multimedia_value(value),
+            "capabilities" => {
+                record.capabilities = value
+                    .split_whitespace()
+                    .filter_map(clean_lshw_multimedia_value)
+                    .collect()
+            }
             "configuration" => parse_lshw_multimedia_configuration(record, value),
+            "resources" => parse_lshw_multimedia_resources(record, value),
             _ => {}
         }
     }
@@ -164,6 +186,13 @@ fn parse_hwinfo_sound_section(lines: &[&str]) -> Option<HwinfoSoundRecord> {
             "Driver Modules" => record.driver_modules = clean_hwinfo_modules(value),
             "SysFS BusID" => record.pci_address = clean_hwinfo_pci_address(value),
             "SysFS ID" => record.card_index = parse_hwinfo_sound_card_index(value),
+            "Revision" => record.revision = clean_hwinfo_value(value),
+            "IRQ" => record.irq = clean_hwinfo_value(value),
+            "Memory Range" => record.memory_address = clean_hwinfo_value(value),
+            "Driver Status" => record.driver_status = clean_hwinfo_value(value),
+            "SubDevice" => record.sub_device = clean_hwinfo_value(value),
+            "SubVendor" => record.sub_vendor = clean_hwinfo_value(value),
+            "Module Alias" => record.modalias = clean_hwinfo_value(value),
             _ => {}
         }
     }
@@ -222,9 +251,33 @@ fn parse_lshw_multimedia_configuration(record: &mut LshwMultimediaRecord, value:
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };
-        if key == "driver" {
-            record.driver = clean_lshw_multimedia_value(value);
+        match key {
+            "driver" => record.driver = clean_lshw_multimedia_value(value),
+            "irq" => record.irq = clean_lshw_multimedia_value(value),
+            "latency" => record.latency = clean_lshw_multimedia_value(value),
+            _ => {}
         }
+    }
+}
+
+fn parse_lshw_multimedia_resources(record: &mut LshwMultimediaRecord, value: &str) {
+    let mut memory = Vec::new();
+    for part in value.split_whitespace() {
+        let Some((kind, value)) = part.split_once(':') else {
+            continue;
+        };
+        match kind {
+            "irq" if record.irq.is_none() => record.irq = clean_lshw_multimedia_value(value),
+            "memory" => {
+                if let Some(value) = clean_lshw_multimedia_value(value) {
+                    memory.push(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    if !memory.is_empty() {
+        record.memory_address = Some(memory.join("; "));
     }
 }
 

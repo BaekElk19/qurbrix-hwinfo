@@ -1260,6 +1260,10 @@ async fn network_probe_preserves_pci_identity_and_modules_from_sysfs() {
             "/sys/class/net/enp1s0/device/uevent",
             "DRIVER=e1000e\nPCI_CLASS=20000\nPCI_ID=8086:15F3\nPCI_SUBSYS_ID=8086:0000\nPCI_SLOT_NAME=0000:01:00.0\n",
         )
+        .with_file(
+            "/sys/class/net/enp1s0/device/modalias",
+            "pci:v00008086d000015F3sv00008086sd00000000bc02sc00i00\n",
+        )
         .with_glob(
             "/sys/class/net/enp1s0/device/driver/module/drivers/*",
             vec![PathBuf::from(
@@ -1288,6 +1292,14 @@ async fn network_probe_preserves_pci_identity_and_modules_from_sysfs() {
             .map(|driver| driver.modules.as_slice()),
         Some(&["e1000e".to_string()][..])
     );
+    let DeviceProperties::Network(network) = &device.properties else {
+        panic!("expected network properties");
+    };
+    assert_eq!(network.phys_id.as_deref(), Some("0x808615f3"));
+    assert!(network
+        .modalias
+        .as_deref()
+        .is_some_and(|value| value.starts_with("pci:v00008086")));
 }
 
 #[tokio::test]
@@ -1357,6 +1369,7 @@ async fn network_probe_enriches_human_readable_lshw_fields() {
         DeviceProperties::Network(network) => {
             assert_eq!(network.speed_mbps, Some(1000));
             assert_eq!(network.firmware.as_deref(), Some("0.8-4"));
+            assert_eq!(network.driver_version.as_deref(), Some("6.8.0"));
         }
         other => panic!("expected network properties, got {other:?}"),
     }
@@ -1505,14 +1518,26 @@ async fn network_probe_warns_when_json_output_is_malformed() {
 
 #[tokio::test]
 async fn storage_probe_outputs_storage_device() {
-    let runner = FakeSourceRunner::new().with_command(
-        "lsblk",
-        ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
-        r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
-    );
+    let runner = FakeSourceRunner::new()
+        .with_command(
+            "lsblk",
+            ["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,WWN,REV,MOUNTPOINT,FSTYPE,PARTUUID,LABEL"],
+            r#"{"blockdevices":[{"name":"sda","type":"disk","size":1024,"model":"Disk","serial":"S1","tran":"sata"}]}"#,
+        )
+        .with_file("/sys/block/sda/dev", "8:0\n")
+        .with_file("/sys/block/sda/queue/logical_block_size", "512\n")
+        .with_file("/sys/block/sda/queue/physical_block_size", "4096\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
     assert_eq!(result.devices[0].kind, DeviceKind::Storage);
+    let DeviceProperties::Storage(storage) = &result.devices[0].properties else {
+        panic!("expected storage properties");
+    };
+    assert_eq!(storage.device_number.as_deref(), Some("block 8:0"));
+    assert_eq!(storage.geometry_logical_block_size, Some(512));
+    assert_eq!(storage.geometry_physical_block_size, Some(4096));
+    assert_eq!(storage.hardware_class.as_deref(), Some("disk"));
+    assert_eq!(storage.description.as_deref(), Some("disk"));
 }
 
 #[tokio::test]
@@ -2501,6 +2526,9 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
         .with_file("/sys/block/sda/device/spec_version", "3.1\n")
         .with_file("/sys/block/sda/device/modalias", "scsi:t-0x00\n")
         .with_file("/sys/block/sda/device/unique_number", "UNIQUE-S12345\n")
+        .with_file("/sys/block/sda/dev", "8:0\n")
+        .with_file("/sys/block/sda/queue/logical_block_size", "512\n")
+        .with_file("/sys/block/sda/queue/physical_block_size", "4096\n")
         .with_file("/sys/block/sda/queue/rotational", "0\n");
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
@@ -2547,6 +2575,11 @@ async fn storage_probe_uses_sysfs_when_lsblk_is_missing() {
             assert_eq!(storage.modalias.as_deref(), Some("scsi:t-0x00"));
             assert_eq!(storage.wwn.as_deref(), Some("naa.5002538f00000000"));
             assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
+            assert_eq!(storage.device_number.as_deref(), Some("block 8:0"));
+            assert_eq!(storage.geometry_logical_block_size, Some(512));
+            assert_eq!(storage.geometry_physical_block_size, Some(4096));
+            assert_eq!(storage.hardware_class.as_deref(), Some("disk"));
+            assert_eq!(storage.description.as_deref(), Some("disk"));
         }
         other => panic!("expected storage properties, got {other:?}"),
     }
