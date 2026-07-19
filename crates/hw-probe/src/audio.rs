@@ -1,5 +1,5 @@
 use crate::{
-    sysfs_pci::{pci_bus_from_uevent, read_kernel_modules},
+    sysfs_pci::{pci_bus_from_uevent, pci_phys_id, read_kernel_modules},
     Probe, ProbeContext, ProbeResult,
 };
 use async_trait::async_trait;
@@ -105,16 +105,14 @@ struct AudioEnrichment {
     subsystem: Option<String>,
     sysfs_source: String,
     sysfs_contributed: bool,
-    // New fields for AudioInfo
     sysfs_path: Option<String>,
     revision: Option<String>,
     irq: Option<String>,
-    memory_address: Option<String>,
-    capabilities: Option<String>,
     phys_id: Option<String>,
     modalias: Option<String>,
     sub_device: Option<String>,
     sub_vendor: Option<String>,
+    driver_status: Option<String>,
 }
 
 async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
@@ -260,17 +258,14 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
         _ => None,
     };
     let (codec, codec_source) = read_audio_codec(ctx, index).await;
-
-    // Read additional sysfs fields for AudioInfo
+    let canonical_path = canonical_audio_device_path(ctx, &sysfs_path, index).await;
     let modalias = read_trimmed(ctx, &sysfs_path.join("device/modalias")).await;
-    let revision = read_trimmed(ctx, &sysfs_path.join("device/revision")).await;
+    let revision = read_trimmed(ctx, &sysfs_path.join("device/revision"))
+        .await
+        .map(normalize_hex_id);
     let irq = read_trimmed(ctx, &sysfs_path.join("device/irq")).await;
-    let memory_address = read_trimmed(ctx, &sysfs_path.join("device/resource")).await;
-    let capabilities = read_trimmed(ctx, &sysfs_path.join("device/class")).await;
-    let phys_id = bus.as_ref().map(|b| match b {
-        BusInfo::Pci { address, .. } => address.clone(),
-        _ => String::new(),
-    });
+    let phys_id = pci_phys_id(bus.as_ref());
+    let driver_status = driver.as_ref().map(|driver| format!("{driver} is active"));
 
     AudioEnrichment {
         sysfs_source: sysfs_path.display().to_string(),
@@ -278,24 +273,42 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
             || !modules.is_empty()
             || bus.is_some()
             || vendor.is_some()
-            || subsystem.is_some(),
+            || subsystem.is_some()
+            || canonical_path.is_some()
+            || revision.is_some()
+            || irq.is_some()
+            || modalias.is_some(),
         driver,
         modules,
         bus,
         vendor,
         codec,
         codec_source,
-        subsystem: subsystem.clone(),
-        sysfs_path: Some(sysfs_path.display().to_string()),
+        subsystem,
+        sysfs_path: canonical_path,
         revision,
         irq,
-        memory_address,
-        capabilities,
         phys_id,
         modalias,
-        sub_device: subsystem_device,
-        sub_vendor: subsystem_vendor,
+        sub_device: subsystem_device.map(|id| format!("pci 0x{id}")),
+        sub_vendor: subsystem_vendor.map(|id| format!("pci 0x{id}")),
+        driver_status,
     }
+}
+
+async fn canonical_audio_device_path(
+    ctx: &ProbeContext<'_>,
+    card_path: &Path,
+    index: u32,
+) -> Option<String> {
+    let result = ctx.runner.canonicalize_path(card_path).await;
+    if !result.is_success() {
+        return None;
+    }
+    let canonical = result.stdout.trim();
+    let path = canonical.strip_prefix("/sys").unwrap_or(canonical);
+    let suffix = format!("/sound/card{index}");
+    Some(path.strip_suffix(&suffix).unwrap_or(path).to_string())
 }
 
 async fn read_audio_codec(ctx: &ProbeContext<'_>, index: u32) -> (Option<String>, Option<String>) {
@@ -337,16 +350,13 @@ fn apply_audio_enrichment(mut device: Device, enrichment: AudioEnrichment) -> De
         });
     }
 
-    // Fill AudioInfo new fields
     if let DeviceProperties::Audio(ref mut info) = device.properties {
         info.sysfs_path = enrichment.sysfs_path;
         info.revision = enrichment.revision;
         info.irq = enrichment.irq;
-        info.memory_address = enrichment.memory_address;
-        info.capabilities = enrichment.capabilities;
         info.phys_id = enrichment.phys_id;
         info.modalias = enrichment.modalias;
-        info.driver_status = Some("active".to_string());
+        info.driver_status = enrichment.driver_status;
         info.sub_device = enrichment.sub_device;
         info.sub_vendor = enrichment.sub_vendor;
     }
@@ -444,6 +454,31 @@ fn apply_audio_hwinfo_enrichment(
         contributed |= driver != original;
         device.driver = Some(driver);
     }
+    if let DeviceProperties::Audio(info) = &mut device.properties {
+        let original = info.clone();
+        if record.revision.is_some() {
+            info.revision = record.revision.clone();
+        }
+        if record.irq.is_some() {
+            info.irq = record.irq.clone();
+        }
+        if record.memory_address.is_some() {
+            info.memory_address = record.memory_address.clone();
+        }
+        if record.driver_status.is_some() {
+            info.driver_status = record.driver_status.clone();
+        }
+        if record.sub_device.is_some() {
+            info.sub_device = record.sub_device.clone();
+        }
+        if record.sub_vendor.is_some() {
+            info.sub_vendor = record.sub_vendor.clone();
+        }
+        if record.modalias.is_some() {
+            info.modalias = record.modalias.clone();
+        }
+        contributed |= *info != original;
+    }
     if contributed
         && !hwinfo.source.is_empty()
         && !device
@@ -490,6 +525,20 @@ fn apply_audio_lshw_enrichment(mut device: Device, lshw: &AudioLshwRecords) -> D
         driver.name = driver.name.or_else(|| record.driver.clone());
         contributed |= driver != original;
         device.driver = Some(driver);
+    }
+    if let DeviceProperties::Audio(info) = &mut device.properties {
+        let original = info.clone();
+        info.revision = info.revision.clone().or_else(|| record.version.clone());
+        info.irq = info.irq.clone().or_else(|| record.irq.clone());
+        info.memory_address = info
+            .memory_address
+            .clone()
+            .or_else(|| record.memory_address.clone());
+        if info.capabilities.is_none() && !record.capabilities.is_empty() {
+            info.capabilities = Some(record.capabilities.join(" "));
+        }
+        info.latency = info.latency.clone().or_else(|| record.latency.clone());
+        contributed |= *info != original;
     }
     if contributed
         && !lshw.source.is_empty()

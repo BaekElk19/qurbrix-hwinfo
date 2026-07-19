@@ -65,8 +65,11 @@ fn parses_lshw_multimedia_audio_devices() {
               description: Audio device\n\
               product: Alder Lake PCH-P High Definition Audio Controller\n\
               vendor: Intel Corporation\n\
+              version: 30\n\
               bus info: pci@0000:00:1f.3\n\
-              configuration: driver=snd_hda_intel latency=64\n",
+              capabilities: pm msi bus_master cap_list\n\
+              configuration: driver=snd_hda_intel latency=64 irq=145\n\
+              resources: irq:145 memory:a1230000-a1233fff\n",
     );
 
     assert_eq!(records.len(), 1);
@@ -77,6 +80,17 @@ fn parses_lshw_multimedia_audio_devices() {
     assert_eq!(records[0].vendor.as_deref(), Some("Intel Corporation"));
     assert_eq!(records[0].bus_info.as_deref(), Some("pci@0000:00:1f.3"));
     assert_eq!(records[0].driver.as_deref(), Some("snd_hda_intel"));
+    assert_eq!(records[0].version.as_deref(), Some("30"));
+    assert_eq!(records[0].irq.as_deref(), Some("145"));
+    assert_eq!(records[0].latency.as_deref(), Some("64"));
+    assert_eq!(
+        records[0].capabilities,
+        vec!["pm", "msi", "bus_master", "cap_list"]
+    );
+    assert_eq!(
+        records[0].memory_address.as_deref(),
+        Some("a1230000-a1233fff")
+    );
 }
 
 #[test]
@@ -91,6 +105,13 @@ fn parses_hwinfo_sound_devices() {
          \tDevice: pci 0xa348 \"Cannon Lake PCH cAVS\"\n\
          \tDriver: \"snd_hda_intel\"\n\
          \tDriver Modules: \"snd_hda_intel\"\n\
+         \tRevision: 30\n\
+         \tIRQ: 145\n\
+         \tMemory Range: 0xa1230000-0xa1233fff (rw,non-prefetchable)\n\
+         \tDriver Status: snd_hda_intel is active\n\
+         \tSubDevice: pci 0x1234\n\
+         \tSubVendor: pci 0x8086 \"Intel Corporation\"\n\
+         \tModule Alias: pci:v00008086d0000A348sv00008086sd00001234bc04sc03i00\n\
          \tSysFS BusID: 0000:00:1f.3\n\
          \tSysFS ID: /class/sound/card0\n\
          \n\
@@ -109,6 +130,22 @@ fn parses_hwinfo_sound_devices() {
     assert_eq!(records[0].driver_modules, vec!["snd_hda_intel"]);
     assert_eq!(records[0].pci_address.as_deref(), Some("0000:00:1f.3"));
     assert_eq!(records[0].card_index, Some(0));
+    assert_eq!(records[0].revision.as_deref(), Some("30"));
+    assert_eq!(records[0].irq.as_deref(), Some("145"));
+    assert_eq!(
+        records[0].memory_address.as_deref(),
+        Some("0xa1230000-0xa1233fff (rw,non-prefetchable)")
+    );
+    assert_eq!(
+        records[0].driver_status.as_deref(),
+        Some("snd_hda_intel is active")
+    );
+    assert_eq!(records[0].sub_device.as_deref(), Some("pci 0x1234"));
+    assert_eq!(records[0].sub_vendor.as_deref(), Some("Intel Corporation"));
+    assert!(records[0]
+        .modalias
+        .as_deref()
+        .is_some_and(|value| value.starts_with("pci:v00008086")));
 }
 
 #[test]

@@ -247,7 +247,6 @@ pub struct StorageInfo {
     pub error_log_entries: Option<u64>,
     #[serde(default)]
     pub temperature_sensors_celsius: Vec<i32>,
-    // New fields to match deepin-devicemanager output
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_number: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -341,7 +340,6 @@ pub struct NetworkInfo {
     pub ipv6: Vec<String>,
     #[serde(default)]
     pub mtu: Option<u32>,
-    // New fields to match deepin-devicemanager output
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phys_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -357,7 +355,6 @@ pub struct AudioInfo {
     pub codec: Option<String>,
     pub subsystem: Option<String>,
     pub profiles: Vec<String>,
-    // New fields to match deepin-devicemanager output
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sysfs_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

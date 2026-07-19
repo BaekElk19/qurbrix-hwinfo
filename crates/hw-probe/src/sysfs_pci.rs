@@ -110,6 +110,18 @@ pub(crate) fn pci_bus_from_uevent(uevent: &str) -> Option<BusInfo> {
     })
 }
 
+pub(crate) fn pci_phys_id(bus: Option<&BusInfo>) -> Option<String> {
+    let BusInfo::Pci {
+        vendor_id: Some(vendor_id),
+        device_id: Some(device_id),
+        ..
+    } = bus?
+    else {
+        return None;
+    };
+    Some(format!("0x{vendor_id}{device_id}"))
+}
+
 fn parse_pci_id_pair(value: Option<&str>) -> (Option<String>, Option<String>) {
     let Some((vendor, device)) = value.and_then(|value| value.split_once(':')) else {
         return (None, None);

@@ -1,5 +1,8 @@
 use crate::{
-    sysfs_pci::{is_pci_address, pci_bus_from_uevent, read_kernel_modules, read_sysfs_pci_records},
+    sysfs_pci::{
+        is_pci_address, pci_bus_from_uevent, pci_phys_id, read_kernel_modules,
+        read_sysfs_pci_records,
+    },
     Probe, ProbeContext, ProbeResult,
 };
 use async_trait::async_trait;
@@ -1499,7 +1502,6 @@ struct NetworkSysfsEnrichment {
     modules: Vec<String>,
     bus: Option<BusInfo>,
     contributed: bool,
-    // New fields for NetworkInfo
     phys_id: Option<String>,
     modalias: Option<String>,
 }
@@ -1583,12 +1585,8 @@ async fn network_sysfs_enrichment(ctx: &ProbeContext<'_>, ifname: &str) -> Netwo
     let ethernet = !wireless
         && (driver.is_some() || speed_mbps.is_some() || duplex.is_some() || bus.is_some());
 
-    // Read new sysfs fields for NetworkInfo
     let modalias = read_optional_trimmed(ctx, &path.join("device/modalias")).await;
-    let phys_id = bus.as_ref().map(|b| match b {
-        BusInfo::Pci { address, .. } => address.clone(),
-        _ => String::new(),
-    });
+    let phys_id = pci_phys_id(bus.as_ref());
 
     NetworkSysfsEnrichment {
         source: path.display().to_string(),
@@ -1631,7 +1629,6 @@ fn apply_network_enrichment(mut device: Device, mut enrichment: NetworkSysfsEnri
         enrichment.contributed = true;
     }
 
-    // Fill NetworkInfo new fields
     if let DeviceProperties::Network(ref mut network) = device.properties {
         if network.phys_id.is_none() && enrichment.phys_id.is_some() {
             network.phys_id = enrichment.phys_id;
@@ -1714,7 +1711,6 @@ fn apply_network_lshw_enrichment(
             network.firmware = record.firmware.clone();
             contributed = true;
         }
-        // Fill driver_version from lshw
         if network.driver_version.is_none() && record.driver_version.is_some() {
             network.driver_version = record.driver_version.clone();
             contributed = true;
@@ -1836,6 +1832,16 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
             .await
             .and_then(|sectors| sectors.parse::<u64>().ok())
             .and_then(|sectors| sectors.checked_mul(512));
+        let device_number = read_optional_trimmed(ctx, &path.join("dev"))
+            .await
+            .map(|value| format!("block {value}"));
+        let logical_block_size = read_optional_trimmed(ctx, &path.join("queue/logical_block_size"))
+            .await
+            .and_then(|value| value.parse::<u64>().ok());
+        let physical_block_size =
+            read_optional_trimmed(ctx, &path.join("queue/physical_block_size"))
+                .await
+                .and_then(|value| value.parse::<u64>().ok());
         let rotational = read_optional_trimmed(ctx, &path.join("queue/rotational")).await;
         let spec_version = read_optional_trimmed(ctx, &path.join("device/spec_version")).await;
         let modalias = read_optional_trimmed(ctx, &path.join("device/modalias")).await;
@@ -1874,6 +1880,11 @@ async fn storage_devices_from_sysfs(ctx: &ProbeContext<'_>) -> Vec<Device> {
                 vid_pid: vid_pid.clone(),
                 phys_id: vid_pid,
                 modalias,
+                device_number,
+                geometry_logical_block_size: logical_block_size,
+                geometry_physical_block_size: physical_block_size,
+                hardware_class: Some("disk".to_string()),
+                description: Some("disk".to_string()),
                 ..Default::default()
             }),
         )
@@ -2050,6 +2061,8 @@ fn storage_device_from_hwinfo(record: HwinfoDiskRecord, source: &str) -> Device 
         DeviceProperties::Storage(StorageInfo {
             device_node: Some(node),
             firmware: record.revision.clone(),
+            hardware_class: Some("disk".to_string()),
+            description: Some("disk".to_string()),
             ..Default::default()
         }),
     );
@@ -2085,14 +2098,17 @@ async fn apply_storage_sysfs_enrichment(
     };
     let mut contributed = false;
 
-    // Read new sysfs fields for StorageInfo
-    let device_number = read_optional_trimmed(ctx, &sysfs_path.join("dev")).await;
-    let logical_block_size = read_optional_trimmed(ctx, &sysfs_path.join("queue/logical_block_size"))
+    let device_number = read_optional_trimmed(ctx, &sysfs_path.join("dev"))
         .await
-        .and_then(|s| s.parse::<u64>().ok());
-    let physical_block_size = read_optional_trimmed(ctx, &sysfs_path.join("queue/physical_block_size"))
-        .await
-        .and_then(|s| s.parse::<u64>().ok());
+        .map(|value| format!("block {value}"));
+    let logical_block_size =
+        read_optional_trimmed(ctx, &sysfs_path.join("queue/logical_block_size"))
+            .await
+            .and_then(|s| s.parse::<u64>().ok());
+    let physical_block_size =
+        read_optional_trimmed(ctx, &sysfs_path.join("queue/physical_block_size"))
+            .await
+            .and_then(|s| s.parse::<u64>().ok());
 
     if let Some(serial) = serial_fallback {
         device.serial = Some(serial);
@@ -2141,7 +2157,6 @@ async fn apply_storage_sysfs_enrichment(
             storage.phys_id = storage.phys_id.take().or(vid_pid);
             contributed = true;
         }
-        // Fill new fields
         if storage.device_number.is_none() && device_number.is_some() {
             storage.device_number = device_number;
             contributed = true;
