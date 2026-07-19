@@ -113,6 +113,8 @@ struct AudioEnrichment {
     sub_device: Option<String>,
     sub_vendor: Option<String>,
     driver_status: Option<String>,
+    description: Option<String>,
+    driver_activation_command: Option<String>,
 }
 
 async fn probe_sysfs_audio_cards(ctx: &ProbeContext<'_>) -> Vec<Device> {
@@ -266,6 +268,7 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
     let irq = read_trimmed(ctx, &sysfs_path.join("device/irq")).await;
     let phys_id = pci_phys_id(bus.as_ref());
     let driver_status = driver.as_ref().map(|driver| format!("{driver} is active"));
+    let driver_activation_command = driver.as_ref().map(|driver| format!("modprobe {driver}"));
 
     AudioEnrichment {
         sysfs_source: sysfs_path.display().to_string(),
@@ -293,6 +296,8 @@ async fn audio_enrichment(ctx: &ProbeContext<'_>, index: u32) -> AudioEnrichment
         sub_device: subsystem_device.map(|id| format!("pci 0x{id}")),
         sub_vendor: subsystem_vendor.map(|id| format!("pci 0x{id}")),
         driver_status,
+        description: None,
+        driver_activation_command,
     }
 }
 
@@ -357,6 +362,8 @@ fn apply_audio_enrichment(mut device: Device, enrichment: AudioEnrichment) -> De
         info.phys_id = enrichment.phys_id;
         info.modalias = enrichment.modalias;
         info.driver_status = enrichment.driver_status;
+        info.driver_activation_command = enrichment.driver_activation_command;
+        info.description = enrichment.description;
         info.sub_device = enrichment.sub_device;
         info.sub_vendor = enrichment.sub_vendor;
     }
@@ -477,6 +484,16 @@ fn apply_audio_hwinfo_enrichment(
         if record.modalias.is_some() {
             info.modalias = record.modalias.clone();
         }
+        if record.description.is_some() {
+            info.description = record.description.clone();
+        }
+        if record.driver_activation_command.is_some() {
+            info.driver_activation_command = record.driver_activation_command.clone();
+        }
+        if info.driver_activation_command.is_none() {
+            info.driver_activation_command =
+                audio_driver_activation_command(device.driver.as_ref());
+        }
         contributed |= *info != original;
     }
     if contributed
@@ -528,6 +545,9 @@ fn apply_audio_lshw_enrichment(mut device: Device, lshw: &AudioLshwRecords) -> D
     }
     if let DeviceProperties::Audio(info) = &mut device.properties {
         let original = info.clone();
+        if info.description.is_none() {
+            info.description = record.description.clone();
+        }
         info.revision = info.revision.clone().or_else(|| record.version.clone());
         info.irq = info.irq.clone().or_else(|| record.irq.clone());
         info.memory_address = info
@@ -538,6 +558,10 @@ fn apply_audio_lshw_enrichment(mut device: Device, lshw: &AudioLshwRecords) -> D
             info.capabilities = Some(record.capabilities.join(" "));
         }
         info.latency = info.latency.clone().or_else(|| record.latency.clone());
+        if info.driver_activation_command.is_none() {
+            info.driver_activation_command =
+                audio_driver_activation_command(device.driver.as_ref());
+        }
         contributed |= *info != original;
     }
     if contributed
@@ -555,6 +579,12 @@ fn apply_audio_lshw_enrichment(mut device: Device, lshw: &AudioLshwRecords) -> D
         });
     }
     device
+}
+
+fn audio_driver_activation_command(driver: Option<&DriverInfo>) -> Option<String> {
+    driver
+        .and_then(|driver| driver.name.as_deref())
+        .map(|name| format!("modprobe {name}"))
 }
 
 fn audio_pci_address(bus: &BusInfo) -> Option<&str> {

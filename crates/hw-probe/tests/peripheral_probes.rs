@@ -190,6 +190,11 @@ async fn audio_probe_enriches_human_readable_lshw_fields() {
     let DeviceProperties::Audio(info) = &device.properties else {
         panic!("expected audio properties");
     };
+    assert_eq!(info.description.as_deref(), Some("Audio device"));
+    assert_eq!(
+        info.driver_activation_command.as_deref(),
+        Some("modprobe snd_hda_intel")
+    );
     assert_eq!(info.revision.as_deref(), Some("30"));
     assert_eq!(info.irq.as_deref(), Some("145"));
     assert_eq!(
@@ -226,6 +231,8 @@ async fn audio_probe_enriches_human_readable_hwinfo_fields() {
              \tDevice: pci 0xa348 \"Cannon Lake PCH cAVS\"\n\
              \tDriver: \"snd_hda_intel\"\n\
              \tDriver Modules: \"snd_hda_intel\"\n\
+             \tDescription: Audio device\n\
+             \tDriver Activation Cmd: modprobe snd_hda_intel\n\
              \tRevision: 30\n\
              \tIRQ: 145\n\
              \tMemory Range: 0xa1230000-0xa1233fff (rw,non-prefetchable)\n\
@@ -259,6 +266,11 @@ async fn audio_probe_enriches_human_readable_hwinfo_fields() {
     let DeviceProperties::Audio(info) = &device.properties else {
         panic!("expected audio properties");
     };
+    assert_eq!(info.description.as_deref(), Some("Audio device"));
+    assert_eq!(
+        info.driver_activation_command.as_deref(),
+        Some("modprobe snd_hda_intel")
+    );
     assert_eq!(info.revision.as_deref(), Some("30"));
     assert_eq!(info.irq.as_deref(), Some("145"));
     assert_eq!(

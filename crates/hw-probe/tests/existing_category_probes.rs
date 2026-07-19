@@ -2384,7 +2384,8 @@ async fn storage_probe_enriches_human_readable_hwinfo_fields() {
                  Driver: \"nvme\"\n\
                  Driver Modules: \"nvme\"\n\
                  Device File: /dev/nvme0n1\n\
-                 Serial ID: \"S12345\"\n",
+                 Serial ID: \"S12345\"\n\
+                 Geometry (Logical): CHS 488386/64/32\n",
         );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
@@ -2416,6 +2417,10 @@ async fn storage_probe_enriches_human_readable_hwinfo_fields() {
         panic!("expected storage properties");
     };
     assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
+    assert_eq!(
+        storage.geometry_logical.as_deref(),
+        Some("CHS 488386/64/32")
+    );
 }
 
 #[tokio::test]
@@ -2466,7 +2471,8 @@ async fn storage_probe_uses_hwinfo_when_lsblk_and_sysfs_are_missing() {
              Revision: \"3B2QGXA7\"\n\
              Driver: \"nvme\"\n\
              Device File: /dev/nvme0n1\n\
-             Serial ID: \"S12345\"\n",
+             Serial ID: \"S12345\"\n\
+             Geometry (Logical): CHS 488386/64/32\n",
     );
     let ctx = ProbeContext::new(&runner, Duration::from_secs(1));
     let result = StorageProbe.probe(&ctx).await;
@@ -2483,6 +2489,10 @@ async fn storage_probe_uses_hwinfo_when_lsblk_and_sysfs_are_missing() {
     };
     assert_eq!(storage.device_node.as_deref(), Some("/dev/nvme0n1"));
     assert_eq!(storage.firmware.as_deref(), Some("3B2QGXA7"));
+    assert_eq!(
+        storage.geometry_logical.as_deref(),
+        Some("CHS 488386/64/32")
+    );
     assert!(device
         .sources
         .iter()

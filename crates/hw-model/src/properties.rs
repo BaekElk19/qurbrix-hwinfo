@@ -252,6 +252,8 @@ pub struct StorageInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry_logical_block_size: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_logical: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry_physical_block_size: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hardware_class: Option<String>,
@@ -356,6 +358,8 @@ pub struct AudioInfo {
     pub subsystem: Option<String>,
     pub profiles: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sysfs_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
@@ -371,6 +375,8 @@ pub struct AudioInfo {
     pub modalias: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub driver_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_activation_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sub_device: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

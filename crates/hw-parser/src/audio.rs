@@ -39,6 +39,8 @@ pub struct HwinfoSoundRecord {
     pub sub_device: Option<String>,
     pub sub_vendor: Option<String>,
     pub modalias: Option<String>,
+    pub description: Option<String>,
+    pub driver_activation_command: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -193,6 +195,8 @@ fn parse_hwinfo_sound_section(lines: &[&str]) -> Option<HwinfoSoundRecord> {
             "SubDevice" => record.sub_device = clean_hwinfo_value(value),
             "SubVendor" => record.sub_vendor = clean_hwinfo_value(value),
             "Module Alias" => record.modalias = clean_hwinfo_value(value),
+            "Description" => record.description = clean_hwinfo_value(value),
+            "Driver Activation Cmd" => record.driver_activation_command = clean_hwinfo_value(value),
             _ => {}
         }
     }

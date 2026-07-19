@@ -312,7 +312,8 @@ fn parses_hwinfo_disk_records() {
              Driver: \"nvme\"\n\
              Driver Modules: \"nvme\"\n\
              Device File: /dev/nvme0n1\n\
-             Serial ID: \"S12345\"\n\n",
+             Serial ID: \"S12345\"\n\
+             Geometry (Logical): CHS 488386/64/32\n\n",
     );
 
     assert_eq!(records.len(), 1);
@@ -324,6 +325,10 @@ fn parses_hwinfo_disk_records() {
     assert_eq!(records[0].driver.as_deref(), Some("nvme"));
     assert_eq!(records[0].driver_modules, vec!["nvme"]);
     assert_eq!(records[0].serial.as_deref(), Some("S12345"));
+    assert_eq!(
+        records[0].geometry_logical.as_deref(),
+        Some("CHS 488386/64/32")
+    );
 }
 
 #[test]

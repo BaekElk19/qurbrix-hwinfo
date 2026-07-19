@@ -77,6 +77,7 @@ pub struct HwinfoDiskRecord {
     pub driver: Option<String>,
     pub driver_modules: Vec<String>,
     pub serial: Option<String>,
+    pub geometry_logical: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -340,6 +341,7 @@ fn parse_hwinfo_disk_section(lines: &[&str]) -> Option<HwinfoDiskRecord> {
                 }
             }
             "Serial ID" => record.serial = clean_hwinfo_disk_value(value),
+            "Geometry (Logical)" => record.geometry_logical = clean_hwinfo_disk_value(value),
             _ => {}
         }
     }

@@ -105,6 +105,8 @@ fn parses_hwinfo_sound_devices() {
          \tDevice: pci 0xa348 \"Cannon Lake PCH cAVS\"\n\
          \tDriver: \"snd_hda_intel\"\n\
          \tDriver Modules: \"snd_hda_intel\"\n\
+         \tDescription: Audio device\n\
+         \tDriver Activation Cmd: modprobe snd_hda_intel\n\
          \tRevision: 30\n\
          \tIRQ: 145\n\
          \tMemory Range: 0xa1230000-0xa1233fff (rw,non-prefetchable)\n\
@@ -128,6 +130,11 @@ fn parses_hwinfo_sound_devices() {
     assert_eq!(records[0].vendor.as_deref(), Some("Intel Corporation"));
     assert_eq!(records[0].driver.as_deref(), Some("snd_hda_intel"));
     assert_eq!(records[0].driver_modules, vec!["snd_hda_intel"]);
+    assert_eq!(records[0].description.as_deref(), Some("Audio device"));
+    assert_eq!(
+        records[0].driver_activation_command.as_deref(),
+        Some("modprobe snd_hda_intel")
+    );
     assert_eq!(records[0].pci_address.as_deref(), Some("0000:00:1f.3"));
     assert_eq!(records[0].card_index, Some(0));
     assert_eq!(records[0].revision.as_deref(), Some("30"));

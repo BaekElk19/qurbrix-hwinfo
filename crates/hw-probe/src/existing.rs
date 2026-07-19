@@ -2061,6 +2061,7 @@ fn storage_device_from_hwinfo(record: HwinfoDiskRecord, source: &str) -> Device 
         DeviceProperties::Storage(StorageInfo {
             device_node: Some(node),
             firmware: record.revision.clone(),
+            geometry_logical: record.geometry_logical.clone(),
             hardware_class: Some("disk".to_string()),
             description: Some("disk".to_string()),
             ..Default::default()
@@ -2550,6 +2551,10 @@ fn apply_storage_hwinfo_enrichment(mut device: Device, hwinfo: &StorageHwinfoRec
     if let DeviceProperties::Storage(storage) = &mut device.properties {
         if storage.firmware.is_none() && record.revision.is_some() {
             storage.firmware = record.revision.clone();
+            contributed = true;
+        }
+        if storage.geometry_logical.is_none() && record.geometry_logical.is_some() {
+            storage.geometry_logical = record.geometry_logical.clone();
             contributed = true;
         }
     }
