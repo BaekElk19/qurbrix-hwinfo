@@ -152,6 +152,23 @@ async fn real_runner_reads_binary_file_exactly() {
     assert_eq!(result.bytes, vec![0x00, 0xff, 0x01]);
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn real_runner_reads_procfs_file_larger_than_reported_size() {
+    let path = Path::new("/proc/self/status");
+    assert_eq!(std::fs::metadata(path).unwrap().len(), 0);
+
+    let runner = hw_source::RealSourceRunner;
+    let text = runner.read_file(path).await;
+    let bytes = runner.read_file_bytes(path).await;
+
+    assert!(text.is_success());
+    assert!(text.stdout.len() > 32);
+    assert!(text.stdout.contains("Name:"));
+    assert!(bytes.is_success());
+    assert!(bytes.bytes.len() > 32);
+}
+
 #[tokio::test]
 async fn real_runner_glob_matches_single_middle_wildcard_with_suffix() {
     let root = std::env::temp_dir().join(format!("qurbrix-hw-glob-{}", std::process::id()));

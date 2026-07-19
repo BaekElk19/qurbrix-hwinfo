@@ -8,11 +8,8 @@ use std::{
 };
 use tokio::{fs, process::Command, time};
 
-/// Read a file into a Vec<u8> without relying on file metadata size.
-/// `std::fs::read` uses `small_probe_read` which can panic on virtual
-/// files in /proc and /sys that report misleading sizes.  This helper
-/// opens the file and calls `Read::read_to_end` with a generous initial
-/// capacity so it never depends on metadata.
+/// Read a file without taking the small-buffer path selected from metadata.
+/// Virtual files in /proc and /sys commonly report zero or misleading sizes.
 fn read_file_safe(path: &Path) -> std::io::Result<Vec<u8>> {
     let mut file = std::fs::File::open(path)?;
     let mut buf = Vec::with_capacity(4096);
@@ -91,7 +88,9 @@ impl SourceRunner for RealSourceRunner {
             Ok(Err(err)) if err.kind() == std::io::ErrorKind::PermissionDenied => {
                 SourceBytesResult::error(source, SourceErrorKind::PermissionDenied, err.to_string())
             }
-            Ok(Err(err)) => SourceBytesResult::error(source, SourceErrorKind::Failed, err.to_string()),
+            Ok(Err(err)) => {
+                SourceBytesResult::error(source, SourceErrorKind::Failed, err.to_string())
+            }
             Err(err) => SourceBytesResult::error(source, SourceErrorKind::Failed, err.to_string()),
         }
     }
