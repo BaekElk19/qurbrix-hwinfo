@@ -55,8 +55,10 @@ impl InventoryStore {
         probe: QuickProbeReport,
     ) -> Result<SnapshotId> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || store.publish_sync(report, probe.clone(), probe, None))
-            .await?
+        tokio::task::spawn_blocking(move || {
+            store.publish_sync(report, probe.clone(), probe, None, None)
+        })
+        .await?
     }
 
     pub async fn publish_snapshot_for_probe(
@@ -65,10 +67,17 @@ impl InventoryStore {
         snapshot_probe: QuickProbeReport,
         state_probe: QuickProbeReport,
         probe_id: i64,
+        lease_owner_id: String,
     ) -> Result<SnapshotId> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            store.publish_sync(report, snapshot_probe, state_probe, Some(probe_id))
+            store.publish_sync(
+                report,
+                snapshot_probe,
+                state_probe,
+                Some(probe_id),
+                Some(lease_owner_id),
+            )
         })
         .await?
     }
@@ -207,6 +216,16 @@ impl InventoryStore {
         tokio::task::spawn_blocking(move || store.release_lease_sync(&owner_id)).await?
     }
 
+    pub async fn renew_lease(
+        &self,
+        owner_id: String,
+        lease_duration: std::time::Duration,
+    ) -> Result<bool> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.renew_lease_sync(&owner_id, lease_duration))
+            .await?
+    }
+
     fn initialize(&self) -> Result<()> {
         artifact::ensure_private_directory(&self.state_dir)?;
         let connection = self.connect()?;
@@ -241,6 +260,7 @@ impl InventoryStore {
         snapshot_probe: QuickProbeReport,
         state_probe: QuickProbeReport,
         probe_id: Option<i64>,
+        lease_owner_id: Option<String>,
     ) -> Result<SnapshotId> {
         if report.status == ScanStatus::Failed {
             return Err(InventoryError::InvalidReport(
@@ -261,6 +281,7 @@ impl InventoryStore {
             &state_probe,
             &artifact_metadata,
             probe_id,
+            lease_owner_id.as_deref(),
         );
         if publish_result.is_err() {
             let _ = artifact::remove_report(&self.state_dir, &artifact_metadata.relative_path);
@@ -279,10 +300,24 @@ impl InventoryStore {
         state_probe: &QuickProbeReport,
         artifact_metadata: &ArtifactMetadata,
         probe_id: Option<i64>,
+        lease_owner_id: Option<&str>,
     ) -> Result<()> {
         let mut connection = self.connect()?;
         let transaction =
             connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(owner_id) = lease_owner_id {
+            let now = now_rfc3339()?;
+            let owned: Option<i64> = transaction
+                .query_row(
+                    "SELECT 1 FROM scan_lease WHERE id = 1 AND owner_id = ?1 AND expires_at > ?2",
+                    params![owner_id, now],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if owned.is_none() {
+                return Err(InventoryError::StaleLease);
+            }
+        }
         let status = match report.status {
             ScanStatus::Complete => "complete",
             ScanStatus::Partial => "partial",
@@ -536,6 +571,27 @@ impl InventoryStore {
             [owner_id],
         )?;
         Ok(())
+    }
+
+    fn renew_lease_sync(
+        &self,
+        owner_id: &str,
+        lease_duration: std::time::Duration,
+    ) -> Result<bool> {
+        let connection = self.connect()?;
+        let now = OffsetDateTime::now_utc();
+        let now_text = now
+            .format(&Rfc3339)
+            .map_err(|_| InventoryError::InvalidReport("UTC timestamp formatting failed"))?;
+        let seconds = i64::try_from(lease_duration.as_secs()).unwrap_or(i64::MAX);
+        let expires = (now + time::Duration::seconds(seconds))
+            .format(&Rfc3339)
+            .map_err(|_| InventoryError::InvalidReport("lease timestamp formatting failed"))?;
+        let updated = connection.execute(
+            "UPDATE scan_lease SET expires_at = ?1 WHERE id = 1 AND owner_id = ?2 AND expires_at > ?3",
+            params![expires, owner_id, now_text],
+        )?;
+        Ok(updated == 1)
     }
 
     fn recover_stale_sync(&self, age: std::time::Duration) -> Result<()> {

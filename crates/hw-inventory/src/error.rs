@@ -33,6 +33,8 @@ pub enum InventoryError {
     CoreIdentityIncomplete,
     #[error("timed out waiting for the snapshot scan lease")]
     LeaseTimeout,
+    #[error("scan lease is no longer owned by this publisher")]
+    StaleLease,
     #[error("snapshot not found: {0}")]
     SnapshotNotFound(SnapshotId),
     #[error("destination already exists: {0}")]
@@ -57,6 +59,7 @@ impl InventoryError {
             Self::PartialRejected => "inventory.partial_rejected",
             Self::CoreIdentityIncomplete => "inventory.core_identity_incomplete",
             Self::LeaseTimeout => "inventory.lease_timeout",
+            Self::StaleLease => "inventory.stale_lease",
             Self::SnapshotNotFound(_) => "inventory.snapshot_not_found",
             Self::DestinationExists(_) => "inventory.destination_exists",
         }

@@ -9,9 +9,13 @@ use hw_model::{PartialPolicy, QuickProbeReport, ScanConfig, ScanReport, ScanStat
 use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+/// How long a full-scan holder may retain the exclusive lease between renewals.
 const LEASE_DURATION: Duration = Duration::from_secs(2 * 60);
-const LEASE_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Waiters may wait as long as a healthy holder is allowed to keep the lease.
+const LEASE_WAIT_TIMEOUT: Duration = LEASE_DURATION;
 const LEASE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Renew the lease well before expiry so a slow healthy scan keeps ownership.
+const LEASE_RENEW_INTERVAL: Duration = Duration::from_secs(30);
 
 #[async_trait]
 pub trait InventoryScanner: Send + Sync {
@@ -48,6 +52,8 @@ pub struct ObserveInventoryOptions {
     pub scan_config: ScanConfig,
     pub max_snapshot_age: Option<Duration>,
     pub partial_policy: PartialPolicy,
+    /// Maximum time to wait for a peer's full-scan lease. Defaults to the lease duration.
+    pub lease_wait_timeout: Option<Duration>,
 }
 
 impl Default for ObserveInventoryOptions {
@@ -57,6 +63,7 @@ impl Default for ObserveInventoryOptions {
             scan_config: ScanConfig::default(),
             max_snapshot_age: Some(Duration::from_secs(24 * 60 * 60)),
             partial_policy: PartialPolicy::PublishIfCoreComplete,
+            lease_wait_timeout: None,
         }
     }
 }
@@ -79,9 +86,12 @@ pub async fn observe_inventory(
     store: &InventoryStore,
     options: ObserveInventoryOptions,
 ) -> Result<InventoryObservation> {
+    let quick_timeout = options.scan_config.timeout.min(Duration::from_secs(5));
     let scanner = RealInventoryScanner {
+        quick_config: QuickProbeConfig {
+            timeout: quick_timeout,
+        },
         scan_config: options.scan_config.clone(),
-        ..RealInventoryScanner::default()
     };
     observe_inventory_with_scanner(store, options, &scanner).await
 }
@@ -125,19 +135,8 @@ pub async fn observe_inventory_with_scanner(
                 )
                 .await;
             }
-            store
-                .finish_probe(
-                    quick_history,
-                    ProbeCompletion::Succeeded,
-                    None,
-                    Some(report.machine_bind_id.clone()),
-                    Some(report.configuration_fingerprint.clone()),
-                    Some(quick_duration),
-                    Some(report.warnings.len() as u64),
-                    None,
-                    None,
-                )
-                .await?;
+            // Keep the quick probe `running` until reuse, publication, or an error/timeout path
+            // completes it. This avoids orphaned rows on lease timeout.
             Some(report)
         }
         Err(error) => {
@@ -157,8 +156,11 @@ pub async fn observe_inventory_with_scanner(
             None
         }
     };
+    // When the quick probe failed, there is no open quick history row to finish later.
+    let open_quick_history = quick.as_ref().map(|_| quick_history);
 
     let owner_id = SnapshotId::new_v7().to_string();
+    let lease_wait_timeout = options.lease_wait_timeout.unwrap_or(LEASE_WAIT_TIMEOUT);
     let lease_wait_started = std::time::Instant::now();
     loop {
         if store
@@ -173,19 +175,21 @@ pub async fn observe_inventory_with_scanner(
             if let Some(snapshot_id) =
                 reusable_snapshot(store, &state, report, &options, published_by_peer).await
             {
-                store
-                    .finish_probe(
-                        quick_history,
-                        ProbeCompletion::Succeeded,
-                        Some(snapshot_id),
-                        Some(report.machine_bind_id.clone()),
-                        Some(report.configuration_fingerprint.clone()),
-                        Some(quick_duration),
-                        Some(report.warnings.len() as u64),
-                        None,
-                        None,
-                    )
-                    .await?;
+                if let Some(history) = open_quick_history {
+                    store
+                        .finish_probe(
+                            history,
+                            ProbeCompletion::Succeeded,
+                            Some(snapshot_id),
+                            Some(report.machine_bind_id.clone()),
+                            Some(report.configuration_fingerprint.clone()),
+                            Some(quick_duration),
+                            Some(report.warnings.len() as u64),
+                            None,
+                            None,
+                        )
+                        .await?;
+                }
                 return observation_from_snapshot(
                     store,
                     snapshot_id,
@@ -195,30 +199,68 @@ pub async fn observe_inventory_with_scanner(
                 .await;
             }
         }
-        if lease_wait_started.elapsed() >= LEASE_WAIT_TIMEOUT {
+        if lease_wait_started.elapsed() >= lease_wait_timeout {
+            if let Some(history) = open_quick_history {
+                let _ = store
+                    .finish_probe(
+                        history,
+                        ProbeCompletion::Failed,
+                        None,
+                        None,
+                        None,
+                        Some(quick_duration),
+                        None,
+                        Some(InventoryError::LeaseTimeout.code().to_string()),
+                        Some("timed out waiting for the snapshot scan lease".to_string()),
+                    )
+                    .await;
+            }
             return Err(InventoryError::LeaseTimeout);
         }
         tokio::time::sleep(LEASE_POLL_INTERVAL).await;
     }
 
-    let result =
-        run_full_scan_under_lease(store, &options, scanner, quick.as_ref(), baseline_current).await;
-    let quick_finish_result = if let (Ok(result), Some(report)) = (&result, &quick) {
-        store
-            .finish_probe(
-                quick_history,
-                ProbeCompletion::Succeeded,
-                Some(result.snapshot_id()),
-                Some(report.machine_bind_id.clone()),
-                Some(report.configuration_fingerprint.clone()),
-                Some(quick_duration),
-                Some(report.warnings.len() as u64),
-                None,
-                None,
-            )
-            .await
-    } else {
-        Ok(())
+    let result = run_full_scan_under_lease(
+        store,
+        &options,
+        scanner,
+        quick.as_ref(),
+        baseline_current,
+        &owner_id,
+    )
+    .await;
+    let quick_finish_result = match (&result, &quick, open_quick_history) {
+        (Ok(full), Some(report), Some(history)) => {
+            store
+                .finish_probe(
+                    history,
+                    ProbeCompletion::Succeeded,
+                    Some(full.snapshot_id()),
+                    Some(report.machine_bind_id.clone()),
+                    Some(report.configuration_fingerprint.clone()),
+                    Some(quick_duration),
+                    Some(report.warnings.len() as u64),
+                    None,
+                    None,
+                )
+                .await
+        }
+        (Err(error), _, Some(history)) => {
+            store
+                .finish_probe(
+                    history,
+                    ProbeCompletion::Failed,
+                    None,
+                    None,
+                    None,
+                    Some(quick_duration),
+                    None,
+                    Some(error.code().to_string()),
+                    Some(error.to_string()),
+                )
+                .await
+        }
+        _ => Ok(()),
     };
     let release_result = store.release_lease(owner_id).await;
     quick_finish_result?;
@@ -263,6 +305,7 @@ async fn run_full_scan_under_lease(
     scanner: &dyn InventoryScanner,
     quick: Option<&QuickProbeReport>,
     baseline_current: Option<SnapshotId>,
+    owner_id: &str,
 ) -> Result<FullScanResult> {
     if let Some(quick) = quick {
         let state = store.current_state().await?;
@@ -277,39 +320,59 @@ async fn run_full_scan_under_lease(
     let previous = store.current_state().await?.current_snapshot_id;
     let full_history = store.start_probe(ProbeKind::Full, previous).await?;
     let full_started = std::time::Instant::now();
-    let report = match scanner.full_scan().await {
+    let report = match scan_with_lease_renewal(store, scanner, owner_id).await {
         Ok(report) if report.status != ScanStatus::Failed => report,
-        Ok(_) | Err(_) => {
-            store
-                .finish_probe(
-                    full_history,
-                    ProbeCompletion::Failed,
-                    None,
-                    None,
-                    None,
-                    Some(elapsed_ms(full_started)),
-                    None,
-                    Some(InventoryError::FullScanFailed.code().to_string()),
-                    Some("full scan failed; previous snapshot retained".to_string()),
-                )
-                .await?;
+        Ok(_) => {
+            fail_full_probe(
+                store,
+                full_history,
+                full_started,
+                None,
+                None,
+                None,
+                &InventoryError::FullScanFailed,
+            )
+            .await;
+            return Err(InventoryError::FullScanFailed);
+        }
+        Err(InventoryError::StaleLease) => {
+            fail_full_probe(
+                store,
+                full_history,
+                full_started,
+                None,
+                None,
+                None,
+                &InventoryError::StaleLease,
+            )
+            .await;
+            return Err(InventoryError::StaleLease);
+        }
+        Err(_) => {
+            fail_full_probe(
+                store,
+                full_history,
+                full_started,
+                None,
+                None,
+                None,
+                &InventoryError::FullScanFailed,
+            )
+            .await;
             return Err(InventoryError::FullScanFailed);
         }
     };
     if report.status == ScanStatus::Partial && options.partial_policy == PartialPolicy::Reject {
-        store
-            .finish_probe(
-                full_history,
-                ProbeCompletion::Failed,
-                None,
-                None,
-                None,
-                Some(elapsed_ms(full_started)),
-                Some(report.warnings.len() as u64),
-                Some(InventoryError::PartialRejected.code().to_string()),
-                Some("partial scan rejected by policy".to_string()),
-            )
-            .await?;
+        fail_full_probe(
+            store,
+            full_history,
+            full_started,
+            None,
+            None,
+            Some(report.warnings.len() as u64),
+            &InventoryError::PartialRejected,
+        )
+        .await;
         return Err(InventoryError::PartialRejected);
     }
 
@@ -321,31 +384,108 @@ async fn run_full_scan_under_lease(
         .iter()
         .map(|warning| format!("{}: {}", warning.code, warning.message))
         .collect();
-    let canonical = canonicalize_devices(&report.devices, warnings, trusted_absent, now_rfc3339())?;
+    let warning_count = report.warnings.len() as u64;
+    let canonical =
+        match canonicalize_devices(&report.devices, warnings, trusted_absent, now_rfc3339()) {
+            Ok(canonical) => canonical,
+            Err(error) => {
+                fail_full_probe(
+                    store,
+                    full_history,
+                    full_started,
+                    None,
+                    None,
+                    Some(warning_count),
+                    &error,
+                )
+                .await;
+                return Err(error);
+            }
+        };
     if !canonical.coverage.core_complete() {
-        store
-            .finish_probe(
-                full_history,
-                ProbeCompletion::Failed,
-                None,
-                Some(canonical.machine_bind_id),
-                Some(canonical.configuration_fingerprint),
-                Some(elapsed_ms(full_started)),
-                Some(report.warnings.len() as u64),
-                Some(InventoryError::CoreIdentityIncomplete.code().to_string()),
-                Some("full scan did not satisfy core identity contract".to_string()),
-            )
-            .await?;
+        fail_full_probe(
+            store,
+            full_history,
+            full_started,
+            Some(canonical.machine_bind_id),
+            Some(canonical.configuration_fingerprint),
+            Some(warning_count),
+            &InventoryError::CoreIdentityIncomplete,
+        )
+        .await;
         return Err(InventoryError::CoreIdentityIncomplete);
     }
     let state_probe = quick
         .filter(|quick| quick.coverage.core_complete())
         .cloned()
         .unwrap_or_else(|| canonical.clone());
-    store
-        .publish_snapshot_for_probe(report, canonical, state_probe, full_history)
+    match store
+        .publish_snapshot_for_probe(
+            report,
+            canonical,
+            state_probe,
+            full_history,
+            owner_id.to_string(),
+        )
         .await
-        .map(FullScanResult::Published)
+    {
+        Ok(snapshot_id) => Ok(FullScanResult::Published(snapshot_id)),
+        Err(error) => {
+            // Publication rolls back the in-transaction success update; mark failed explicitly.
+            fail_full_probe(store, full_history, full_started, None, None, None, &error).await;
+            Err(error)
+        }
+    }
+}
+
+async fn scan_with_lease_renewal(
+    store: &InventoryStore,
+    scanner: &dyn InventoryScanner,
+    owner_id: &str,
+) -> Result<ScanReport> {
+    let scan = scanner.full_scan();
+    tokio::pin!(scan);
+    let mut renew = tokio::time::interval(LEASE_RENEW_INTERVAL);
+    renew.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Skip the immediate first tick so we do not renew right after acquire.
+    renew.tick().await;
+    loop {
+        tokio::select! {
+            report = &mut scan => return report,
+            _ = renew.tick() => {
+                if !store
+                    .renew_lease(owner_id.to_string(), LEASE_DURATION)
+                    .await?
+                {
+                    return Err(InventoryError::StaleLease);
+                }
+            }
+        }
+    }
+}
+
+async fn fail_full_probe(
+    store: &InventoryStore,
+    full_history: i64,
+    full_started: std::time::Instant,
+    machine_bind_id: Option<String>,
+    configuration_fingerprint: Option<String>,
+    warning_count: Option<u64>,
+    error: &InventoryError,
+) {
+    let _ = store
+        .finish_probe(
+            full_history,
+            ProbeCompletion::Failed,
+            None,
+            machine_bind_id,
+            configuration_fingerprint,
+            Some(elapsed_ms(full_started)),
+            warning_count,
+            Some(error.code().to_string()),
+            Some(error.to_string()),
+        )
+        .await;
 }
 
 async fn reusable_snapshot(

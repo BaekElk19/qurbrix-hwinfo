@@ -19,7 +19,7 @@ pub fn exit_code_for_inventory(error: &InventoryError) -> ExitCode {
         InventoryError::FullScanFailed
         | InventoryError::PartialRejected
         | InventoryError::CoreIdentityIncomplete => ExitCode::ScanFailed,
-        InventoryError::LeaseTimeout => ExitCode::Timeout,
+        InventoryError::LeaseTimeout | InventoryError::StaleLease => ExitCode::Timeout,
         InventoryError::SnapshotNotFound(_) => ExitCode::NotFound,
         InventoryError::Serialization(_) => ExitCode::CliOrSerialization,
         InventoryError::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
