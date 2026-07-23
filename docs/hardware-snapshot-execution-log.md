@@ -38,8 +38,8 @@ validation includes an automated declaration and dependency-license audit.
 | C | 0.2.0-alpha.3 | complete | `993efcf` |
 | D | 0.2.0-alpha.4 | complete | `0be142d` |
 | E | 0.2.0-beta.1 | complete | `e81c4db` |
-| F | 0.2.0-rc.1 | in progress | not created |
-| G | 0.2.0 | pending | not created |
+| F | 0.2.0-rc.1 | complete | `ab6bebd` |
+| G | 0.2.0 | release validation complete | version checkpoint pending |
 
 ## Baseline Gates
 
@@ -55,6 +55,16 @@ validation includes an automated declaration and dependency-license audit.
 - Artifact format: canonical UTF-8 JSON with SHA-256 metadata and same-filesystem
   atomic rename.
 - Public identifiers: UUIDv7 serialized as lowercase hyphenated text.
+- Retention deletion: remove the relational snapshot in one transaction, queue
+  its immutable artifact path, then delete/retry the file outside the
+  transaction. This protects the current snapshot and keeps filesystem failure
+  observable without lengthening the SQLite write lock.
+- License audit: retain `MIT OR Apache-2.0`; no source was copied or adapted from
+  GPL projects. All 11 workspace packages declare that expression. The only
+  locked dependency expression containing `LGPL` is `r-efi`'s disjunctive
+  `MIT OR Apache-2.0 OR LGPL-2.1-or-later`, for which the permissive branch is
+  selected. There are no missing license declarations or GPL-family-only
+  dependency expressions among 131 locked packages.
 
 ## Phase A Evidence
 
@@ -170,6 +180,38 @@ validation includes an automated declaration and dependency-license audit.
   default/override paths, modes 0700/0600, integrity behavior, export, cleanup,
   schema and exit codes. Smoke tests execute documented snapshot help/list paths.
 
+## Phase G Evidence
+
+- Retention/health implementation: `11021c0`; maintenance tests: `3eaaa55`;
+  maintenance CLI: `a930f5f`; CLI tests: `53719e0`; English/Chinese docs:
+  `df6cc21`; release/growth validation: `2efa3f7`.
+- Dedicated gate `cargo test -p hw-inventory --test maintenance -- --nocapture`:
+  PASS (5 tests). It proves current/pinned/unuploaded/recent protection, eligible
+  cleanup ordering, artifact deletion retry, orphan/corruption health detection,
+  WAL checkpoint behavior, bounded multi-snapshot growth and a 1000-device
+  transaction/query fixture.
+- Maintenance contract tests in `hw-cli` and the root CLI suite pass for health,
+  dry-run/prune, pin/unpin and mark-uploaded JSON behavior. Existing verified
+  snapshot diff/export tests remain green.
+- Growth fixture: 20 snapshots/60 devices use a 233,472-byte SQLite database and
+  33,440 artifact bytes; checkpoint reports zero busy/log frames after the
+  operation. The 1000-device fixture published in 312 ms, queried in 7 ms and
+  used a 1,314,816-byte database. Raw data is in
+  `docs/hardware-snapshot-database-performance.csv`.
+- G checkpoint-precondition unified gates all PASS: `cargo fmt --all -- --check`,
+  `cargo check --workspace --all-targets`, `cargo clippy --workspace
+  --all-targets -- -D warnings`, and `cargo test --workspace`.
+- `cargo build --release --locked --offline`: PASS for the only installed target,
+  `x86_64-unknown-linux-gnu`. The unstripped PIE is 12,945,088 bytes; bundled
+  SQLite introduces no dynamic SQLite dependency. Other architectures remain
+  covered by repository CI configuration but were not locally compiled because
+  no other Rust target is installed; fixture tests provide architecture-neutral
+  behavior evidence as allowed by 17.6.
+- `scripts/check-hardware-snapshot-release.sh 0.2.0-rc.1`: PASS, covering exact
+  workspace version/license declarations, complete locked license metadata,
+  rejection of GPL-family-only expressions, monitor/udev/netlink dependency
+  absence, runtime-file absence, whitespace and phase-A contract evidence.
+
 ## Performance Evidence
 
 Phase A records real-machine serial samples and a reproducible delayed-fixture
@@ -183,10 +225,38 @@ returned 45 devices, 10 warnings and `partial`. Wall samples in milliseconds:
 nearest-rank P95 is 6983 ms. The warm tenth sample is retained rather than
 discarded. The raw data is in `docs/hardware-snapshot-performance-baseline.csv`.
 
+A final paired real-machine resource sample, measured with BusyBox `time -v`,
+used 20,164 KiB maximum RSS, 138% aggregate CPU, 6.82 user seconds and 2.30 system
+seconds. Its serial/concurrent wall times were 5154/1437 ms (72.12% reduction),
+with external-process peak 4. Raw data is in
+`docs/hardware-snapshot-resource-performance.csv`.
+
 ## Acceptance Evidence
 
-The 22 acceptance criteria are populated with command or test evidence during
-phase G release validation.
+| # | Result | Evidence |
+|---:|:---:|---|
+| 1 | PASS | `service::first_run_publishes_and_second_run_reuses` returns a loadable UUIDv7 snapshot. |
+| 2 | PASS | The same service test asserts unchanged input reuses the ID and the full-scan call counter remains one. |
+| 3 | PASS | `service::physical_and_configuration_changes_have_distinct_identity_semantics` creates new IDs and loads every old snapshot. |
+| 4 | PASS | `store::transaction_failure_preserves_current_and_removes_new_artifact` and SQLite transaction publication prevent partial visibility. |
+| 5 | PASS | `service::full_failure_retains_previous_snapshot_and_returns_error` reloads the prior current artifact. |
+| 6 | PASS | `service::concurrent_callers_publish_once_and_share_id` gives eight callers one ID and one publication. |
+| 7 | PASS | `store::migration_is_idempotent_and_has_required_schema` tests fresh, repeated and V0 upgrade paths; future versions are refused. |
+| 8 | PASS | Full workspace regressions plus `cli_contract` preserve scan/schema/list output and mapped exit codes. |
+| 9 | PASS | Phase-G `cargo test --workspace` completed with zero failures. |
+| 10 | PASS | `README.md` and `README.zh-CN.md` document APIs, DB/artifact paths, 0700/0600 permissions and cleanup; README smoke passes. |
+| 11 | PASS | Release script finds no udev/netlink/listener coupling; architecture and both READMEs state strictly on-demand behavior. |
+| 12 | PASS | Release script finds no `qurbrix-monitor` source/manifest dependency; all workspace gates and the binary run without it. |
+| 13 | PASS | `hardware_snapshot_contract` verifies V1 schema/golden fixture; service tests cover all accepted transition classes. |
+| 14 | PASS | `execution::serial_and_parallel_reports_are_semantically_identical`, semaphore peak and cancellation tests pass. |
+| 15 | PASS | Ten-round real P95 is 6490 ms serial versus 2157 ms concurrent, a 66.76% reduction; single-core P95 improves 14.47%. |
+| 16 | PASS | `snapshot_id_contract_is_lowercase_uuid_v7`; store/service tests parse and sort independently generated IDs. |
+| 17 | PASS | Existing bindid v1 golden tests pass; v2 recomputes full SHA-256 and physical-change fixtures change machine identity. |
+| 18 | PASS | Quick-probe and service firmware/kernel/driver fixtures keep bindid and change configuration fingerprint/snapshot ID. |
+| 19 | PASS | Migration provides normalized device/identifier/property/relation tables and indexes; store tests query projection without report JSON columns. |
+| 20 | PASS | Store round-trip, same-size tamper, missing-file, transaction and orphan crash-point recovery tests verify every successful artifact SHA-256. |
+| 21 | PASS | `publishes_projection_and_verified_artifact_atomically` compares paginated versioned upload DTOs and verified full artifacts. |
+| 22 | PASS | Facade export tests and CLI show/list/diff/export contract tests operate on the same seeded snapshot IDs and artifact content. |
 
 ## Gate Failure Ledger
 
@@ -214,3 +284,8 @@ phase G release validation.
   implementation and `unwrap_or_else(BTreeSet::new)`. Applied the exact clippy
   recommendations (`derive(Default)`, `unwrap_or_default`) and reran clippy plus
   the full inventory test suite.
+- Phase G license-audit attempt 1: two `cargo metadata --locked` calls attempted
+  to download platform-specific locked packages and failed after DNS retries in
+  the restricted sandbox. The authorized network retry downloaded the missing
+  packages; `cargo metadata --locked --offline` then completed, and the release
+  checker now intentionally uses offline mode for reproducibility.

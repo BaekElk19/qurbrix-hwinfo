@@ -1,0 +1,2 @@
+fixture,runs,elapsed_seconds,user_seconds,system_seconds,cpu_percent,max_rss_kib,serial_ms,parallel_ms,improvement_percent,peak_external
+paired_real_machine,1,6.59,6.82,2.30,138,20164,5154,1437,72.12,4
