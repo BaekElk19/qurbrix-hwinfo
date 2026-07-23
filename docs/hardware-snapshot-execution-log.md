@@ -34,8 +34,8 @@ validation includes an automated declaration and dependency-license audit.
 | Phase | Version | Status | Checkpoint |
 |---|---|---|---|
 | A | 0.2.0-alpha.1 | complete | `184d1a4` |
-| B | 0.2.0-alpha.2 | in progress | not created |
-| C | 0.2.0-alpha.3 | pending | not created |
+| B | 0.2.0-alpha.2 | complete | `d7958d8` |
+| C | 0.2.0-alpha.3 | in progress | not created |
 | D | 0.2.0-alpha.4 | pending | not created |
 | E | 0.2.0-beta.1 | pending | not created |
 | F | 0.2.0-rc.1 | pending | not created |
@@ -79,6 +79,27 @@ validation includes an automated declaration and dependency-license audit.
   temporary/renamed orphan recovery, path traversal and mode 0700/0600.
 - SQLite work is isolated in `spawn_blocking`; the complete report exists only as
   an immutable checked JSON artifact, while database queries use relation tables.
+
+## Phase C Evidence
+
+- Canonicalizer/probe implementation: `7fdb5d9`; fixtures/tests and benchmark
+  tool: `19c2d08`; baseline/failure docs: `a0b5049`.
+- `cargo test -p hw-inventory --test quick_probe`: PASS (7 tests).
+- `cargo clippy -p hw-inventory --all-targets -- -D warnings`: PASS.
+- Fixtures prove byte-deterministic ordering, whitespace/case normalization,
+  duplicate removal, placeholder filtering, source failure vs trusted absence,
+  random/virtual MAC and software-renderer exclusion. Physical network changes
+  alter both IDs; kernel/firmware/driver changes alter only configuration; hot
+  and network runtime fields alter neither. Existing bindid v1 tests remain green.
+- Ten real-machine samples used `cargo run --quiet --example
+  quick_probe_baseline -- 10` with two-second source timeouts. All were core
+  complete with 7 identity records and 4 warnings. Wall times were
+  `2211, 2223, 2211, 2205, 2207, 2206, 2223, 2202, 2198, 2196` ms; median 2206.5
+  ms and nearest-rank P95 2223 ms. Raw evidence is in
+  `docs/hardware-snapshot-quick-probe-baseline.csv`.
+- Dependency/runtime audit: quick probe imports only existing probe/source APIs,
+  executes a finite awaited sequence, and has no udev/netlink listener, daemon,
+  monitor dependency, detached task or active source call after return.
 
 ## Performance Evidence
 
