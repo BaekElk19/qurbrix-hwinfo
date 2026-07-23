@@ -15,11 +15,9 @@ async fn main() -> anyhow::Result<()> {
             ..ScanConfig::default()
         };
         let started = Instant::now();
-        let serial = collect_scan_report_detailed(
-            config.clone(),
-            ScanExecutionOptions::serial_baseline(),
-        )
-        .await?;
+        let serial =
+            collect_scan_report_detailed(config.clone(), ScanExecutionOptions::serial_baseline())
+                .await?;
         let serial_ms = started.elapsed().as_millis();
         let started = Instant::now();
         let parallel =
