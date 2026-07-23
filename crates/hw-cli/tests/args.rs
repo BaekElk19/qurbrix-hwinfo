@@ -70,6 +70,40 @@ fn sources_rejects_ignored_non_json_formats() {
 }
 
 #[test]
+fn parses_snapshot_commands_and_duration_units() {
+    let cli = Cli::try_parse_from([
+        "qurbrix-hw",
+        "snapshot",
+        "ensure",
+        "--state-dir",
+        "/tmp/state",
+        "--max-age",
+        "2h",
+        "--force",
+        "--reject-partial",
+    ])
+    .unwrap();
+    let Command::Snapshot(args) = cli.command else {
+        panic!("expected snapshot command");
+    };
+    let hw_cli::args::SnapshotCommand::Ensure(args) = args.command else {
+        panic!("expected ensure command");
+    };
+    assert_eq!(args.max_age.as_secs(), 7_200);
+    assert!(args.force);
+    assert!(args.reject_partial);
+}
+
+#[test]
+fn only_snapshot_ensure_requires_hardware_access() {
+    let ensure = Cli::try_parse_from(["qurbrix-hw", "snapshot", "ensure"]).unwrap();
+    assert!(command_requires_hardware_access(&ensure.command));
+    let id = hw_model::SnapshotId::new_v7().to_string();
+    let show = Cli::try_parse_from(["qurbrix-hw", "snapshot", "show", &id]).unwrap();
+    assert!(!command_requires_hardware_access(&show.command));
+}
+
+#[test]
 fn identifies_hardware_access_commands() {
     assert!(command_requires_hardware_access(&Command::Scan(ScanArgs {
         format: OutputFormat::Json,

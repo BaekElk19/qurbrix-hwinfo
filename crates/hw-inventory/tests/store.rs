@@ -369,3 +369,52 @@ async fn snapshot_listing_filters_by_machine_and_pages() {
     assert_eq!(all.len(), 2);
     assert!(all.iter().any(|snapshot| snapshot.snapshot_id == second));
 }
+
+#[tokio::test]
+async fn diff_and_export_use_verified_snapshot_data() {
+    let (temp, store) = open_temp().await;
+    let first_report = report();
+    let first = store
+        .publish_snapshot(first_report.clone(), probe())
+        .await
+        .unwrap();
+    let mut second_report = first_report;
+    second_report.devices[0].name = "Changed System".into();
+    second_report.devices.push(Device::new(
+        "system:added",
+        DeviceKind::System,
+        "Added System",
+        DeviceProperties::System(SystemDeviceInfo::default()),
+    ));
+    let mut second_probe = probe();
+    second_probe.configuration_fingerprint = "d".repeat(64);
+    let second = store
+        .publish_snapshot(second_report.clone(), second_probe)
+        .await
+        .unwrap();
+    let diff = hw_inventory::diff_snapshots(&store, first, second)
+        .await
+        .unwrap();
+    assert!(!diff.machine_identity_changed);
+    assert!(diff.configuration_changed);
+    assert_eq!(diff.added[0].id, "system:added");
+    assert_eq!(diff.changed[0].device_id, "system:fixture");
+
+    let output = temp.path().join("export.json");
+    let metadata = store
+        .export_scan_report(second, output.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(metadata.snapshot_id, second);
+    assert_eq!(
+        serde_json::from_slice::<ScanReport>(&fs::read(&output).unwrap()).unwrap(),
+        second_report
+    );
+    assert!(matches!(
+        store
+            .export_scan_report(second, output, false)
+            .await
+            .unwrap_err(),
+        InventoryError::DestinationExists(_)
+    ));
+}
