@@ -289,3 +289,9 @@ with external-process peak 4. Raw data is in
   the restricted sandbox. The authorized network retry downloaded the missing
   packages; `cargo metadata --locked --offline` then completed, and the release
   checker now intentionally uses offline mode for reproducibility.
+- Phase G version-update attempt 1: `cargo check --workspace --all-targets
+  --locked` exited 101 because changing the workspace version necessarily made
+  `Cargo.lock` stale while `--locked` prohibited Cargo from updating it. Reran
+  once with `--offline`; Cargo updated exactly the 11 workspace package entries
+  to 0.2.0 without network access, and a subsequent locked metadata assertion
+  confirmed all 11 versions.
