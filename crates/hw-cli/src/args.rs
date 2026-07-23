@@ -166,6 +166,9 @@ pub struct ScanArgs {
     pub exclude_kind: Vec<DeviceKind>,
     #[arg(long, default_value = "30s", value_parser = parse_duration)]
     pub timeout: Duration,
+    /// Skip optional hardware probes that are not required for core identity.
+    #[arg(long)]
+    pub no_optional_sources: bool,
     #[arg(long)]
     pub no_sources: bool,
     #[arg(long)]

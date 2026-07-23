@@ -15,15 +15,14 @@ Status: **DONE** (2026-07-24)
 
 Status: **DONE** (2026-07-24)
 
-Locations: `crates/hw-inventory/src/service.rs`
-
-Fix: default lease wait timeout matches lease duration (120s); configurable via
-`ObserveInventoryOptions::lease_wait_timeout`.
-Regression: `waiter_survives_slow_healthy_scan_beyond_thirty_seconds`.
-
 ### `scan --no-optional-sources` was removed without a compatible replacement
 
-Status: open
+Status: **DONE** (2026-07-24)
+
+Locations: `crates/hw-cli/src/args.rs`, `crates/hw-cli/src/main.rs`,
+`crates/hw-collect/src/collector.rs`
+
+Fix: restore `--no-optional-sources` and skip non-core optional probes when set.
 
 ## P2
 

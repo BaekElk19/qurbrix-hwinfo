@@ -39,8 +39,16 @@ async fn main() -> Result<()> {
                 ObserveInventoryOptions {
                     force_full_scan: args.force,
                     scan_config: ScanConfig {
+                        kinds: if args.kind.is_empty() {
+                            None
+                        } else {
+                            Some(args.kind.clone())
+                        },
+                        exclude_kinds: args.exclude_kind.clone(),
                         timeout: args.timeout,
-                        ..ScanConfig::default()
+                        optional_sources: !args.no_optional_sources,
+                        include_sources: !args.no_sources,
+                        include_warnings: !args.no_warnings,
                     },
                     ..ObserveInventoryOptions::default()
                 },

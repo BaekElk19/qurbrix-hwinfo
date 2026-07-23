@@ -274,7 +274,25 @@ fn selected_probes(config: &ScanConfig) -> Vec<(usize, Box<dyn Probe>)> {
                 .iter()
                 .any(|kind| config.exclude_kinds.contains(kind))
         })
+        .filter(|(_, probe)| config.optional_sources || !is_optional_probe(probe.as_ref()))
         .collect()
+}
+
+/// Probes that are not required for core identity / bindid and can be skipped via
+/// `--no-optional-sources`.
+fn is_optional_probe(probe: &dyn Probe) -> bool {
+    matches!(
+        probe.name(),
+        "monitor"
+            | "audio"
+            | "bluetooth"
+            | "input"
+            | "camera"
+            | "battery"
+            | "printer"
+            | "cdrom"
+            | "usb"
+    )
 }
 
 fn all_probes() -> Vec<Box<dyn Probe>> {

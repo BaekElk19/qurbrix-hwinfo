@@ -134,6 +134,7 @@ fn identifies_hardware_access_commands() {
         kind: Vec::new(),
         exclude_kind: Vec::new(),
         timeout: Duration::from_secs(30),
+        no_optional_sources: false,
         no_sources: false,
         no_warnings: false,
     })));
@@ -190,4 +191,16 @@ fn maps_failed_scan_status_to_contract_exit_code() {
 fn maps_unsupported_kind_parse_error_to_contract_exit_code() {
     let err = Cli::try_parse_from(["qurbrix-hw", "scan", "--kind", "not-a-kind"]).unwrap_err();
     assert_eq!(classify_parse_error(&err), ExitCode::Unsupported);
+}
+
+
+#[test]
+fn parses_scan_no_optional_sources() {
+    let cli = Cli::parse_from(["qurbrix-hw", "scan", "--no-optional-sources"]);
+    match cli.command {
+        Command::Scan(scan) => {
+            assert!(scan.no_optional_sources);
+        }
+        _ => panic!("expected scan"),
+    }
 }
