@@ -1,6 +1,6 @@
 use crate::args::{SnapshotArgs, SnapshotCommand};
 use hw_inventory::{
-    diff_snapshots, ensure_snapshot, InventoryError, InventoryStore, PageRequest,
+    diff_snapshots, ensure_snapshot, InventoryError, InventoryStore, PageRequest, RetentionPolicy,
     SNAPSHOT_CLI_SCHEMA_VERSION,
 };
 use hw_model::{EnsureSnapshotOptions, PartialPolicy};
@@ -25,6 +25,13 @@ struct ListOutput {
     limit: u32,
     offset: u64,
     snapshots: Vec<hw_model::StoredSnapshot>,
+}
+
+#[derive(Serialize)]
+struct LifecycleOutput {
+    schema_version: &'static str,
+    snapshot_id: hw_model::SnapshotId,
+    action: &'static str,
 }
 
 pub async fn run_snapshot_command(args: SnapshotArgs) -> Result<(), InventoryError> {
@@ -103,6 +110,45 @@ pub async fn run_snapshot_command(args: SnapshotArgs) -> Result<(), InventoryErr
                 .export_scan_report(args.snapshot_id, args.output, args.overwrite)
                 .await?;
             write_json(&metadata, args.pretty)?;
+        }
+        SnapshotCommand::Health(args) => {
+            let store = InventoryStore::open(args.state_dir).await?;
+            write_json(&store.health_check().await?, args.pretty)?;
+        }
+        SnapshotCommand::Prune(args) => {
+            let store = InventoryStore::open(args.state_dir).await?;
+            let report = store
+                .apply_retention(RetentionPolicy {
+                    keep_recent_per_machine: args.keep_recent,
+                    uploaded_max_age: args.max_age,
+                    dry_run: args.dry_run,
+                })
+                .await?;
+            write_json(&report, args.pretty)?;
+        }
+        SnapshotCommand::Pin(args) => {
+            let store = InventoryStore::open(args.state_dir).await?;
+            store.set_pinned(args.snapshot_id, !args.unset).await?;
+            write_json(
+                &LifecycleOutput {
+                    schema_version: SNAPSHOT_CLI_SCHEMA_VERSION,
+                    snapshot_id: args.snapshot_id,
+                    action: if args.unset { "unpinned" } else { "pinned" },
+                },
+                args.pretty,
+            )?;
+        }
+        SnapshotCommand::MarkUploaded(args) => {
+            let store = InventoryStore::open(args.state_dir).await?;
+            store.mark_uploaded(args.snapshot_id, args.at).await?;
+            write_json(
+                &LifecycleOutput {
+                    schema_version: SNAPSHOT_CLI_SCHEMA_VERSION,
+                    snapshot_id: args.snapshot_id,
+                    action: "marked_uploaded",
+                },
+                args.pretty,
+            )?;
         }
     }
     Ok(())

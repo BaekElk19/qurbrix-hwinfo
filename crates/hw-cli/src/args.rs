@@ -49,6 +49,56 @@ pub enum SnapshotCommand {
     List(SnapshotListArgs),
     Diff(SnapshotDiffArgs),
     Export(SnapshotExportArgs),
+    Health(SnapshotHealthArgs),
+    Prune(SnapshotPruneArgs),
+    Pin(SnapshotPinArgs),
+    MarkUploaded(SnapshotMarkUploadedArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotHealthArgs {
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotPruneArgs {
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long, default_value_t = 30)]
+    pub keep_recent: u32,
+    #[arg(long, default_value = "90d", value_parser = parse_duration)]
+    pub max_age: Duration,
+    #[arg(long)]
+    pub dry_run: bool,
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotPinArgs {
+    #[arg(value_parser = parse_snapshot_id)]
+    pub snapshot_id: SnapshotId,
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub unset: bool,
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotMarkUploadedArgs {
+    #[arg(value_parser = parse_snapshot_id)]
+    pub snapshot_id: SnapshotId,
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub at: Option<String>,
+    #[arg(long)]
+    pub pretty: bool,
 }
 
 #[derive(Debug, Args)]
