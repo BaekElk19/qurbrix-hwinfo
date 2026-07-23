@@ -37,8 +37,8 @@ validation includes an automated declaration and dependency-license audit.
 | B | 0.2.0-alpha.2 | complete | `d7958d8` |
 | C | 0.2.0-alpha.3 | complete | `993efcf` |
 | D | 0.2.0-alpha.4 | complete | `0be142d` |
-| E | 0.2.0-beta.1 | in progress | not created |
-| F | 0.2.0-rc.1 | pending | not created |
+| E | 0.2.0-beta.1 | complete | `e81c4db` |
+| F | 0.2.0-rc.1 | in progress | not created |
 | G | 0.2.0 | pending | not created |
 
 ## Baseline Gates
@@ -150,6 +150,25 @@ validation includes an automated declaration and dependency-license audit.
   a row, not a write transaction. Publication atomically writes snapshot/device/
   artifact/lifecycle/current state and full probe completion. Failures return an
   explicit error rather than an old ID; the previous artifact remains readable.
+
+## Phase F Evidence
+
+- Diff/export Rust API: `42d6bb2`; facade and CLI implementation: `303a146`;
+  contract tests: `68197b2`; English/Chinese docs: `f14aa02`.
+- Dedicated gates: `cargo test -p hw-cli` PASS (13 argument/permission tests),
+  inventory store tests PASS (10), facade tests PASS (2), CLI contract tests PASS
+  (4), README smoke PASS (1), and workspace clippy with warnings denied PASS.
+- The top-level crate exports type-safe store, quick/full/ensure, query, diff and
+  export APIs. CLI provides `snapshot ensure/show/list/diff/export`, bounded
+  pagination, stable ordering, caller-selected state/output paths, no-overwrite
+  export and `qurbrix.hw.snapshot.cli.v1` stdout JSON.
+- CLI error contract: diagnostics only on stderr; exit 0 success, 1 parse or
+  serialization, 2 scan/policy, 4 permission, 5 not found, 6 storage/integrity,
+  124 lease timeout. Snapshot readers do not require root; ensure does. Existing
+  scan/list/schema/bindid argument, output and exit tests remain unchanged/green.
+- Both READMEs cover the on-demand/non-monitor boundary, Rust and CLI examples,
+  default/override paths, modes 0700/0600, integrity behavior, export, cleanup,
+  schema and exit codes. Smoke tests execute documented snapshot help/list paths.
 
 ## Performance Evidence
 
