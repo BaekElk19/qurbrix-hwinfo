@@ -35,6 +35,7 @@ impl SourceRunner for RealSourceRunner {
         let display = command.display_name();
         let mut cmd = Command::new(&command.program);
         cmd.args(&command.args);
+        cmd.kill_on_drop(true);
         cmd.env("LC_ALL", "C")
             .env("LANG", "C")
             .env("LANGUAGE", "en");
