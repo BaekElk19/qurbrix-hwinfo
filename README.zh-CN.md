@@ -122,11 +122,10 @@ sudo qurbrix-hw scan --format json --pretty
   - `summary-json`：`summary` 命令的 JSON 版
 - `--pretty`：格式化 `json` 和 `typed-json` 输出
 - `--kind <k>` / `--exclude-kind <k>`：可重复，如 `--kind cpu --kind memory`
-- `--timeout 30s`：单个 source 的超时
+- `--timeout 30s`：单个 source 的超时；同时约束 quick probe（上限 5s）
 - `--state-dir <path>`：库存状态目录，默认 `/var/lib/qurbrix-hwinfo`
 - `--force`：忽略可复用快照，执行唯一的全量采集器
 - `--no-optional-sources`：跳过非核心可选探针（monitor/audio/bluetooth/input/camera/battery/printer/cdrom/usb）
-- `--timeout` 也会约束 quick probe（上限 5s）
 - `--no-sources`：不在报告中输出原始 `sources` 段
 - `--no-warnings`：抑制非致命 warning
 
