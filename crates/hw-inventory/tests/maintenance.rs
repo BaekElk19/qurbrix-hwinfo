@@ -180,6 +180,13 @@ async fn metrics_and_wal_checkpoint_bound_long_running_state() {
     let checkpoint = store.wal_checkpoint().await.unwrap();
     assert_eq!(checkpoint.busy, 0);
     assert!(checkpoint.checkpointed_frames <= checkpoint.log_frames);
+    eprintln!(
+        "inventory_growth snapshots=20 devices=60 db_bytes={} artifact_bytes={} wal_log_frames={} wal_checkpointed_frames={}",
+        fs::metadata(store.database_path()).unwrap().len(),
+        metrics.artifact_bytes,
+        checkpoint.log_frames,
+        checkpoint.checkpointed_frames
+    );
 }
 
 #[tokio::test]
