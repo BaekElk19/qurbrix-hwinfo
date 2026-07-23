@@ -1,7 +1,10 @@
 use crate::{
     artifact,
     error::{InventoryError, Result},
-    model::{PageRequest, StoredDeviceSummary, UploadSnapshotProjection},
+    model::{
+        InventoryState, PageRequest, ProbeCompletion, ProbeKind, StoredDeviceSummary,
+        UploadSnapshotProjection,
+    },
 };
 use hw_model::{
     ArtifactMetadata, BusInfo, Device, PublishedScanStatus, QuickProbeReport, ScanReport,
@@ -51,7 +54,18 @@ impl InventoryStore {
         probe: QuickProbeReport,
     ) -> Result<SnapshotId> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || store.publish_sync(report, probe)).await?
+        tokio::task::spawn_blocking(move || store.publish_sync(report, probe, None)).await?
+    }
+
+    pub async fn publish_snapshot_for_probe(
+        &self,
+        report: ScanReport,
+        probe: QuickProbeReport,
+        probe_id: i64,
+    ) -> Result<SnapshotId> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.publish_sync(report, probe, Some(probe_id)))
+            .await?
     }
 
     pub async fn load_snapshot(&self, snapshot_id: SnapshotId) -> Result<Option<StoredSnapshot>> {
@@ -105,6 +119,66 @@ impl InventoryStore {
         tokio::task::spawn_blocking(move || store.recover_orphans_sync()).await?
     }
 
+    pub async fn current_state(&self) -> Result<InventoryState> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.current_state_sync()).await?
+    }
+
+    pub async fn start_probe(
+        &self,
+        kind: ProbeKind,
+        previous_snapshot_id: Option<SnapshotId>,
+    ) -> Result<i64> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.start_probe_sync(kind, previous_snapshot_id))
+            .await?
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finish_probe(
+        &self,
+        probe_id: i64,
+        completion: ProbeCompletion,
+        snapshot_id: Option<SnapshotId>,
+        machine_bind_id: Option<String>,
+        configuration_fingerprint: Option<String>,
+        duration_ms: Option<u64>,
+        warning_count: Option<u64>,
+        error_code: Option<String>,
+        error_message: Option<String>,
+    ) -> Result<()> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            store.finish_probe_sync(
+                probe_id,
+                completion,
+                snapshot_id,
+                machine_bind_id,
+                configuration_fingerprint,
+                duration_ms,
+                warning_count,
+                error_code,
+                error_message,
+            )
+        })
+        .await?
+    }
+
+    pub async fn try_acquire_lease(
+        &self,
+        owner_id: String,
+        lease_duration: std::time::Duration,
+    ) -> Result<bool> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.try_acquire_lease_sync(&owner_id, lease_duration))
+            .await?
+    }
+
+    pub async fn release_lease(&self, owner_id: String) -> Result<()> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.release_lease_sync(&owner_id)).await?
+    }
+
     fn initialize(&self) -> Result<()> {
         artifact::ensure_private_directory(&self.state_dir)?;
         let connection = self.connect()?;
@@ -119,6 +193,7 @@ impl InventoryStore {
         )?;
         connection.pragma_update(None, "user_version", 1)?;
         artifact::ensure_private_file(&self.db_path)?;
+        self.recover_stale_sync(std::time::Duration::from_secs(10 * 60))?;
         self.recover_orphans_sync()?;
         Ok(())
     }
@@ -132,7 +207,12 @@ impl InventoryStore {
         Ok(connection)
     }
 
-    fn publish_sync(&self, report: ScanReport, probe: QuickProbeReport) -> Result<SnapshotId> {
+    fn publish_sync(
+        &self,
+        report: ScanReport,
+        probe: QuickProbeReport,
+        probe_id: Option<i64>,
+    ) -> Result<SnapshotId> {
         if report.status == ScanStatus::Failed {
             return Err(InventoryError::InvalidReport(
                 "failed scans cannot be published",
@@ -150,6 +230,7 @@ impl InventoryStore {
             &report,
             &probe,
             &artifact_metadata,
+            probe_id,
         );
         if publish_result.is_err() {
             let _ = artifact::remove_report(&self.state_dir, &artifact_metadata.relative_path);
@@ -165,6 +246,7 @@ impl InventoryStore {
         report: &ScanReport,
         probe: &QuickProbeReport,
         artifact_metadata: &ArtifactMetadata,
+        probe_id: Option<i64>,
     ) -> Result<()> {
         let mut connection = self.connect()?;
         let transaction =
@@ -214,6 +296,17 @@ impl InventoryStore {
             "UPDATE inventory_state SET current_snapshot_id = ?1, current_machine_bind_id = ?2, bindid_algorithm = ?3, last_configuration_fingerprint = ?4, core_identity_count = ?5, fingerprint_version = ?6, last_quick_probe_at = ?7, updated_at = ?7 WHERE id = 1",
             params![snapshot_id.to_string(), probe.machine_bind_id, probe.bindid_algorithm, probe.configuration_fingerprint, probe.identity_records.len() as i64, probe.fingerprint_version as i64, probe.observed_at],
         )?;
+        if let Some(probe_id) = probe_id {
+            let probe_status = if report.status == ScanStatus::Complete {
+                "succeeded"
+            } else {
+                "partial"
+            };
+            transaction.execute(
+                "UPDATE probe_history SET finished_at = ?1, status = ?2, snapshot_id = ?3, machine_bind_id = ?4, configuration_fingerprint = ?5, duration_ms = ?6, warning_count = ?7, error_code = NULL, error_message = NULL WHERE probe_id = ?8 AND status = 'running'",
+                params![created_at, probe_status, snapshot_id.to_string(), probe.machine_bind_id, probe.configuration_fingerprint, report.metadata.duration_ms.map(|value| value as i64), report.warnings.len() as i64, probe_id],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -298,12 +391,135 @@ impl InventoryStore {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         artifact::recover_orphans(&self.state_dir, &paths)
     }
+
+    fn current_state_sync(&self) -> Result<InventoryState> {
+        let connection = self.connect()?;
+        connection
+            .query_row(
+                "SELECT s.current_snapshot_id, s.current_machine_bind_id, s.bindid_algorithm, s.last_configuration_fingerprint, s.fingerprint_version, s.last_quick_probe_at, h.created_at FROM inventory_state s LEFT JOIN hardware_snapshot h ON h.snapshot_id = s.current_snapshot_id WHERE s.id = 1",
+                [],
+                |row| {
+                    let id: Option<String> = row.get(0)?;
+                    Ok(InventoryState {
+                        current_snapshot_id: id
+                            .map(|id| {
+                                SnapshotId::from_str(&id).map_err(|error| {
+                                    rusqlite::Error::FromSqlConversionFailure(
+                                        0,
+                                        rusqlite::types::Type::Text,
+                                        Box::new(error),
+                                    )
+                                })
+                            })
+                            .transpose()?,
+                        current_machine_bind_id: row.get(1)?,
+                        bindid_algorithm: row.get(2)?,
+                        last_configuration_fingerprint: row.get(3)?,
+                        fingerprint_version: row
+                            .get::<_, Option<i64>>(4)?
+                            .map(|value| value as u32),
+                        last_quick_probe_at: row.get(5)?,
+                        current_snapshot_created_at: row.get(6)?,
+                    })
+                },
+            )
+            .map_err(Into::into)
+    }
+
+    fn start_probe_sync(
+        &self,
+        kind: ProbeKind,
+        previous_snapshot_id: Option<SnapshotId>,
+    ) -> Result<i64> {
+        let connection = self.connect()?;
+        connection.execute(
+            "INSERT INTO probe_history(probe_type, started_at, status, previous_snapshot_id) VALUES (?1, ?2, 'running', ?3)",
+            params![kind.as_str(), now_rfc3339()?, previous_snapshot_id.map(|id| id.to_string())],
+        )?;
+        Ok(connection.last_insert_rowid())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_probe_sync(
+        &self,
+        probe_id: i64,
+        completion: ProbeCompletion,
+        snapshot_id: Option<SnapshotId>,
+        machine_bind_id: Option<String>,
+        configuration_fingerprint: Option<String>,
+        duration_ms: Option<u64>,
+        warning_count: Option<u64>,
+        error_code: Option<String>,
+        error_message: Option<String>,
+    ) -> Result<()> {
+        let connection = self.connect()?;
+        connection.execute(
+            "UPDATE probe_history SET finished_at = ?1, status = ?2, snapshot_id = ?3, machine_bind_id = ?4, configuration_fingerprint = ?5, duration_ms = ?6, warning_count = ?7, error_code = ?8, error_message = ?9 WHERE probe_id = ?10",
+            params![now_rfc3339()?, completion.as_str(), snapshot_id.map(|id| id.to_string()), machine_bind_id, configuration_fingerprint, duration_ms.map(|value| value as i64), warning_count.map(|value| value as i64), error_code, error_message.map(|message| redact_error(&message)), probe_id],
+        )?;
+        Ok(())
+    }
+
+    fn try_acquire_lease_sync(
+        &self,
+        owner_id: &str,
+        lease_duration: std::time::Duration,
+    ) -> Result<bool> {
+        let mut connection = self.connect()?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let now = OffsetDateTime::now_utc();
+        let now_text = now
+            .format(&Rfc3339)
+            .map_err(|_| InventoryError::InvalidReport("UTC timestamp formatting failed"))?;
+        let seconds = i64::try_from(lease_duration.as_secs()).unwrap_or(i64::MAX);
+        let expires = (now + time::Duration::seconds(seconds))
+            .format(&Rfc3339)
+            .map_err(|_| InventoryError::InvalidReport("lease timestamp formatting failed"))?;
+        transaction.execute("DELETE FROM scan_lease WHERE expires_at <= ?1", [&now_text])?;
+        let inserted = transaction.execute(
+            "INSERT OR IGNORE INTO scan_lease(id, owner_id, acquired_at, expires_at) VALUES (1, ?1, ?2, ?3)",
+            params![owner_id, now_text, expires],
+        )?;
+        transaction.commit()?;
+        Ok(inserted == 1)
+    }
+
+    fn release_lease_sync(&self, owner_id: &str) -> Result<()> {
+        self.connect()?.execute(
+            "DELETE FROM scan_lease WHERE id = 1 AND owner_id = ?1",
+            [owner_id],
+        )?;
+        Ok(())
+    }
+
+    fn recover_stale_sync(&self, age: std::time::Duration) -> Result<()> {
+        let connection = self.connect()?;
+        let seconds = i64::try_from(age.as_secs()).unwrap_or(i64::MAX);
+        let cutoff = (OffsetDateTime::now_utc() - time::Duration::seconds(seconds))
+            .format(&Rfc3339)
+            .map_err(|_| InventoryError::InvalidReport("recovery timestamp formatting failed"))?;
+        connection.execute(
+            "UPDATE probe_history SET finished_at = ?1, status = 'failed', error_code = 'inventory.process_interrupted', error_message = 'stale running probe recovered' WHERE status = 'running' AND started_at < ?2",
+            params![now_rfc3339()?, cutoff],
+        )?;
+        connection.execute(
+            "DELETE FROM scan_lease WHERE expires_at <= ?1",
+            [now_rfc3339()?],
+        )?;
+        Ok(())
+    }
 }
 
 fn now_rfc3339() -> Result<String> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(|_| InventoryError::InvalidReport("UTC timestamp formatting failed"))
+}
+
+fn redact_error(message: &str) -> String {
+    let collapsed = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(256).collect()
 }
 
 fn stored_snapshot_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSnapshot> {

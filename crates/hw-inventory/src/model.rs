@@ -1,6 +1,49 @@
 use hw_model::{SnapshotId, StoredSnapshot};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InventoryState {
+    pub current_snapshot_id: Option<SnapshotId>,
+    pub current_machine_bind_id: Option<String>,
+    pub bindid_algorithm: Option<String>,
+    pub last_configuration_fingerprint: Option<String>,
+    pub fingerprint_version: Option<u32>,
+    pub last_quick_probe_at: Option<String>,
+    pub current_snapshot_created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeKind {
+    Quick,
+    Full,
+}
+
+impl ProbeKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Quick => "quick",
+            Self::Full => "full",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeCompletion {
+    Succeeded,
+    Partial,
+    Failed,
+}
+
+impl ProbeCompletion {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Partial => "partial",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredDeviceSummary {
     pub snapshot_id: SnapshotId,

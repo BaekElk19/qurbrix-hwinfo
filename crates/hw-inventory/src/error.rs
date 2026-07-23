@@ -24,6 +24,36 @@ pub enum InventoryError {
     InvalidReport(&'static str),
     #[error("stored snapshot identifier is invalid: {0}")]
     InvalidSnapshotId(String),
+    #[error("full hardware scan failed")]
+    FullScanFailed,
+    #[error("partial hardware scan was rejected by policy")]
+    PartialRejected,
+    #[error("core hardware identity is incomplete")]
+    CoreIdentityIncomplete,
+    #[error("timed out waiting for the snapshot scan lease")]
+    LeaseTimeout,
+}
+
+impl InventoryError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Database(_) => "inventory.database",
+            Self::Io(_) => "inventory.io",
+            Self::Serialization(_) => "inventory.serialization",
+            Self::Worker(_) => "inventory.worker",
+            Self::UnsupportedSchema(_) => "inventory.schema_unsupported",
+            Self::InvalidArtifactPath(_) => "inventory.artifact_path",
+            Self::ArtifactSizeMismatch => "inventory.artifact_size",
+            Self::ArtifactHashMismatch => "inventory.artifact_hash",
+            Self::ArtifactSchemaMismatch => "inventory.artifact_schema",
+            Self::InvalidReport(_) => "inventory.report_invalid",
+            Self::InvalidSnapshotId(_) => "inventory.snapshot_id",
+            Self::FullScanFailed => "inventory.full_scan_failed",
+            Self::PartialRejected => "inventory.partial_rejected",
+            Self::CoreIdentityIncomplete => "inventory.core_identity_incomplete",
+            Self::LeaseTimeout => "inventory.lease_timeout",
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, InventoryError>;
