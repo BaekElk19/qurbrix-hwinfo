@@ -36,8 +36,8 @@ validation includes an automated declaration and dependency-license audit.
 | A | 0.2.0-alpha.1 | complete | `184d1a4` |
 | B | 0.2.0-alpha.2 | complete | `d7958d8` |
 | C | 0.2.0-alpha.3 | complete | `993efcf` |
-| D | 0.2.0-alpha.4 | in progress | not created |
-| E | 0.2.0-beta.1 | pending | not created |
+| D | 0.2.0-alpha.4 | complete | `0be142d` |
+| E | 0.2.0-beta.1 | in progress | not created |
 | F | 0.2.0-rc.1 | pending | not created |
 | G | 0.2.0 | pending | not created |
 
@@ -131,6 +131,25 @@ validation includes an automated declaration and dependency-license audit.
   merge order remains the original probe order, command children are
   `kill_on_drop`, and SQLite publication still occurs outside scanning in one
   short transaction using cached prepared statements.
+
+## Phase E Evidence
+
+- State/history/lease primitives: `a1edfa6`; service state machine and thin
+  `full_scan()` wrapper: `3f492e7`; integration tests: `5913462`; retry evidence:
+  `2fc775a`.
+- Dedicated gates: `cargo test -p hw-inventory --test service` PASS (12 tests),
+  complete `cargo test -p hw-inventory` PASS (29 tests), and inventory clippy
+  with warnings denied PASS.
+- Covered transitions: first publish, unchanged reuse, force, zero TTL,
+  configuration change, physical change/new bindid, quick failure fallback,
+  full failure retaining current, partial publish/reject, incomplete core reject,
+  tampered current replacement, eight concurrent callers sharing one publish,
+  expired lease recovery, stale running probe recovery, and DB writability while
+  full scan is blocked.
+- The scan lease is acquired in a short `BEGIN IMMEDIATE` transaction and held as
+  a row, not a write transaction. Publication atomically writes snapshot/device/
+  artifact/lifecycle/current state and full probe completion. Failures return an
+  explicit error rather than an old ID; the previous artifact remains readable.
 
 ## Performance Evidence
 
