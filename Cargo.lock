@@ -255,7 +255,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hw-bindid"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "hex",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "hw-cli"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "hw-collect"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "hw-model",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "hw-model"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "hw-output"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "hw-model",
@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "hw-parser"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "hw-testdata",
  "regex",
@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "hw-probe"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "hw-source"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "hw-testdata"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -498,7 +498,7 @@ dependencies = [
 
 [[package]]
 name = "qurbrix-hw"
-version = "0.1.7"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "clap",
