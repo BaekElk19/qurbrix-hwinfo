@@ -73,3 +73,9 @@ discarded. The raw data is in `docs/hardware-snapshot-performance-baseline.csv`.
 
 The 22 acceptance criteria are populated with command or test evidence during
 phase G release validation.
+
+## Gate Failure Ledger
+
+- Phase A checkpoint attempt 1: `cargo fmt --all -- --check` exited 1 because
+  rustfmt condensed `IdentityCoverage::core_complete`. Root cause was source
+  formatting only; applied `cargo fmt --all`, then reran the full phase gates.
