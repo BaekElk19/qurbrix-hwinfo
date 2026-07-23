@@ -221,7 +221,7 @@ impl InventoryStore {
         Ok(())
     }
 
-    fn connect(&self) -> Result<Connection> {
+    pub(crate) fn connect(&self) -> Result<Connection> {
         let connection = Connection::open(self.db_path.as_path())?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;

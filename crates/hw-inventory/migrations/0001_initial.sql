@@ -165,6 +165,14 @@ CREATE TABLE IF NOT EXISTS scan_lease (
     expires_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS artifact_delete_queue (
+    relative_path TEXT PRIMARY KEY,
+    sha256 TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error TEXT,
+    updated_at TEXT NOT NULL
+) STRICT;
+
 CREATE INDEX IF NOT EXISTS idx_snapshot_machine_created
     ON hardware_snapshot(machine_bind_id, created_at DESC, snapshot_id DESC);
 CREATE INDEX IF NOT EXISTS idx_snapshot_configuration
@@ -183,6 +191,8 @@ CREATE INDEX IF NOT EXISTS idx_probe_started
     ON probe_history(started_at DESC, probe_id DESC);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_retention
     ON snapshot_lifecycle(pinned, uploaded_at, delete_pending);
+CREATE INDEX IF NOT EXISTS idx_delete_queue_updated
+    ON artifact_delete_queue(updated_at);
 
 CREATE TRIGGER IF NOT EXISTS immutable_hardware_snapshot
 BEFORE UPDATE ON hardware_snapshot BEGIN

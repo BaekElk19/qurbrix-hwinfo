@@ -176,6 +176,26 @@ pub(crate) fn recover_orphans(state_dir: &Path, known_paths: &[String]) -> Resul
     Ok(removed)
 }
 
+pub(crate) fn inspect_orphans(state_dir: &Path, known_paths: &[String]) -> Result<u64> {
+    let reports_dir = state_dir.join("reports");
+    ensure_private_directory(&reports_dir)?;
+    let mut count = 0;
+    for entry in fs::read_dir(reports_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let relative = format!("reports/{name}");
+        if name.ends_with(".snapshot.tmp")
+            || (name.ends_with(".json") && !known_paths.contains(&relative))
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::safe_artifact_path;

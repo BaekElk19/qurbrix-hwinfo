@@ -1,5 +1,6 @@
 use hw_model::{Device, SnapshotId, StoredSnapshot};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InventoryState {
@@ -117,4 +118,70 @@ impl PageRequest {
     pub(crate) fn bounded_limit(self) -> u32 {
         self.limit.clamp(1, 1_000)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetentionPolicy {
+    pub keep_recent_per_machine: u32,
+    pub uploaded_max_age: Duration,
+    pub dry_run: bool,
+}
+
+impl Default for RetentionPolicy {
+    fn default() -> Self {
+        Self {
+            keep_recent_per_machine: 30,
+            uploaded_max_age: Duration::from_secs(90 * 24 * 60 * 60),
+            dry_run: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetentionReport {
+    pub schema_version: String,
+    pub examined: u64,
+    pub protected_current: u64,
+    pub protected_pinned: u64,
+    pub protected_unuploaded: u64,
+    pub protected_recent: u64,
+    pub eligible: u64,
+    pub database_deleted: u64,
+    pub artifacts_deleted: u64,
+    pub artifact_delete_failures: u64,
+    pub pending_artifact_deletes: u64,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WalCheckpointResult {
+    pub busy: u64,
+    pub log_frames: u64,
+    pub checkpointed_frames: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InventoryMetrics {
+    pub schema_version: String,
+    pub snapshot_count: u64,
+    pub device_count: u64,
+    pub artifact_bytes: u64,
+    pub probe_count: u64,
+    pub failed_probe_count: u64,
+    pub running_probe_count: u64,
+    pub average_probe_duration_ms: Option<f64>,
+    pub pending_artifact_deletes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InventoryHealth {
+    pub schema_version: String,
+    pub healthy: bool,
+    pub sqlite_integrity: String,
+    pub foreign_key_violations: u64,
+    pub missing_artifacts: u64,
+    pub corrupt_artifacts: u64,
+    pub orphan_artifacts: u64,
+    pub metrics: InventoryMetrics,
+    pub wal_checkpoint: WalCheckpointResult,
 }
