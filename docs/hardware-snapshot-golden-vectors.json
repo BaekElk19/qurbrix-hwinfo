@@ -1,0 +1,20 @@
+{
+  "schema_version": "qurbrix.hw.snapshot.contract.v1",
+  "fingerprint_version": 2,
+  "vectors": [
+    {
+      "name": "canonical-order-and-whitespace",
+      "identity_records": ["cpu:vendor=acme|model=zen 4", "memory:serial=dim-01", "platform:uuid=abc", "storage:wwn=wwn-1", "network:mac=aa:bb:cc:dd:ee:ff"],
+      "configuration_records": ["kernel:release=6.6.0"],
+      "machine_bind_id": "3c7d2da062e43337acf70e7aef8da039634a9a3fa914dfcf491eb87d4642237b",
+      "configuration_fingerprint": "392d96511aa1ca22fac884f3d9c489073bc7f9ae50432033a752ecddcb1ab9d0"
+    },
+    {
+      "name": "physical-network-change",
+      "identity_records": ["cpu:vendor=acme|model=zen 4", "memory:serial=dim-01", "platform:uuid=abc", "storage:wwn=wwn-1", "network:mac=00:11:22:33:44:55"],
+      "configuration_records": ["kernel:release=6.6.0"],
+      "machine_bind_id": "5d63973a850f50f08c167b5034b14ddf0b67793cb2a47f662901bc94a39363cc",
+      "configuration_fingerprint": "4c16d582800ddba1f649d7c0e581e8f2d35a3b903d23da39412a0dc6a69917d4"
+    }
+  ]
+}

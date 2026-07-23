@@ -4,8 +4,11 @@
 # Git worktrees
 .worktrees/
 
-# Internal working docs (specs, gap reports, plans)
-/docs/
+# Runtime snapshot files
+qurbrix_hwinfo.db
+qurbrix_hwinfo.db-wal
+qurbrix_hwinfo.db-shm
+*.snapshot.tmp
 
 # AI assistant / tooling metadata
 .claude/

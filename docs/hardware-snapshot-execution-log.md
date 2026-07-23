@@ -1,0 +1,75 @@
+# Hardware Snapshot Execution Log
+
+## Run Identity
+
+- Runbook: `2026-07-22_22-33-55-hardware-snapshot-plan.md`
+- Starting repository HEAD: `93185c1`
+- Runbook baseline commit: `e9c3ed9`
+- Working branch: `codex/hardware-snapshot-v0.2.0`
+- Started: 2026-07-23 CST
+- Host: Linux x86_64, kernel `6.6.143-amd64-desktop-hwe`
+- Rust: `rustc 1.97.1 (8bab26f4f 2026-07-14)`
+- Cargo: `cargo 1.97.1 (c980f4866 2026-06-30)`
+
+## Operating Constraints
+
+- Tests and smoke tests use temporary directories; the real
+  `/var/lib/qurbrix-hwinfo` is not modified.
+- No remote push, pull request, release publication, daemon, hotplug listener,
+  monitor dependency, or monitoring time series is introduced.
+- Existing user changes are preserved and excluded from task commits.
+
+## License Decision
+
+The implementation is an independent Rust implementation based on the local
+runbook and the repository's existing APIs. No Deepin Device Manager source is
+copied, adapted, or linked. The repository therefore remains licensed under
+`MIT OR Apache-2.0`. Candidate alternatives were direct GPL-derived reuse or
+independent implementation; the latter preserves the existing license,
+minimizes dependencies, and fits the established Rust architecture. Final
+validation includes an automated declaration and dependency-license audit.
+
+## Phase Status
+
+| Phase | Version | Status | Checkpoint |
+|---|---|---|---|
+| A | 0.2.0-alpha.1 | in progress | not created |
+| B | 0.2.0-alpha.2 | pending | not created |
+| C | 0.2.0-alpha.3 | pending | not created |
+| D | 0.2.0-alpha.4 | pending | not created |
+| E | 0.2.0-beta.1 | pending | not created |
+| F | 0.2.0-rc.1 | pending | not created |
+| G | 0.2.0 | pending | not created |
+
+## Baseline Gates
+
+- `cargo fmt --all -- --check`: PASS (2026-07-23)
+- `cargo check --workspace --all-targets`: PASS (2026-07-23)
+- `cargo clippy --workspace --all-targets -- -D warnings`: PASS (2026-07-23)
+- `cargo test --workspace`: PASS (2026-07-23)
+
+## Autonomous Decisions
+
+- Persistence driver: `rusqlite` with bundled SQLite, executed through a
+  dedicated blocking boundary as required by the runbook.
+- Artifact format: canonical UTF-8 JSON with SHA-256 metadata and same-filesystem
+  atomic rename.
+- Public identifiers: UUIDv7 serialized as lowercase hyphenated text.
+
+## Performance Evidence
+
+Phase A records real-machine serial samples and a reproducible delayed-fixture
+baseline. Phase D records serial/concurrent comparisons and the enforced
+regression threshold.
+
+Phase A real-machine serial baseline used `cargo run --quiet --example
+scan_baseline -- 10` with a two-second per-source timeout. All ten observations
+returned 45 devices, 10 warnings and `partial`. Wall samples in milliseconds:
+`6968, 6904, 6887, 6939, 6983, 6965, 6936, 6936, 6918, 5972`. Median is 6936 ms;
+nearest-rank P95 is 6983 ms. The warm tenth sample is retained rather than
+discarded. The raw data is in `docs/hardware-snapshot-performance-baseline.csv`.
+
+## Acceptance Evidence
+
+The 22 acceptance criteria are populated with command or test evidence during
+phase G release validation.
