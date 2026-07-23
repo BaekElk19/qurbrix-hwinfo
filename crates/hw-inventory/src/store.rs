@@ -378,10 +378,11 @@ fn insert_device(
         .driver
         .as_ref()
         .map(|driver| format!("{:?}", driver.status).to_ascii_lowercase());
-    transaction.execute(
-        "INSERT INTO snapshot_device(snapshot_id, device_id, kind, name, vendor, model, serial, bus_kind, bus_address, driver_name, driver_status, parent_device_id, ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![snapshot_id.to_string(), device.id, device.kind.to_string(), device.name, device.vendor, device.model, device.serial, bus_kind, bus_address, device.driver.as_ref().and_then(|driver| driver.name.as_deref()), driver_status, device.parent_id, ordinal as i64],
-    )?;
+    transaction
+        .prepare_cached(
+            "INSERT INTO snapshot_device(snapshot_id, device_id, kind, name, vendor, model, serial, bus_kind, bus_address, driver_name, driver_status, parent_device_id, ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        )?
+        .execute(params![snapshot_id.to_string(), device.id, device.kind.to_string(), device.name, device.vendor, device.model, device.serial, bus_kind, bus_address, device.driver.as_ref().and_then(|driver| driver.name.as_deref()), driver_status, device.parent_id, ordinal as i64])?;
     Ok(())
 }
 
@@ -392,16 +393,18 @@ fn insert_device_details(
     _device_ordinal: usize,
 ) -> Result<()> {
     for (ordinal, identifier) in device.identifiers.iter().enumerate() {
-        transaction.execute(
-            "INSERT OR IGNORE INTO snapshot_device_identifier(snapshot_id, device_id, identifier_kind, identifier_value, ordinal) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![snapshot_id.to_string(), device.id, identifier.kind, identifier.value, ordinal as i64],
-        )?;
+        transaction
+            .prepare_cached(
+                "INSERT OR IGNORE INTO snapshot_device_identifier(snapshot_id, device_id, identifier_kind, identifier_value, ordinal) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?
+            .execute(params![snapshot_id.to_string(), device.id, identifier.kind, identifier.value, ordinal as i64])?;
     }
     for (ordinal, child) in device.children.iter().enumerate() {
-        transaction.execute(
-            "INSERT OR IGNORE INTO snapshot_device_relation(snapshot_id, source_device_id, relation_kind, target_device_id, ordinal) VALUES (?1, ?2, 'child', ?3, ?4)",
-            params![snapshot_id.to_string(), device.id, child, ordinal as i64],
-        )?;
+        transaction
+            .prepare_cached(
+                "INSERT OR IGNORE INTO snapshot_device_relation(snapshot_id, source_device_id, relation_kind, target_device_id, ordinal) VALUES (?1, ?2, 'child', ?3, ?4)",
+            )?
+            .execute(params![snapshot_id.to_string(), device.id, child, ordinal as i64])?;
     }
     let property_value = serde_json::to_value(&device.properties)?;
     let mut properties = Vec::new();
@@ -410,10 +413,11 @@ fn insert_device_details(
         insert_property(transaction, snapshot_id, &device.id, property)?;
     }
     for (ordinal, source) in device.sources.iter().enumerate() {
-        transaction.execute(
-            "INSERT INTO snapshot_source(snapshot_id, device_id, source, source_kind, source_status, summary, ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![snapshot_id.to_string(), device.id, source.source, format!("{:?}", source.kind).to_ascii_lowercase(), format!("{:?}", source.status).to_ascii_lowercase(), source.summary, ordinal as i64],
-        )?;
+        transaction
+            .prepare_cached(
+                "INSERT INTO snapshot_source(snapshot_id, device_id, source, source_kind, source_status, summary, ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?
+            .execute(params![snapshot_id.to_string(), device.id, source.source, format!("{:?}", source.kind).to_ascii_lowercase(), format!("{:?}", source.status).to_ascii_lowercase(), source.summary, ordinal as i64])?;
     }
     Ok(())
 }
@@ -480,10 +484,11 @@ fn insert_property(
         Value::Number(value) => ("real", None, None, value.as_f64(), None),
         _ => return Ok(()),
     };
-    transaction.execute(
-        "INSERT OR REPLACE INTO snapshot_device_property(snapshot_id, device_id, property_key, value_type, text_value, integer_value, real_value, boolean_value, unit, ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![snapshot_id.to_string(), device_id, property.key, value_type, text, integer, real, boolean, unit, property.ordinal as i64],
-    )?;
+    transaction
+        .prepare_cached(
+            "INSERT OR REPLACE INTO snapshot_device_property(snapshot_id, device_id, property_key, value_type, text_value, integer_value, real_value, boolean_value, unit, ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )?
+        .execute(params![snapshot_id.to_string(), device_id, property.key, value_type, text, integer, real, boolean, unit, property.ordinal as i64])?;
     Ok(())
 }
 
