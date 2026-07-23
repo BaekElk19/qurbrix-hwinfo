@@ -15,8 +15,8 @@ Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 - Emit a typed `ScanReport` model for Rust callers.
 - Emit flat JSON, JSONL, summary, and table views for scripts and agents.
 - Provide fake source runners and fixture-driven parser/probe tests.
-- Keep immutable, queryable hardware snapshots with UUIDv7 IDs, bindid v2,
-  checked JSON artifacts, and a local SQLite history.
+- Keep immutable, queryable hardware snapshots with UUIDv7 IDs, a SHA-256 v2
+  machine bind ID, checked JSON artifacts, and a local SQLite history.
 
 ## Layout
 
@@ -30,6 +30,7 @@ Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 │   ├── hw-probe/           # Category probes that turn parsed data into Device values
 │   ├── hw-collect/         # Collection orchestration that builds ScanReport
 │   ├── hw-inventory/       # Snapshot state machine, SQLite projection, and artifacts
+│   ├── hw-bindid/          # Lightweight business binding ID generation
 │   ├── hw-output/          # Flat JSON, JSONL, summary, table, and schema helpers
 │   ├── hw-cli/             # qurbrix-hw CLI argument parsing and commands
 │   └── hw-testdata/        # Parser fixture helpers
@@ -72,7 +73,7 @@ the archive matching your machine:
 Verify and install:
 
 ```bash
-ARCHIVE="qurbrix-hw-0.1.4-x86_64-unknown-linux-gnu-glibc2.28" # choose from the table above
+ARCHIVE="qurbrix-hw-0.2.0-x86_64-unknown-linux-gnu-glibc2.28" # choose from the table above
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "${ARCHIVE}.tar.gz"
 sudo install -m 0755 "${ARCHIVE}/qurbrix-hw" /usr/local/bin/
@@ -106,11 +107,11 @@ At a glance:
 |--------------|-------|-------------------------------------------------|---------------------|
 | `scan`       | yes   | Collect all hardware and emit structured data   | JSON / JSONL / typed-JSON / summary-JSON |
 | `summary`    | yes   | Human-readable device count per kind            | Plain text          |
-| `table`      | yes   | Two-column table of devices (optionally by kind)| Plain text          |
+| `table`      | yes   | Three-column device table (optionally by kind) | Plain text          |
 | `bindid`     | yes   | Stable machine binding ID derived from hardware | JSON                |
 | `list-kinds` | no    | List every device kind the scanner knows        | Text or JSON        |
-| `schema`     | no    | Print scan output schema version                | Text                |
-| `sources`    | no    | List raw sources used during collection         | JSON                |
+| `schema`     | no    | Print the scan output schema version            | JSON or text        |
+| `sources`    | no    | Print the currently empty source list           | JSON                |
 | `snapshot`   | ensure only | Ensure, query, diff, or export snapshots  | Stable JSON         |
 
 Global: `qurbrix-hw --help`, `qurbrix-hw <command> --help`, `qurbrix-hw --version`.
@@ -128,7 +129,7 @@ Flags:
   - `jsonl` — one device per line, best for streaming
   - `typed-json` — internal Rust model shape (may change; not the stable contract)
   - `summary-json` — same counts as `summary` command in JSON
-- `--pretty` — pretty-print JSON
+- `--pretty` — pretty-print `json` and `typed-json` output
 - `--kind <k>` / `--exclude-kind <k>` — repeatable; e.g. `--kind cpu --kind memory`
 - `--timeout 30s` — per-source timeout
 - `--no-optional-sources` — skip optional/slow probes
@@ -209,6 +210,20 @@ sudo qurbrix-hw bindid --pretty
 }
 ```
 
+`bindid` returns a 16-character lowercase SHA-1 hexadecimal prefix for
+ordinary reads and low-frequency hardware-binding checks. It is not a
+fingerprint and does not identify every hardware component. It covers the
+required `system`, `motherboard`, `memory`, `storage`, and `network` kinds,
+plus optional `gpu`; CPU and display devices are excluded. Network data uses
+only MAC addresses, not interface type, IP address, speed, or link state.
+
+This CLI value is distinct from the snapshot store's `machine_bind_id`:
+snapshots use the 64-character SHA-256 v2 identifier
+`qurbrix-hw-bindid-sha256-v2` for inventory identity and retention. When a
+required CLI `bindid` kind is missing, `status` is `failed`, `value` is `null`,
+JSON is still written to stdout, and the command exits with `2`. A permission
+failure exits with `4` before probing and writes nothing to stdout.
+
 ### `list-kinds` — supported device kinds
 
 ```bash
@@ -242,7 +257,8 @@ other-device
 ### `schema` / `sources`
 
 ```bash
-qurbrix-hw schema             # -> qurbrix.hw.scan.v2
+qurbrix-hw schema             # -> {"schema_version":"qurbrix.hw.scan.v2"}
+qurbrix-hw schema --version   # -> qurbrix.hw.scan.v2
 qurbrix-hw sources            # -> {"sources":[]}
 ```
 
@@ -323,6 +339,9 @@ cross-language boundary.
 For machine callers:
 
 - Prefer `qurbrix-hw scan --format json` for the flat external schema.
+- Use `qurbrix-hw bindid` and its `qurbrix.hw.bindid.v1` document for ordinary
+  reads or low-frequency hardware-binding checks; it is separate from the
+  snapshot store's SHA-256 v2 machine bind ID.
 - Use `qurbrix-hw scan --format typed-json` only when you intentionally want the
   Rust model shape serialized as JSON.
 - Do not parse human commands such as `summary` or `table`.
@@ -351,10 +370,13 @@ async fn main() -> anyhow::Result<()> {
 3. `hw-probe` turns source records into typed `Device` values.
 4. `hw-collect` orchestrates probes and returns a `ScanReport`.
 5. `hw-output` converts reports into flat JSON, JSONL, summary, and table views.
+6. `hw-bindid` selects a narrow component set, normalizes and sorts component
+   keys, then produces the lightweight CLI binding ID with SHA-1.
 
 ## Notes
 
 - `dmidecode`, some `/sys` paths, and device details may require elevated permissions.
+- `bindid`, like hardware-collection commands, requires root; metadata commands do not.
 - Monitor collection uses EDID and optional `xrandr`; without a graphical session it still attempts sysfs reads.
 - `partial` reports are still intended to be machine-consumable.
 - Logs and diagnostics should go to stderr; structured command output goes to stdout.

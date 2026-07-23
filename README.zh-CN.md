@@ -14,7 +14,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 - 为脚本和 agent 提供 flat JSON、JSONL、summary 和 table 输出。
 - 提供 `bindid` 轻量业务绑定 ID，用于常规读取和低频硬件绑定检查。
 - 提供 fake source runner 与 fixture 驱动的 parser/probe 测试。
-- 使用 UUIDv7、bindid v2、SHA-256 artifact 与 SQLite 历史保存不可变硬件快照。
+- 使用 UUIDv7、SHA-256 v2 machine bind ID、SHA-256 artifact 与 SQLite 历史保存不可变硬件快照。
 
 ## 目录结构
 
@@ -65,7 +65,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 校验并安装：
 
 ```bash
-ARCHIVE="qurbrix-hw-0.1.4-x86_64-unknown-linux-gnu-glibc2.28" # 从上表选择
+ARCHIVE="qurbrix-hw-0.2.0-x86_64-unknown-linux-gnu-glibc2.28" # 从上表选择
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "${ARCHIVE}.tar.gz"
 sudo install -m 0755 "${ARCHIVE}/qurbrix-hw" /usr/local/bin/
@@ -96,11 +96,11 @@ cargo test --workspace
 |--------------|-----------|---------------------------------------------|---------------------------------------|
 | `scan`       | 是        | 采集全部硬件并输出结构化报告                | JSON / JSONL / typed-JSON / summary-JSON |
 | `summary`    | 是        | 按类别打印设备数量，便于人读                | 纯文本                                |
-| `table`      | 是        | 以两列表格列出设备（可按类别过滤）          | 纯文本                                |
+| `table`      | 是        | 以三列表格列出设备（可按类别过滤）          | 纯文本                                |
 | `bindid`     | 是        | 从硬件生成轻量业务绑定 ID                   | JSON                                  |
 | `list-kinds` | 否        | 列出扫描器支持的所有设备类别                | 文本或 JSON                           |
-| `schema`     | 否        | 打印扫描输出的 schema 版本                  | 文本                                  |
-| `sources`    | 否        | 列出采集过程用到的原始 source               | JSON                                  |
+| `schema`     | 否        | 打印扫描输出的 schema 版本                  | JSON 或文本                           |
+| `sources`    | 否        | 打印当前为空的 source 列表                  | JSON                                  |
 | `snapshot`   | 仅 ensure | 确保、查询、对比或导出硬件快照              | 稳定 JSON                             |
 
 通用参数：`qurbrix-hw --help`、`qurbrix-hw <command> --help`、`qurbrix-hw --version`。
@@ -120,7 +120,7 @@ sudo qurbrix-hw scan --format json --pretty
   - `jsonl`：一行一个设备，便于流式处理
   - `typed-json`：Rust 内部模型形状（可能变更，非稳定合约）
   - `summary-json`：`summary` 命令的 JSON 版
-- `--pretty`：格式化 JSON
+- `--pretty`：格式化 `json` 和 `typed-json` 输出
 - `--kind <k>` / `--exclude-kind <k>`：可重复，如 `--kind cpu --kind memory`
 - `--timeout 30s`：单个 source 的超时
 - `--no-optional-sources`：跳过可选/较慢的 probe
@@ -216,6 +216,9 @@ sudo qurbrix-hw bindid --pretty
 `value` 为 `null`，仍会输出 JSON 并返回退出码 `2`。权限失败会在探测前返回
 退出码 `4`，stdout 为空。
 
+该 CLI 值与快照存储的 `machine_bind_id` 不同：快照使用 64 位 SHA-256 v2 标识
+`qurbrix-hw-bindid-sha256-v2` 作为库存身份与保留策略的依据。
+
 ### `list-kinds` — 支持的设备类别
 
 ```bash
@@ -249,7 +252,8 @@ other-device
 ### `schema` / `sources`
 
 ```bash
-qurbrix-hw schema             # -> qurbrix.hw.scan.v2
+qurbrix-hw schema             # -> {"schema_version":"qurbrix.hw.scan.v2"}
+qurbrix-hw schema --version   # -> qurbrix.hw.scan.v2
 qurbrix-hw sources            # -> {"sources":[]}
 ```
 
@@ -324,7 +328,7 @@ Rust 调用方直接依赖顶层 `qurbrix-hw` 库 facade。其他语言的上层
 
 - 优先使用 `qurbrix-hw scan --format json`，消费 flat 外部 schema。
 - 需要常规读取或低频硬件绑定检查时，使用 `qurbrix-hw bindid`，消费
-  `qurbrix.hw.bindid.v1` 输出。
+  `qurbrix.hw.bindid.v1` 输出；它与快照存储的 SHA-256 v2 machine bind ID 不同。
 - 只有明确需要 Rust 模型形状时，才使用 `qurbrix-hw scan --format typed-json`。
 - 不要解析 `summary` 或 `table` 这类面向人的输出。
 - 不要依赖 JSON 字段顺序或空白格式。

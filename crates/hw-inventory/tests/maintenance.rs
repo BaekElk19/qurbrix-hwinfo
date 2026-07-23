@@ -1,4 +1,7 @@
-use hw_inventory::{InventoryStore, PageRequest, RetentionPolicy, SNAPSHOT_CLI_SCHEMA_VERSION};
+use hw_inventory::{
+    InventoryStore, PageRequest, ProbeCompletion, ProbeKind, RetentionPolicy,
+    SNAPSHOT_CLI_SCHEMA_VERSION,
+};
 use hw_model::{
     CoreIdentityGroup, Device, DeviceKind, DeviceProperties, IdentityCoverage, QuickProbeReport,
     ScanReport, SystemDeviceInfo, BINDID_V2_ALGORITHM, FINGERPRINT_VERSION,
@@ -88,6 +91,59 @@ async fn retention_protects_current_pinned_unuploaded_and_recent() {
     assert!(store.load_snapshot(ids[2]).await.unwrap().is_some());
     assert!(store.load_snapshot(ids[1]).await.unwrap().is_some());
     assert_eq!(store.metrics().await.unwrap().snapshot_count, 4);
+}
+
+#[tokio::test]
+async fn retention_unlinks_probe_history_before_deleting_snapshots() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = InventoryStore::open(temp.path()).await.unwrap();
+    let mut ids = Vec::new();
+    for index in 0..3 {
+        let id = store
+            .publish_snapshot(report(1), probe(index, 'a'))
+            .await
+            .unwrap();
+        store.mark_uploaded(id, None).await.unwrap();
+        ids.push(id);
+    }
+    let history = store
+        .start_probe(ProbeKind::Quick, Some(ids[0]))
+        .await
+        .unwrap();
+    store
+        .finish_probe(
+            history,
+            ProbeCompletion::Succeeded,
+            Some(ids[0]),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let result = store
+        .apply_retention(RetentionPolicy {
+            keep_recent_per_machine: 1,
+            uploaded_max_age: Duration::ZERO,
+            dry_run: false,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(result.database_deleted, 2);
+    let connection = rusqlite::Connection::open(store.database_path()).unwrap();
+    let links: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM probe_history WHERE snapshot_id IS NOT NULL OR previous_snapshot_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(links, 0);
 }
 
 #[cfg(unix)]

@@ -179,6 +179,14 @@ impl InventoryStore {
                 params![candidate.relative_path, candidate.sha256, now()?],
             )?;
             transaction.execute(
+                "UPDATE probe_history SET snapshot_id = NULL WHERE snapshot_id = ?1",
+                [candidate.snapshot_id.to_string()],
+            )?;
+            transaction.execute(
+                "UPDATE probe_history SET previous_snapshot_id = NULL WHERE previous_snapshot_id = ?1",
+                [candidate.snapshot_id.to_string()],
+            )?;
+            transaction.execute(
                 "DELETE FROM hardware_snapshot WHERE snapshot_id = ?1",
                 [candidate.snapshot_id.to_string()],
             )?;
