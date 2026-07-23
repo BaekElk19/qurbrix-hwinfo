@@ -11,14 +11,15 @@ surface after `v0.2.2`.
 
 Status: **DONE** (2026-07-24)
 
-Locations: `crates/hw-inventory/src/service.rs`, `crates/hw-inventory/src/store.rs`
-
-Fix: renew lease while scanning; fence publication with lease owner (`StaleLease`).
-Regression: `stale_scan_cannot_overwrite_after_lease_expiry`.
-
 ### A healthy slow scan makes concurrent observers fail after 30 seconds
 
-Status: open
+Status: **DONE** (2026-07-24)
+
+Locations: `crates/hw-inventory/src/service.rs`
+
+Fix: default lease wait timeout matches lease duration (120s); configurable via
+`ObserveInventoryOptions::lease_wait_timeout`.
+Regression: `waiter_survives_slow_healthy_scan_beyond_thirty_seconds`.
 
 ### `scan --no-optional-sources` was removed without a compatible replacement
 
