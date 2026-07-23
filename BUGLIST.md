@@ -25,14 +25,15 @@ Status: **DONE** (2026-07-24)
 
 Status: **DONE** (2026-07-24)
 
-Locations: `crates/hw-inventory/src/service.rs`
-
-Fix: mark full probe failed on every publish/canonicalization error path.
-Regression: `publish_failure_marks_full_probe_failed`.
-
 ### Lease timeout leaves the quick probe history `running`
 
-Status: open
+Status: **DONE** (2026-07-24)
+
+Locations: `crates/hw-inventory/src/service.rs`
+
+Fix: finish the open quick probe as failed with inventory.lease_timeout before
+returning LeaseTimeout.
+Regression: `lease_timeout_marks_quick_probe_failed`.
 
 ### Snapshot commands are documented as non-root but fail with the default state directory
 
