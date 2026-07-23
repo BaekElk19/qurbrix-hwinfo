@@ -59,10 +59,7 @@ impl InventoryStore {
         tokio::task::spawn_blocking(move || store.load_snapshot_sync(snapshot_id)).await?
     }
 
-    pub async fn load_scan_report(
-        &self,
-        snapshot_id: SnapshotId,
-    ) -> Result<Option<ScanReport>> {
+    pub async fn load_scan_report(&self, snapshot_id: SnapshotId) -> Result<Option<ScanReport>> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || store.load_report_sync(snapshot_id)).await?
     }
@@ -73,7 +70,8 @@ impl InventoryStore {
         page: PageRequest,
     ) -> Result<Vec<StoredSnapshot>> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || store.list_snapshots_sync(machine_bind_id, page)).await?
+        tokio::task::spawn_blocking(move || store.list_snapshots_sync(machine_bind_id, page))
+            .await?
     }
 
     pub async fn list_devices(
@@ -136,7 +134,9 @@ impl InventoryStore {
 
     fn publish_sync(&self, report: ScanReport, probe: QuickProbeReport) -> Result<SnapshotId> {
         if report.status == ScanStatus::Failed {
-            return Err(InventoryError::InvalidReport("failed scans cannot be published"));
+            return Err(InventoryError::InvalidReport(
+                "failed scans cannot be published",
+            ));
         }
         if !probe.coverage.core_complete() {
             return Err(InventoryError::InvalidReport("core identity is incomplete"));
@@ -167,9 +167,8 @@ impl InventoryStore {
         artifact_metadata: &ArtifactMetadata,
     ) -> Result<()> {
         let mut connection = self.connect()?;
-        let transaction = connection.transaction_with_behavior(
-            rusqlite::TransactionBehavior::Immediate,
-        )?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let status = match report.status {
             ScanStatus::Complete => "complete",
             ScanStatus::Partial => "partial",
@@ -257,7 +256,8 @@ impl InventoryStore {
                 snapshots.push(row?);
             }
         } else {
-            let sql = format!("{base} ORDER BY h.created_at DESC, h.snapshot_id DESC LIMIT ?1 OFFSET ?2");
+            let sql =
+                format!("{base} ORDER BY h.created_at DESC, h.snapshot_id DESC LIMIT ?1 OFFSET ?2");
             let mut statement = connection.prepare(&sql)?;
             let rows = statement.query_map(
                 params![page.bounded_limit(), page.offset],
@@ -504,9 +504,14 @@ fn infer_unit(key: &str) -> Option<&'static str> {
 fn bus_projection(bus: Option<&BusInfo>) -> (Option<&'static str>, Option<String>) {
     match bus {
         Some(BusInfo::Pci { address, .. }) => (Some("pci"), Some(address.clone())),
-        Some(BusInfo::Usb { bus, device, .. }) => {
-            (Some("usb"), Some(format!("{}:{}", bus.as_deref().unwrap_or(""), device.as_deref().unwrap_or(""))))
-        }
+        Some(BusInfo::Usb { bus, device, .. }) => (
+            Some("usb"),
+            Some(format!(
+                "{}:{}",
+                bus.as_deref().unwrap_or(""),
+                device.as_deref().unwrap_or("")
+            )),
+        ),
         Some(BusInfo::Platform { path }) => (Some("platform"), Some(path.clone())),
         Some(BusInfo::Virtual) => (Some("virtual"), None),
         Some(BusInfo::Unknown) => (Some("unknown"), None),

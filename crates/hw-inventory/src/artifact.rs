@@ -30,7 +30,10 @@ fn safe_artifact_path(state_dir: &Path, relative_path: &str) -> Result<PathBuf> 
             .components()
             .any(|part| !matches!(part, Component::Normal(_)))
         || relative.components().count() != 2
-        || relative.components().next().and_then(|part| part.as_os_str().to_str())
+        || relative
+            .components()
+            .next()
+            .and_then(|part| part.as_os_str().to_str())
             != Some("reports")
     {
         return Err(InventoryError::InvalidArtifactPath(relative.to_path_buf()));
@@ -47,7 +50,10 @@ pub(crate) fn write_report(
     ensure_private_directory(&reports_dir)?;
     let relative_path = format!("reports/{snapshot_id}.json");
     let final_path = safe_artifact_path(state_dir, &relative_path)?;
-    let temp_path = reports_dir.join(format!(".{snapshot_id}.{}.snapshot.tmp", std::process::id()));
+    let temp_path = reports_dir.join(format!(
+        ".{snapshot_id}.{}.snapshot.tmp",
+        std::process::id()
+    ));
     let bytes = serde_json::to_vec(report)?;
 
     let mut options = OpenOptions::new();
@@ -77,10 +83,7 @@ pub(crate) fn write_report(
     })
 }
 
-pub(crate) fn read_report(
-    state_dir: &Path,
-    metadata: &ArtifactMetadata,
-) -> Result<ScanReport> {
+pub(crate) fn read_report(state_dir: &Path, metadata: &ArtifactMetadata) -> Result<ScanReport> {
     let path = safe_artifact_path(state_dir, &metadata.relative_path)?;
     let file_metadata = fs::symlink_metadata(&path)?;
     if !file_metadata.file_type().is_file() || file_metadata.len() != metadata.size_bytes {
