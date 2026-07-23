@@ -14,6 +14,10 @@ fn documented_snapshot_help_and_temp_state_commands_run() {
         "snapshot list",
         "snapshot diff",
         "snapshot export",
+        "snapshot health",
+        "snapshot prune",
+        "snapshot pin",
+        "snapshot mark-uploaded",
     ] {
         assert!(english.contains(command), "English README misses {command}");
         assert!(chinese.contains(command), "Chinese README misses {command}");
@@ -22,7 +26,17 @@ fn documented_snapshot_help_and_temp_state_commands_run() {
     let help = binary().args(["snapshot", "--help"]).output().unwrap();
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
-    for command in ["ensure", "show", "list", "diff", "export"] {
+    for command in [
+        "ensure",
+        "show",
+        "list",
+        "diff",
+        "export",
+        "health",
+        "prune",
+        "pin",
+        "mark-uploaded",
+    ] {
         assert!(help.contains(command));
     }
 

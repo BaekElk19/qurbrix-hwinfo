@@ -104,6 +104,30 @@ fn only_snapshot_ensure_requires_hardware_access() {
 }
 
 #[test]
+fn parses_snapshot_prune_retention_defaults_and_overrides() {
+    let cli = Cli::try_parse_from([
+        "qurbrix-hw",
+        "snapshot",
+        "prune",
+        "--keep-recent",
+        "12",
+        "--max-age",
+        "30d",
+        "--dry-run",
+    ])
+    .unwrap();
+    let Command::Snapshot(args) = cli.command else {
+        panic!("expected snapshot command");
+    };
+    let hw_cli::args::SnapshotCommand::Prune(args) = args.command else {
+        panic!("expected prune command");
+    };
+    assert_eq!(args.keep_recent, 12);
+    assert_eq!(args.max_age.as_secs(), 30 * 86_400);
+    assert!(args.dry_run);
+}
+
+#[test]
 fn identifies_hardware_access_commands() {
     assert!(command_requires_hardware_access(&Command::Scan(ScanArgs {
         format: OutputFormat::Json,

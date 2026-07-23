@@ -134,6 +134,49 @@ fn snapshot_show_list_diff_and_export_have_stable_json_contracts() {
     assert_eq!(list_json["offset"], 1);
     assert_eq!(list_json["snapshots"].as_array().unwrap().len(), 1);
 
+    let pin = qurbrix_hw()
+        .args([
+            "snapshot",
+            "pin",
+            &first.to_string(),
+            "--state-dir",
+            state_path,
+        ])
+        .output()
+        .unwrap();
+    assert!(pin.status.success());
+    assert!(pin.stderr.is_empty());
+    let upload = qurbrix_hw()
+        .args([
+            "snapshot",
+            "mark-uploaded",
+            &first.to_string(),
+            "--state-dir",
+            state_path,
+        ])
+        .output()
+        .unwrap();
+    assert!(upload.status.success());
+    assert!(upload.stderr.is_empty());
+
+    let prune = qurbrix_hw()
+        .args(["snapshot", "prune", "--state-dir", state_path, "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(prune.status.success());
+    assert!(prune.stderr.is_empty());
+    let prune_json: serde_json::Value = serde_json::from_slice(&prune.stdout).unwrap();
+    assert_eq!(prune_json["dry_run"], true);
+
+    let health = qurbrix_hw()
+        .args(["snapshot", "health", "--state-dir", state_path])
+        .output()
+        .unwrap();
+    assert!(health.status.success());
+    assert!(health.stderr.is_empty());
+    let health_json: serde_json::Value = serde_json::from_slice(&health.stdout).unwrap();
+    assert_eq!(health_json["healthy"], true);
+
     let diff = qurbrix_hw()
         .args([
             "snapshot",
