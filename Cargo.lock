@@ -363,9 +363,12 @@ dependencies = [
 name = "hw-inventory"
 version = "0.2.0-alpha.2"
 dependencies = [
+ "async-trait",
  "hex",
  "hw-collect",
  "hw-model",
+ "hw-probe",
+ "hw-source",
  "rusqlite",
  "serde",
  "serde_json",
