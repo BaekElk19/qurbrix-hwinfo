@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use hw_model::DeviceKind;
-use std::{str::FromStr, time::Duration};
+use hw_model::SnapshotId;
+use std::{path::PathBuf, str::FromStr, time::Duration};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -32,6 +33,86 @@ pub enum Command {
         #[arg(long, value_enum, default_value_t = SourcesFormat::Json)]
         format: SourcesFormat,
     },
+    Snapshot(SnapshotArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotArgs {
+    #[command(subcommand)]
+    pub command: SnapshotCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SnapshotCommand {
+    Ensure(SnapshotEnsureArgs),
+    Show(SnapshotShowArgs),
+    List(SnapshotListArgs),
+    Diff(SnapshotDiffArgs),
+    Export(SnapshotExportArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotEnsureArgs {
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub force: bool,
+    #[arg(long, default_value = "24h", value_parser = parse_duration)]
+    pub max_age: Duration,
+    #[arg(long)]
+    pub reject_partial: bool,
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotShowArgs {
+    #[arg(value_parser = parse_snapshot_id)]
+    pub snapshot_id: SnapshotId,
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotListArgs {
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub machine_bind_id: Option<String>,
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    pub limit: u32,
+    #[arg(long, default_value_t = 0)]
+    pub offset: u64,
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotDiffArgs {
+    #[arg(value_parser = parse_snapshot_id)]
+    pub from_snapshot_id: SnapshotId,
+    #[arg(value_parser = parse_snapshot_id)]
+    pub to_snapshot_id: SnapshotId,
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub pretty: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotExportArgs {
+    #[arg(value_parser = parse_snapshot_id)]
+    pub snapshot_id: SnapshotId,
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub output: PathBuf,
+    #[arg(long)]
+    pub overwrite: bool,
+    #[arg(long)]
+    pub pretty: bool,
 }
 
 #[derive(Debug, Args)]
@@ -93,14 +174,21 @@ pub fn parse_kind(value: &str) -> Result<DeviceKind, String> {
 
 pub fn parse_duration(value: &str) -> Result<Duration, String> {
     let value = value.trim();
-    if let Some(seconds) = value.strip_suffix('s') {
-        return seconds
-            .parse::<u64>()
-            .map(Duration::from_secs)
-            .map_err(|err| err.to_string());
+    for (suffix, multiplier) in [('d', 86_400), ('h', 3_600), ('m', 60), ('s', 1)] {
+        if let Some(amount) = value.strip_suffix(suffix) {
+            let amount = amount.parse::<u64>().map_err(|error| error.to_string())?;
+            let seconds = amount
+                .checked_mul(multiplier)
+                .ok_or_else(|| "duration is too large".to_string())?;
+            return Ok(Duration::from_secs(seconds));
+        }
     }
     value
         .parse::<u64>()
         .map(Duration::from_secs)
         .map_err(|err| err.to_string())
+}
+
+pub fn parse_snapshot_id(value: &str) -> Result<SnapshotId, String> {
+    SnapshotId::from_str(value).map_err(|error| error.to_string())
 }

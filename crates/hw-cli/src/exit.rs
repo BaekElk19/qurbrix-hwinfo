@@ -1,4 +1,5 @@
 use clap::error::ErrorKind;
+use hw_inventory::InventoryError;
 use hw_model::ScanStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,7 +9,24 @@ pub enum ExitCode {
     ScanFailed = 2,
     Unsupported = 3,
     Permission = 4,
+    NotFound = 5,
+    Storage = 6,
     Timeout = 124,
+}
+
+pub fn exit_code_for_inventory(error: &InventoryError) -> ExitCode {
+    match error {
+        InventoryError::FullScanFailed
+        | InventoryError::PartialRejected
+        | InventoryError::CoreIdentityIncomplete => ExitCode::ScanFailed,
+        InventoryError::LeaseTimeout => ExitCode::Timeout,
+        InventoryError::SnapshotNotFound(_) => ExitCode::NotFound,
+        InventoryError::Serialization(_) => ExitCode::CliOrSerialization,
+        InventoryError::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            ExitCode::Permission
+        }
+        _ => ExitCode::Storage,
+    }
 }
 
 impl ExitCode {

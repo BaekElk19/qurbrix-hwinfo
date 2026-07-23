@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use hw_cli::args::{Cli, Command, ListFormat, OutputFormat};
-use hw_cli::exit::{classify_parse_error, exit_code_for_status, ExitCode};
+use hw_cli::exit::{classify_parse_error, exit_code_for_inventory, exit_code_for_status, ExitCode};
 use hw_cli::permission::{command_requires_hardware_access, ensure_root};
 use hw_model::ScanConfig;
 
@@ -104,6 +104,12 @@ async fn main() -> Result<()> {
         }
         Command::Sources { format: _ } => {
             println!("{{\"sources\":[]}}");
+        }
+        Command::Snapshot(args) => {
+            if let Err(error) = hw_cli::snapshot::run_snapshot_command(args).await {
+                eprintln!("snapshot error [{}]: {error}", error.code());
+                std::process::exit(exit_code_for_inventory(&error).code());
+            }
         }
     }
     Ok(())
