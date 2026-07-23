@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-expected_version="${1:-0.2.0}"
+expected_version="${1:-0.2.2}"
 cd "$root"
 
 for command in cargo jq rg git; do

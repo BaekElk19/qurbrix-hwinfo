@@ -13,6 +13,7 @@ use hw_model::{
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde_json::Value;
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -54,18 +55,22 @@ impl InventoryStore {
         probe: QuickProbeReport,
     ) -> Result<SnapshotId> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || store.publish_sync(report, probe, None)).await?
+        tokio::task::spawn_blocking(move || store.publish_sync(report, probe.clone(), probe, None))
+            .await?
     }
 
     pub async fn publish_snapshot_for_probe(
         &self,
         report: ScanReport,
-        probe: QuickProbeReport,
+        snapshot_probe: QuickProbeReport,
+        state_probe: QuickProbeReport,
         probe_id: i64,
     ) -> Result<SnapshotId> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || store.publish_sync(report, probe, Some(probe_id)))
-            .await?
+        tokio::task::spawn_blocking(move || {
+            store.publish_sync(report, snapshot_probe, state_probe, Some(probe_id))
+        })
+        .await?
     }
 
     pub async fn load_snapshot(&self, snapshot_id: SnapshotId) -> Result<Option<StoredSnapshot>> {
@@ -233,7 +238,8 @@ impl InventoryStore {
     fn publish_sync(
         &self,
         report: ScanReport,
-        probe: QuickProbeReport,
+        snapshot_probe: QuickProbeReport,
+        state_probe: QuickProbeReport,
         probe_id: Option<i64>,
     ) -> Result<SnapshotId> {
         if report.status == ScanStatus::Failed {
@@ -241,7 +247,7 @@ impl InventoryStore {
                 "failed scans cannot be published",
             ));
         }
-        if !probe.coverage.core_complete() {
+        if !snapshot_probe.coverage.core_complete() {
             return Err(InventoryError::InvalidReport("core identity is incomplete"));
         }
         let snapshot_id = SnapshotId::new_v7();
@@ -251,7 +257,8 @@ impl InventoryStore {
             snapshot_id,
             &created_at,
             &report,
-            &probe,
+            &snapshot_probe,
+            &state_probe,
             &artifact_metadata,
             probe_id,
         );
@@ -262,12 +269,14 @@ impl InventoryStore {
         Ok(snapshot_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn publish_transaction(
         &self,
         snapshot_id: SnapshotId,
         created_at: &str,
         report: &ScanReport,
-        probe: &QuickProbeReport,
+        snapshot_probe: &QuickProbeReport,
+        state_probe: &QuickProbeReport,
         artifact_metadata: &ArtifactMetadata,
         probe_id: Option<i64>,
     ) -> Result<()> {
@@ -287,24 +296,37 @@ impl InventoryStore {
                 status,
                 report.schema_version,
                 report.metadata.scanner_version,
-                probe.machine_bind_id,
-                probe.bindid_algorithm,
-                probe.configuration_fingerprint,
+                snapshot_probe.machine_bind_id,
+                snapshot_probe.bindid_algorithm,
+                snapshot_probe.configuration_fingerprint,
                 report.devices.len() as i64,
                 report.warnings.len() as i64,
                 report.metadata.duration_ms.map(|value| value as i64),
             ],
         )?;
+        let device_ids = report
+            .devices
+            .iter()
+            .map(|device| device.id.as_str())
+            .collect::<HashSet<_>>();
         for (ordinal, device) in report.devices.iter().enumerate() {
-            insert_device(&transaction, snapshot_id, device, ordinal)?;
+            let parent_id = device
+                .parent_id
+                .as_deref()
+                .filter(|parent_id| device_ids.contains(parent_id));
+            insert_device(&transaction, snapshot_id, device, parent_id, ordinal)?;
         }
         for (ordinal, device) in report.devices.iter().enumerate() {
-            insert_device_details(&transaction, snapshot_id, device, ordinal)?;
+            insert_device_details(&transaction, snapshot_id, device, &device_ids, ordinal)?;
         }
         for (ordinal, warning) in report.warnings.iter().enumerate() {
+            let device_id = warning
+                .device_id
+                .as_deref()
+                .filter(|device_id| device_ids.contains(device_id));
             transaction.execute(
                 "INSERT INTO snapshot_warning(snapshot_id, device_id, code, message, source, ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![snapshot_id.to_string(), warning.device_id, warning.code, warning.message, warning.source, ordinal as i64],
+                params![snapshot_id.to_string(), device_id, warning.code, warning.message, warning.source, ordinal as i64],
             )?;
         }
         transaction.execute(
@@ -317,7 +339,7 @@ impl InventoryStore {
         )?;
         transaction.execute(
             "UPDATE inventory_state SET current_snapshot_id = ?1, current_machine_bind_id = ?2, bindid_algorithm = ?3, last_configuration_fingerprint = ?4, core_identity_count = ?5, fingerprint_version = ?6, last_quick_probe_at = ?7, updated_at = ?7 WHERE id = 1",
-            params![snapshot_id.to_string(), probe.machine_bind_id, probe.bindid_algorithm, probe.configuration_fingerprint, probe.identity_records.len() as i64, probe.fingerprint_version as i64, probe.observed_at],
+            params![snapshot_id.to_string(), state_probe.machine_bind_id, state_probe.bindid_algorithm, state_probe.configuration_fingerprint, state_probe.identity_records.len() as i64, state_probe.fingerprint_version as i64, state_probe.observed_at],
         )?;
         if let Some(probe_id) = probe_id {
             let probe_status = if report.status == ScanStatus::Complete {
@@ -327,7 +349,7 @@ impl InventoryStore {
             };
             transaction.execute(
                 "UPDATE probe_history SET finished_at = ?1, status = ?2, snapshot_id = ?3, machine_bind_id = ?4, configuration_fingerprint = ?5, duration_ms = ?6, warning_count = ?7, error_code = NULL, error_message = NULL WHERE probe_id = ?8 AND status = 'running'",
-                params![created_at, probe_status, snapshot_id.to_string(), probe.machine_bind_id, probe.configuration_fingerprint, report.metadata.duration_ms.map(|value| value as i64), report.warnings.len() as i64, probe_id],
+                params![created_at, probe_status, snapshot_id.to_string(), snapshot_probe.machine_bind_id, snapshot_probe.configuration_fingerprint, report.metadata.duration_ms.map(|value| value as i64), report.warnings.len() as i64, probe_id],
             )?;
         }
         transaction.commit()?;
@@ -610,6 +632,7 @@ fn insert_device(
     transaction: &Transaction<'_>,
     snapshot_id: SnapshotId,
     device: &Device,
+    parent_id: Option<&str>,
     ordinal: usize,
 ) -> Result<()> {
     let (bus_kind, bus_address) = bus_projection(device.bus.as_ref());
@@ -621,7 +644,7 @@ fn insert_device(
         .prepare_cached(
             "INSERT INTO snapshot_device(snapshot_id, device_id, kind, name, vendor, model, serial, bus_kind, bus_address, driver_name, driver_status, parent_device_id, ordinal) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         )?
-        .execute(params![snapshot_id.to_string(), device.id, device.kind.to_string(), device.name, device.vendor, device.model, device.serial, bus_kind, bus_address, device.driver.as_ref().and_then(|driver| driver.name.as_deref()), driver_status, device.parent_id, ordinal as i64])?;
+        .execute(params![snapshot_id.to_string(), device.id, device.kind.to_string(), device.name, device.vendor, device.model, device.serial, bus_kind, bus_address, device.driver.as_ref().and_then(|driver| driver.name.as_deref()), driver_status, parent_id, ordinal as i64])?;
     Ok(())
 }
 
@@ -629,6 +652,7 @@ fn insert_device_details(
     transaction: &Transaction<'_>,
     snapshot_id: SnapshotId,
     device: &Device,
+    device_ids: &HashSet<&str>,
     _device_ordinal: usize,
 ) -> Result<()> {
     for (ordinal, identifier) in device.identifiers.iter().enumerate() {
@@ -639,6 +663,9 @@ fn insert_device_details(
             .execute(params![snapshot_id.to_string(), device.id, identifier.kind, identifier.value, ordinal as i64])?;
     }
     for (ordinal, child) in device.children.iter().enumerate() {
+        if !device_ids.contains(child.as_str()) {
+            continue;
+        }
         transaction
             .prepare_cached(
                 "INSERT OR IGNORE INTO snapshot_device_relation(snapshot_id, source_device_id, relation_kind, target_device_id, ordinal) VALUES (?1, ?2, 'child', ?3, ?4)",

@@ -1,4 +1,5 @@
 use hw_bindid::{BindIdReport, BindIdStatus, ALGORITHM, SCHEMA_VERSION};
+use hw_model::{Device, DeviceKind, DeviceProperties, ScanReport, SystemDeviceInfo};
 
 const SYSTEM_KEY: &str = "system:manufacturer=GEIT|product=UT6619-FC2";
 const MOTHERBOARD_KEY: &str = "motherboard:product=Board|serial=BOARD123";
@@ -100,4 +101,29 @@ fn optional_gpu_affects_missing_optional_without_affecting_completeness() {
 
     assert_eq!(with_gpu.status, BindIdStatus::Complete);
     assert!(with_gpu.missing_optional_kinds.is_empty());
+}
+
+#[test]
+fn derives_bindid_only_from_an_existing_scan_report() {
+    let mut scan = ScanReport::empty();
+    scan.devices = vec![Device::new(
+        "system:fixture",
+        DeviceKind::System,
+        "Fixture",
+        DeviceProperties::System(SystemDeviceInfo {
+            manufacturer: Some("Example".into()),
+            product_name: Some("Machine".into()),
+            ..SystemDeviceInfo::default()
+        }),
+    )];
+    scan.warnings
+        .push(hw_model::ScanWarning::new("source", "unavailable"));
+
+    let report = BindIdReport::from_scan_report(&scan);
+
+    assert_eq!(
+        report.component_keys,
+        vec!["system:manufacturer=Example|product=Machine"]
+    );
+    assert_eq!(report.warnings, vec!["source: unavailable"]);
 }

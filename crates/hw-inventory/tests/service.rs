@@ -1,12 +1,11 @@
 use async_trait::async_trait;
 use hw_inventory::{
-    canonicalize_devices, ensure_snapshot_with_scanner, InventoryError, InventoryStore,
-    SnapshotScanner,
+    canonicalize_devices, observe_inventory_with_scanner, InventoryError, InventoryScanner,
+    InventoryStore, ObservationSource, ObserveInventoryOptions,
 };
 use hw_model::{
-    CoreIdentityGroup, CpuInfo, Device, DeviceKind, DeviceProperties, EnsureSnapshotOptions,
-    MemoryInfo, NetworkInfo, PartialPolicy, QuickProbeReport, ScanReport, ScanStatus, StorageInfo,
-    SystemDeviceInfo,
+    CoreIdentityGroup, CpuInfo, Device, DeviceKind, DeviceProperties, MemoryInfo, NetworkInfo,
+    PartialPolicy, QuickProbeReport, ScanReport, ScanStatus, StorageInfo, SystemDeviceInfo,
 };
 use rusqlite::Connection;
 use std::{
@@ -129,7 +128,7 @@ impl FakeScanner {
 }
 
 #[async_trait]
-impl SnapshotScanner for FakeScanner {
+impl InventoryScanner for FakeScanner {
     async fn quick_probe(&self) -> hw_inventory::Result<QuickProbeReport> {
         self.quick_calls.fetch_add(1, Ordering::SeqCst);
         if self.quick_fails.load(Ordering::SeqCst) {
@@ -168,18 +167,24 @@ async fn store() -> (TempDir, InventoryStore) {
 async fn first_run_publishes_and_second_run_reuses() {
     let (temp, store) = store().await;
     let scanner = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
-    let first = ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
-        .await
-        .unwrap();
-    let second = ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
-        .await
-        .unwrap();
-    assert_eq!(first, second);
+    let first =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
+            .await
+            .unwrap();
+    let second =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
+            .await
+            .unwrap();
+    assert_eq!(first.snapshot_id, second.snapshot_id);
+    assert_eq!(first.result_source, ObservationSource::NewFullScan);
+    assert_eq!(second.result_source, ObservationSource::ReusedSnapshot);
+    assert!(first.hardware_changed);
+    assert!(!second.hardware_changed);
     assert_eq!(scanner.quick_calls.load(Ordering::SeqCst), 2);
     assert_eq!(scanner.full_calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         store.current_state().await.unwrap().current_snapshot_id,
-        Some(first)
+        Some(first.snapshot_id)
     );
     let connection = Connection::open(temp.path().join("qurbrix_hwinfo.db")).unwrap();
     let running: i64 = connection
@@ -192,7 +197,7 @@ async fn first_run_publishes_and_second_run_reuses() {
     let linked: i64 = connection
         .query_row(
             "SELECT count(*) FROM probe_history WHERE snapshot_id = ?1",
-            [first.to_string()],
+            [first.snapshot_id.to_string()],
             |row| row.get(0),
         )
         .unwrap();
@@ -201,34 +206,73 @@ async fn first_run_publishes_and_second_run_reuses() {
 }
 
 #[tokio::test]
+async fn quick_fingerprint_controls_reuse_when_full_report_has_more_facts() {
+    let (_temp, store) = store().await;
+    let mut scanner = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
+    scanner.quick.configuration_fingerprint = "q".repeat(64);
+    scanner.quick.canonical_payload_sha256 = "q".repeat(64);
+
+    let first =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
+            .await
+            .unwrap();
+    let second =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
+            .await
+            .unwrap();
+
+    assert_eq!(first.snapshot_id, second.snapshot_id);
+    assert_eq!(second.result_source, ObservationSource::ReusedSnapshot);
+    assert_eq!(scanner.full_calls.load(Ordering::SeqCst), 1);
+    assert_ne!(
+        store
+            .load_snapshot(first.snapshot_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration_fingerprint,
+        scanner.quick.configuration_fingerprint
+    );
+    assert_eq!(
+        store
+            .current_state()
+            .await
+            .unwrap()
+            .last_configuration_fingerprint,
+        Some(scanner.quick.configuration_fingerprint.clone())
+    );
+}
+
+#[tokio::test]
 async fn force_and_zero_ttl_each_publish_new_snapshot() {
     let (_temp, store) = store().await;
     let scanner = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
-    let first = ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
-        .await
-        .unwrap();
-    let forced = ensure_snapshot_with_scanner(
+    let first =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
+            .await
+            .unwrap();
+    let forced = observe_inventory_with_scanner(
         &store,
-        EnsureSnapshotOptions {
+        ObserveInventoryOptions {
             force_full_scan: true,
-            ..EnsureSnapshotOptions::default()
+            ..ObserveInventoryOptions::default()
         },
         &scanner,
     )
     .await
     .unwrap();
-    let expired = ensure_snapshot_with_scanner(
+    let expired = observe_inventory_with_scanner(
         &store,
-        EnsureSnapshotOptions {
+        ObserveInventoryOptions {
             max_snapshot_age: Some(Duration::ZERO),
-            ..EnsureSnapshotOptions::default()
+            ..ObserveInventoryOptions::default()
         },
         &scanner,
     )
     .await
     .unwrap();
-    assert_ne!(first, forced);
-    assert_ne!(forced, expired);
+    assert_ne!(first.snapshot_id, forced.snapshot_id);
+    assert_ne!(forced.snapshot_id, expired.snapshot_id);
     assert_eq!(scanner.full_calls.load(Ordering::SeqCst), 3);
 }
 
@@ -236,17 +280,26 @@ async fn force_and_zero_ttl_each_publish_new_snapshot() {
 async fn physical_and_configuration_changes_have_distinct_identity_semantics() {
     let (_temp, store) = store().await;
     let original = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
-    let first = ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &original)
+    let first =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &original)
+            .await
+            .unwrap();
+    let first_stored = store
+        .load_snapshot(first.snapshot_id)
         .await
+        .unwrap()
         .unwrap();
-    let first_stored = store.load_snapshot(first).await.unwrap().unwrap();
 
     let config_change = FakeScanner::new(complete_report("6.7", "00:11:22:33:44:55"));
     let second =
-        ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &config_change)
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &config_change)
             .await
             .unwrap();
-    let second_stored = store.load_snapshot(second).await.unwrap().unwrap();
+    let second_stored = store
+        .load_snapshot(second.snapshot_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(first_stored.machine_bind_id, second_stored.machine_bind_id);
     assert_ne!(
         first_stored.configuration_fingerprint,
@@ -254,11 +307,18 @@ async fn physical_and_configuration_changes_have_distinct_identity_semantics() {
     );
 
     let physical_change = FakeScanner::new(complete_report("6.7", "00:11:22:33:44:66"));
-    let third =
-        ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &physical_change)
-            .await
-            .unwrap();
-    let third_stored = store.load_snapshot(third).await.unwrap().unwrap();
+    let third = observe_inventory_with_scanner(
+        &store,
+        ObserveInventoryOptions::default(),
+        &physical_change,
+    )
+    .await
+    .unwrap();
+    let third_stored = store
+        .load_snapshot(third.snapshot_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_ne!(second_stored.machine_bind_id, third_stored.machine_bind_id);
 }
 
@@ -267,10 +327,10 @@ async fn quick_failure_falls_back_to_full_scan() {
     let (_temp, store) = store().await;
     let scanner = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
     scanner.quick_fails.store(true, Ordering::SeqCst);
-    let id = ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
+    let id = observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
         .await
         .unwrap();
-    assert!(store.load_snapshot(id).await.unwrap().is_some());
+    assert!(store.load_snapshot(id.snapshot_id).await.unwrap().is_some());
     assert_eq!(scanner.full_calls.load(Ordering::SeqCst), 1);
 }
 
@@ -278,22 +338,27 @@ async fn quick_failure_falls_back_to_full_scan() {
 async fn full_failure_retains_previous_snapshot_and_returns_error() {
     let (_temp, store) = store().await;
     let scanner = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
-    let first = ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
-        .await
-        .unwrap();
+    let first =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
+            .await
+            .unwrap();
     let changed = FakeScanner::new(complete_report("6.7", "00:11:22:33:44:55"));
     changed.full_fails.store(true, Ordering::SeqCst);
     assert!(matches!(
-        ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &changed)
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &changed)
             .await
             .unwrap_err(),
         InventoryError::FullScanFailed
     ));
     assert_eq!(
         store.current_state().await.unwrap().current_snapshot_id,
-        Some(first)
+        Some(first.snapshot_id)
     );
-    assert!(store.load_scan_report(first).await.unwrap().is_some());
+    assert!(store
+        .load_scan_report(first.snapshot_id)
+        .await
+        .unwrap()
+        .is_some());
 }
 
 #[tokio::test]
@@ -307,12 +372,12 @@ async fn partial_policy_publishes_core_complete_and_rejects_when_requested() {
     ));
     let scanner = FakeScanner::new(partial);
     let published =
-        ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
             .await
             .unwrap();
     assert_eq!(
         store
-            .load_snapshot(published)
+            .load_snapshot(published.snapshot_id)
             .await
             .unwrap()
             .unwrap()
@@ -330,11 +395,11 @@ async fn partial_policy_publishes_core_complete_and_rejects_when_requested() {
         report
     });
     assert!(matches!(
-        ensure_snapshot_with_scanner(
+        observe_inventory_with_scanner(
             &store,
-            EnsureSnapshotOptions {
+            ObserveInventoryOptions {
                 partial_policy: PartialPolicy::Reject,
-                ..EnsureSnapshotOptions::default()
+                ..ObserveInventoryOptions::default()
             },
             &changed,
         )
@@ -344,7 +409,7 @@ async fn partial_policy_publishes_core_complete_and_rejects_when_requested() {
     ));
     assert_eq!(
         store.current_state().await.unwrap().current_snapshot_id,
-        Some(published)
+        Some(published.snapshot_id)
     );
 }
 
@@ -357,7 +422,7 @@ async fn incomplete_core_is_not_published() {
         .retain(|device| device.kind != DeviceKind::Storage);
     let scanner = FakeScanner::new(report);
     assert!(matches!(
-        ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
             .await
             .unwrap_err(),
         InventoryError::CoreIdentityIncomplete
@@ -382,9 +447,9 @@ async fn concurrent_callers_publish_once_and_share_id() {
             let store = store.clone();
             let scanner = scanner.clone();
             tokio::spawn(async move {
-                ensure_snapshot_with_scanner(
+                observe_inventory_with_scanner(
                     &store,
-                    EnsureSnapshotOptions::default(),
+                    ObserveInventoryOptions::default(),
                     scanner.as_ref(),
                 )
                 .await
@@ -396,7 +461,9 @@ async fn concurrent_callers_publish_once_and_share_id() {
     for task in tasks {
         ids.push(task.await.unwrap());
     }
-    assert!(ids.iter().all(|id| *id == ids[0]));
+    assert!(ids
+        .iter()
+        .all(|observation| observation.snapshot_id == ids[0].snapshot_id));
     assert_eq!(scanner.full_calls.load(Ordering::SeqCst), 1);
 }
 
@@ -409,7 +476,7 @@ async fn expired_lease_is_recovered_without_waiting() {
         .unwrap());
     let scanner = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
     let started = std::time::Instant::now();
-    ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
+    observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
         .await
         .unwrap();
     assert!(started.elapsed() < Duration::from_secs(1));
@@ -425,8 +492,12 @@ async fn full_scan_does_not_hold_sqlite_write_transaction() {
     scanner.release_full = Some(release.clone());
     let store_for_task = store.clone();
     let task = tokio::spawn(async move {
-        ensure_snapshot_with_scanner(&store_for_task, EnsureSnapshotOptions::default(), &scanner)
-            .await
+        observe_inventory_with_scanner(
+            &store_for_task,
+            ObserveInventoryOptions::default(),
+            &scanner,
+        )
+        .await
     });
     entered.notified().await;
     let db_path = temp.path().join("qurbrix_hwinfo.db");
@@ -449,18 +520,25 @@ async fn full_scan_does_not_hold_sqlite_write_transaction() {
 async fn tampered_current_artifact_triggers_replacement() {
     let (temp, store) = store().await;
     let scanner = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
-    let first = ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
+    let first =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
+            .await
+            .unwrap();
+    let artifact = store
+        .load_snapshot(first.snapshot_id)
         .await
-        .unwrap();
-    let artifact = store.load_snapshot(first).await.unwrap().unwrap().artifact;
+        .unwrap()
+        .unwrap()
+        .artifact;
     let path = temp.path().join(artifact.relative_path);
     let mut bytes = fs::read(&path).unwrap();
     bytes[0] ^= 1;
     fs::write(path, bytes).unwrap();
-    let second = ensure_snapshot_with_scanner(&store, EnsureSnapshotOptions::default(), &scanner)
-        .await
-        .unwrap();
-    assert_ne!(first, second);
+    let second =
+        observe_inventory_with_scanner(&store, ObserveInventoryOptions::default(), &scanner)
+            .await
+            .unwrap();
+    assert_ne!(first.snapshot_id, second.snapshot_id);
 }
 
 #[tokio::test]

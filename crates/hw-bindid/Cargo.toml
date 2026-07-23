@@ -9,10 +9,5 @@ publish.workspace = true
 anyhow = { workspace = true }
 hex = { workspace = true }
 hw-model = { path = "../hw-model" }
-hw-probe = { path = "../hw-probe" }
-hw-source = { path = "../hw-source" }
 serde = { workspace = true }
 sha1 = { workspace = true }
-
-[dev-dependencies]
-tokio = { workspace = true }

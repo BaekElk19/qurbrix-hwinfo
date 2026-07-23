@@ -5,10 +5,7 @@ use crate::{
     InventoryState, InventoryStore, ProbeCompletion, ProbeKind,
 };
 use async_trait::async_trait;
-use hw_model::{
-    EnsureSnapshotOptions, PartialPolicy, QuickProbeReport, ScanConfig, ScanReport, ScanStatus,
-    SnapshotId,
-};
+use hw_model::{PartialPolicy, QuickProbeReport, ScanConfig, ScanReport, ScanStatus, SnapshotId};
 use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -17,19 +14,19 @@ const LEASE_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const LEASE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 #[async_trait]
-pub trait SnapshotScanner: Send + Sync {
+pub trait InventoryScanner: Send + Sync {
     async fn quick_probe(&self) -> Result<QuickProbeReport>;
     async fn full_scan(&self) -> Result<ScanReport>;
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RealSnapshotScanner {
+pub struct RealInventoryScanner {
     pub quick_config: QuickProbeConfig,
     pub scan_config: ScanConfig,
 }
 
 #[async_trait]
-impl SnapshotScanner for RealSnapshotScanner {
+impl InventoryScanner for RealInventoryScanner {
     async fn quick_probe(&self) -> Result<QuickProbeReport> {
         quick_probe(self.quick_config).await
     }
@@ -39,24 +36,61 @@ impl SnapshotScanner for RealSnapshotScanner {
     }
 }
 
-pub async fn full_scan(config: ScanConfig) -> Result<ScanReport> {
+async fn full_scan(config: ScanConfig) -> Result<ScanReport> {
     hw_collect::collect_scan_report(config)
         .await
         .map_err(|_| InventoryError::FullScanFailed)
 }
 
-pub async fn ensure_snapshot(
-    store: &InventoryStore,
-    options: EnsureSnapshotOptions,
-) -> Result<SnapshotId> {
-    ensure_snapshot_with_scanner(store, options, &RealSnapshotScanner::default()).await
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserveInventoryOptions {
+    pub force_full_scan: bool,
+    pub scan_config: ScanConfig,
+    pub max_snapshot_age: Option<Duration>,
+    pub partial_policy: PartialPolicy,
 }
 
-pub async fn ensure_snapshot_with_scanner(
+impl Default for ObserveInventoryOptions {
+    fn default() -> Self {
+        Self {
+            force_full_scan: false,
+            scan_config: ScanConfig::default(),
+            max_snapshot_age: Some(Duration::from_secs(24 * 60 * 60)),
+            partial_policy: PartialPolicy::PublishIfCoreComplete,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationSource {
+    ReusedSnapshot,
+    NewFullScan,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InventoryObservation {
+    pub report: ScanReport,
+    pub snapshot_id: SnapshotId,
+    pub result_source: ObservationSource,
+    pub hardware_changed: bool,
+}
+
+pub async fn observe_inventory(
     store: &InventoryStore,
-    options: EnsureSnapshotOptions,
-    scanner: &dyn SnapshotScanner,
-) -> Result<SnapshotId> {
+    options: ObserveInventoryOptions,
+) -> Result<InventoryObservation> {
+    let scanner = RealInventoryScanner {
+        scan_config: options.scan_config.clone(),
+        ..RealInventoryScanner::default()
+    };
+    observe_inventory_with_scanner(store, options, &scanner).await
+}
+
+pub async fn observe_inventory_with_scanner(
+    store: &InventoryStore,
+    options: ObserveInventoryOptions,
+    scanner: &dyn InventoryScanner,
+) -> Result<InventoryObservation> {
     let initial_state = store.current_state().await?;
     let baseline_current = initial_state.current_snapshot_id;
     let quick_history = store
@@ -83,7 +117,13 @@ pub async fn ensure_snapshot_with_scanner(
                         None,
                     )
                     .await?;
-                return Ok(snapshot_id);
+                return observation_from_snapshot(
+                    store,
+                    snapshot_id,
+                    ObservationSource::ReusedSnapshot,
+                    hardware_changed(&initial_state, &report),
+                )
+                .await;
             }
             store
                 .finish_probe(
@@ -146,7 +186,13 @@ pub async fn ensure_snapshot_with_scanner(
                         None,
                     )
                     .await?;
-                return Ok(snapshot_id);
+                return observation_from_snapshot(
+                    store,
+                    snapshot_id,
+                    ObservationSource::ReusedSnapshot,
+                    hardware_changed(&initial_state, report),
+                )
+                .await;
             }
         }
         if lease_wait_started.elapsed() >= LEASE_WAIT_TIMEOUT {
@@ -157,12 +203,12 @@ pub async fn ensure_snapshot_with_scanner(
 
     let result =
         run_full_scan_under_lease(store, &options, scanner, quick.as_ref(), baseline_current).await;
-    if let (Ok(snapshot_id), Some(report)) = (&result, &quick) {
-        let _ = store
+    let quick_finish_result = if let (Ok(result), Some(report)) = (&result, &quick) {
+        store
             .finish_probe(
                 quick_history,
                 ProbeCompletion::Succeeded,
-                Some(*snapshot_id),
+                Some(result.snapshot_id()),
                 Some(report.machine_bind_id.clone()),
                 Some(report.configuration_fingerprint.clone()),
                 Some(quick_duration),
@@ -170,25 +216,60 @@ pub async fn ensure_snapshot_with_scanner(
                 None,
                 None,
             )
-            .await;
+            .await
+    } else {
+        Ok(())
+    };
+    let release_result = store.release_lease(owner_id).await;
+    quick_finish_result?;
+    release_result?;
+
+    let result = result?;
+    observation_from_snapshot(
+        store,
+        result.snapshot_id(),
+        result.source(),
+        quick
+            .as_ref()
+            .is_none_or(|report| hardware_changed(&initial_state, report)),
+    )
+    .await
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FullScanResult {
+    Reused(SnapshotId),
+    Published(SnapshotId),
+}
+
+impl FullScanResult {
+    fn snapshot_id(self) -> SnapshotId {
+        match self {
+            Self::Reused(snapshot_id) | Self::Published(snapshot_id) => snapshot_id,
+        }
     }
-    let _ = store.release_lease(owner_id).await;
-    result
+
+    fn source(self) -> ObservationSource {
+        match self {
+            Self::Reused(_) => ObservationSource::ReusedSnapshot,
+            Self::Published(_) => ObservationSource::NewFullScan,
+        }
+    }
 }
 
 async fn run_full_scan_under_lease(
     store: &InventoryStore,
-    options: &EnsureSnapshotOptions,
-    scanner: &dyn SnapshotScanner,
+    options: &ObserveInventoryOptions,
+    scanner: &dyn InventoryScanner,
     quick: Option<&QuickProbeReport>,
     baseline_current: Option<SnapshotId>,
-) -> Result<SnapshotId> {
+) -> Result<FullScanResult> {
     if let Some(quick) = quick {
         let state = store.current_state().await?;
         if state.current_snapshot_id != baseline_current {
             if let Some(snapshot_id) = reusable_snapshot(store, &state, quick, options, true).await
             {
-                return Ok(snapshot_id);
+                return Ok(FullScanResult::Reused(snapshot_id));
             }
         }
     }
@@ -257,16 +338,21 @@ async fn run_full_scan_under_lease(
             .await?;
         return Err(InventoryError::CoreIdentityIncomplete);
     }
+    let state_probe = quick
+        .filter(|quick| quick.coverage.core_complete())
+        .cloned()
+        .unwrap_or_else(|| canonical.clone());
     store
-        .publish_snapshot_for_probe(report, canonical, full_history)
+        .publish_snapshot_for_probe(report, canonical, state_probe, full_history)
         .await
+        .map(FullScanResult::Published)
 }
 
 async fn reusable_snapshot(
     store: &InventoryStore,
     state: &InventoryState,
     quick: &QuickProbeReport,
-    options: &EnsureSnapshotOptions,
+    options: &ObserveInventoryOptions,
     ignore_force: bool,
 ) -> Option<SnapshotId> {
     let snapshot_id = state.current_snapshot_id?;
@@ -284,6 +370,31 @@ async fn reusable_snapshot(
         return None;
     }
     matches!(store.load_scan_report(snapshot_id).await, Ok(Some(_))).then_some(snapshot_id)
+}
+
+fn hardware_changed(state: &InventoryState, quick: &QuickProbeReport) -> bool {
+    state.current_snapshot_id.is_none()
+        || state.current_machine_bind_id.as_deref() != Some(&quick.machine_bind_id)
+        || state.last_configuration_fingerprint.as_deref() != Some(&quick.configuration_fingerprint)
+        || state.fingerprint_version != Some(quick.fingerprint_version)
+}
+
+async fn observation_from_snapshot(
+    store: &InventoryStore,
+    snapshot_id: SnapshotId,
+    result_source: ObservationSource,
+    hardware_changed: bool,
+) -> Result<InventoryObservation> {
+    let report = store
+        .load_scan_report(snapshot_id)
+        .await?
+        .ok_or(InventoryError::SnapshotNotFound(snapshot_id))?;
+    Ok(InventoryObservation {
+        report,
+        snapshot_id,
+        result_source,
+        hardware_changed,
+    })
 }
 
 fn is_fresh(created_at: Option<&str>, max_age: Option<Duration>) -> bool {

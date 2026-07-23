@@ -1,3 +1,4 @@
+use hw_model::ScanReport;
 use serde::Serialize;
 
 pub const SCHEMA_VERSION: &str = "qurbrix.hw.bindid.v1";
@@ -29,6 +30,18 @@ pub struct BindIdReport {
 }
 
 impl BindIdReport {
+    pub fn from_scan_report(report: &ScanReport) -> Self {
+        let warnings = report
+            .warnings
+            .iter()
+            .map(|warning| format!("{}: {}", warning.code, warning.message))
+            .collect();
+        Self::from_parts(
+            crate::devices::component_keys_from_devices(&report.devices),
+            warnings,
+        )
+    }
+
     pub fn from_parts(component_keys: Vec<String>, warnings: Vec<String>) -> Self {
         let covered_kinds = covered_kinds(&component_keys);
         let missing_required_kinds = missing_kinds(REQUIRED_KINDS, &covered_kinds);

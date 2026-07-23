@@ -13,7 +13,6 @@ path = "src/lib.rs"
 anyhow = { workspace = true }
 clap = { workspace = true }
 hw-bindid = { path = "../hw-bindid" }
-hw-collect = { path = "../hw-collect" }
 hw-inventory = { path = "../hw-inventory" }
 hw-model = { path = "../hw-model" }
 hw-output = { path = "../hw-output" }

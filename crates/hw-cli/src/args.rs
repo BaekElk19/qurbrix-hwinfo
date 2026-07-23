@@ -17,7 +17,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Scan(ScanArgs),
-    Summary,
+    Summary(SummaryArgs),
     Table(TableArgs),
     #[command(name = "bindid")]
     BindId(BindIdArgs),
@@ -44,7 +44,6 @@ pub struct SnapshotArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum SnapshotCommand {
-    Ensure(SnapshotEnsureArgs),
     Show(SnapshotShowArgs),
     List(SnapshotListArgs),
     Diff(SnapshotDiffArgs),
@@ -102,20 +101,6 @@ pub struct SnapshotMarkUploadedArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct SnapshotEnsureArgs {
-    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
-    pub state_dir: PathBuf,
-    #[arg(long)]
-    pub force: bool,
-    #[arg(long, default_value = "24h", value_parser = parse_duration)]
-    pub max_age: Duration,
-    #[arg(long)]
-    pub reject_partial: bool,
-    #[arg(long)]
-    pub pretty: bool,
-}
-
-#[derive(Debug, Args)]
 pub struct SnapshotShowArgs {
     #[arg(value_parser = parse_snapshot_id)]
     pub snapshot_id: SnapshotId,
@@ -167,6 +152,10 @@ pub struct SnapshotExportArgs {
 
 #[derive(Debug, Args)]
 pub struct ScanArgs {
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
+    #[arg(long)]
+    pub force: bool,
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
     pub format: OutputFormat,
     #[arg(long)]
@@ -178,8 +167,6 @@ pub struct ScanArgs {
     #[arg(long, default_value = "30s", value_parser = parse_duration)]
     pub timeout: Duration,
     #[arg(long)]
-    pub no_optional_sources: bool,
-    #[arg(long)]
     pub no_sources: bool,
     #[arg(long)]
     pub no_warnings: bool,
@@ -187,16 +174,26 @@ pub struct ScanArgs {
 
 #[derive(Debug, Args)]
 pub struct TableArgs {
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
     #[arg(long, value_parser = parse_kind)]
     pub kind: Option<DeviceKind>,
 }
 
 #[derive(Debug, Args)]
 pub struct BindIdArgs {
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
     #[arg(long)]
     pub pretty: bool,
     #[arg(long, default_value = "30s", value_parser = parse_duration)]
     pub timeout: Duration,
+}
+
+#[derive(Debug, Args)]
+pub struct SummaryArgs {
+    #[arg(long, default_value = "/var/lib/qurbrix-hwinfo")]
+    pub state_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

@@ -1,16 +1,9 @@
 use crate::args::{SnapshotArgs, SnapshotCommand};
 use hw_inventory::{
-    diff_snapshots, ensure_snapshot, InventoryError, InventoryStore, PageRequest, RetentionPolicy,
+    diff_snapshots, InventoryError, InventoryStore, PageRequest, RetentionPolicy,
     SNAPSHOT_CLI_SCHEMA_VERSION,
 };
-use hw_model::{EnsureSnapshotOptions, PartialPolicy};
 use serde::Serialize;
-
-#[derive(Serialize)]
-struct EnsureOutput {
-    schema_version: &'static str,
-    snapshot_id: hw_model::SnapshotId,
-}
 
 #[derive(Serialize)]
 struct ShowOutput {
@@ -36,29 +29,6 @@ struct LifecycleOutput {
 
 pub async fn run_snapshot_command(args: SnapshotArgs) -> Result<(), InventoryError> {
     match args.command {
-        SnapshotCommand::Ensure(args) => {
-            let store = InventoryStore::open(args.state_dir).await?;
-            let snapshot_id = ensure_snapshot(
-                &store,
-                EnsureSnapshotOptions {
-                    force_full_scan: args.force,
-                    max_snapshot_age: Some(args.max_age),
-                    partial_policy: if args.reject_partial {
-                        PartialPolicy::Reject
-                    } else {
-                        PartialPolicy::PublishIfCoreComplete
-                    },
-                },
-            )
-            .await?;
-            write_json(
-                &EnsureOutput {
-                    schema_version: SNAPSHOT_CLI_SCHEMA_VERSION,
-                    snapshot_id,
-                },
-                args.pretty,
-            )?;
-        }
         SnapshotCommand::Show(args) => {
             let store = InventoryStore::open(args.state_dir).await?;
             let snapshot = store

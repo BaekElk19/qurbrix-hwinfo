@@ -46,7 +46,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 - 网络：`ip`
 
 缺少部分命令时，采集器会尽量回退到可用的数据源，返回的字段可能减少。
-`scan`、`summary`、`table`、`bindid` 和 `snapshot ensure` 需要 root 权限；
+`scan`、`summary`、`table` 和 `bindid` 需要 root 权限；
 `schema`、`list-kinds` 和 `sources` 这类元数据命令不需要 root。
 
 ## 安装
@@ -65,7 +65,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 校验并安装：
 
 ```bash
-ARCHIVE="qurbrix-hw-0.2.0-x86_64-unknown-linux-gnu-glibc2.28" # 从上表选择
+ARCHIVE="qurbrix-hw-0.2.2-x86_64-unknown-linux-gnu-glibc2.28" # 从上表选择
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "${ARCHIVE}.tar.gz"
 sudo install -m 0755 "${ARCHIVE}/qurbrix-hw" /usr/local/bin/
@@ -101,7 +101,7 @@ cargo test --workspace
 | `list-kinds` | 否        | 列出扫描器支持的所有设备类别                | 文本或 JSON                           |
 | `schema`     | 否        | 打印扫描输出的 schema 版本                  | JSON 或文本                           |
 | `sources`    | 否        | 打印当前为空的 source 列表                  | JSON                                  |
-| `snapshot`   | 仅 ensure | 确保、查询、对比或导出硬件快照              | 稳定 JSON                             |
+| `snapshot`   | 否 | 查询、保留、对比或导出硬件快照              | 稳定 JSON                             |
 
 通用参数：`qurbrix-hw --help`、`qurbrix-hw <command> --help`、`qurbrix-hw --version`。
 
@@ -123,7 +123,8 @@ sudo qurbrix-hw scan --format json --pretty
 - `--pretty`：格式化 `json` 和 `typed-json` 输出
 - `--kind <k>` / `--exclude-kind <k>`：可重复，如 `--kind cpu --kind memory`
 - `--timeout 30s`：单个 source 的超时
-- `--no-optional-sources`：跳过可选/较慢的 probe
+- `--state-dir <path>`：库存状态目录，默认 `/var/lib/qurbrix-hwinfo`
+- `--force`：忽略可复用快照，执行唯一的全量采集器
 - `--no-sources`：不在报告中输出原始 `sources` 段
 - `--no-warnings`：抑制非致命 warning
 
@@ -260,7 +261,7 @@ qurbrix-hw sources            # -> {"sources":[]}
 ## 硬件快照
 
 快照是按需观测，不是实时监控。两次调用之间不会监听 udev、netlink、USB、PCI
-或网络事件；上层需要新清单时再次调用 `snapshot ensure`。本项目不依赖
+或网络事件；上层需要新清单时再次调用 `scan`、`summary`、`table` 或 `bindid`。本项目不依赖
 `qurbrix-monitor`，也不保存指标或事件时间序列。
 
 默认状态目录是 `/var/lib/qurbrix-hwinfo`：
@@ -276,8 +277,8 @@ SHA-256 校验的 JSON artifact 保存；SQLite 只保存关系化查询投影�
 report/device JSON blob。
 
 ```bash
-sudo qurbrix-hw snapshot ensure
-sudo qurbrix-hw snapshot ensure --force --max-age 0s
+sudo qurbrix-hw scan --force
+sudo qurbrix-hw summary --state-dir /controlled/path
 qurbrix-hw snapshot show 01900000-0000-7000-8000-000000000000 --pretty
 qurbrix-hw snapshot list --limit 30 --offset 0
 qurbrix-hw snapshot diff <旧-snapshot-id> <新-snapshot-id>
@@ -288,8 +289,9 @@ qurbrix-hw snapshot pin <snapshot-id>
 qurbrix-hw snapshot mark-uploaded <snapshot-id>
 ```
 
-`ensure` 默认 TTL 为 24 小时；partial 只有在核心身份完整时才发布。严格调用方可加
-`--reject-partial`。`export` 默认拒绝覆盖已有文件，显式使用 `--overwrite` 才覆盖。
+每个硬件视图命令都会执行 quick probe，并在 24 小时内复用已验证的当前快照。指纹变化、
+`scan --force`、快照过期或 quick probe 失败时才调用唯一全量采集器。partial 只有在核心身份
+完整时才发布。`export` 默认拒绝覆盖已有文件，显式使用 `--overwrite` 才覆盖。
 所有 snapshot stdout JSON 使用 `qurbrix.hw.snapshot.cli.v1` schema，诊断只写
 stderr。退出码：`0` 成功、`1` CLI/序列化、`2` 扫描/策略失败、`4` 权限、
 `5` 未找到、`6` 存储/完整性、`124` 租约超时；旧命令退出码保持不变。
@@ -297,14 +299,14 @@ stderr。退出码：`0` 成功、`1` CLI/序列化、`2` 扫描/策略失败、
 Rust 调用方使用同一 store 和 artifact：
 
 ```rust,no_run
-use qurbrix_hw::{ensure_snapshot, EnsureSnapshotOptions, InventoryStore};
+use qurbrix_hw::{observe_inventory, InventoryStore, ObserveInventoryOptions};
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 let store = InventoryStore::open("/var/lib/qurbrix-hwinfo").await?;
-let id = ensure_snapshot(&store, EnsureSnapshotOptions::default()).await?;
-let snapshot = store.load_snapshot(id).await?.expect("已发布快照");
-let report = store.load_scan_report(id).await?.expect("已校验 artifact");
-assert_eq!(snapshot.snapshot_id, id);
+let observation = observe_inventory(&store, ObserveInventoryOptions::default()).await?;
+let snapshot = store.load_snapshot(observation.snapshot_id).await?.expect("已发布快照");
+let report = observation.report;
+assert_eq!(snapshot.snapshot_id, observation.snapshot_id);
 assert_eq!(snapshot.device_count as usize, report.devices.len());
 # Ok(()) }
 ```
@@ -328,7 +330,8 @@ Rust 调用方直接依赖顶层 `qurbrix-hw` 库 facade。其他语言的上层
 
 - 优先使用 `qurbrix-hw scan --format json`，消费 flat 外部 schema。
 - 需要常规读取或低频硬件绑定检查时，使用 `qurbrix-hw bindid`，消费
-  `qurbrix.hw.bindid.v1` 输出；它与快照存储的 SHA-256 v2 machine bind ID 不同。
+  `qurbrix.hw.bindid.v1` 输出；它从同一份 `ScanReport` 派生，但与快照存储的
+  SHA-256 v2 machine bind ID 不同。
 - 只有明确需要 Rust 模型形状时，才使用 `qurbrix-hw scan --format typed-json`。
 - 不要解析 `summary` 或 `table` 这类面向人的输出。
 - 不要依赖 JSON 字段顺序或空白格式。
@@ -338,12 +341,14 @@ Rust 调用方直接依赖顶层 `qurbrix-hw` 库 facade。其他语言的上层
 ## 库用法
 
 ```rust
-use hw_model::ScanConfig;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let report = qurbrix_hw::collect_scan_report(ScanConfig::default()).await?;
-    let flat = hw_output::to_flat_report(&report);
+    let store = qurbrix_hw::InventoryStore::open("/var/lib/qurbrix-hwinfo").await?;
+    let observation = qurbrix_hw::observe_inventory(
+        &store,
+        qurbrix_hw::ObserveInventoryOptions::default(),
+    ).await?;
+    let flat = hw_output::to_flat_report(&observation.report);
     println!("{}", serde_json::to_string_pretty(&flat)?);
     Ok(())
 }

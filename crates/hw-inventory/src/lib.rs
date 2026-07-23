@@ -19,6 +19,7 @@ pub use model::{
 };
 pub use probe::{quick_probe, quick_probe_with_runner, QuickProbeConfig};
 pub use service::{
-    ensure_snapshot, ensure_snapshot_with_scanner, full_scan, RealSnapshotScanner, SnapshotScanner,
+    observe_inventory, observe_inventory_with_scanner, InventoryObservation, InventoryScanner,
+    ObservationSource, ObserveInventoryOptions, RealInventoryScanner,
 };
 pub use store::InventoryStore;

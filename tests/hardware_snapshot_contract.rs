@@ -1,6 +1,6 @@
 use hw_model::{
-    CoreIdentityGroup, EnsureSnapshotOptions, IdentityCoverage, PartialPolicy, SnapshotId,
-    BINDID_V2_ALGORITHM, FINGERPRINT_VERSION, SNAPSHOT_SCHEMA_VERSION,
+    CoreIdentityGroup, IdentityCoverage, PartialPolicy, SnapshotId, BINDID_V2_ALGORITHM,
+    FINGERPRINT_VERSION, SNAPSHOT_SCHEMA_VERSION,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -37,7 +37,7 @@ fn snapshot_id_contract_is_lowercase_uuid_v7() {
 
 #[test]
 fn defaults_match_the_accepted_contract() {
-    let options = EnsureSnapshotOptions::default();
+    let options = qurbrix_hw::ObserveInventoryOptions::default();
     assert_eq!(options.partial_policy, PartialPolicy::PublishIfCoreComplete);
     assert_eq!(options.max_snapshot_age.unwrap().as_secs(), 86_400);
     assert_eq!(SNAPSHOT_SCHEMA_VERSION, "qurbrix.hw.snapshot.v1");

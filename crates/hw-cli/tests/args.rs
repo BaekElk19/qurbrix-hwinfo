@@ -4,7 +4,7 @@ use hw_cli::exit::{classify_parse_error, exit_code_for_status, ExitCode};
 use hw_cli::permission::{command_requires_hardware_access, ensure_root_with};
 use hw_model::DeviceKind;
 use hw_model::ScanStatus;
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 #[test]
 fn parses_scan_json_kind_filter() {
@@ -74,30 +74,27 @@ fn parses_snapshot_commands_and_duration_units() {
     let cli = Cli::try_parse_from([
         "qurbrix-hw",
         "snapshot",
-        "ensure",
+        "prune",
         "--state-dir",
         "/tmp/state",
         "--max-age",
         "2h",
-        "--force",
-        "--reject-partial",
+        "--keep-recent",
+        "12",
     ])
     .unwrap();
     let Command::Snapshot(args) = cli.command else {
         panic!("expected snapshot command");
     };
-    let hw_cli::args::SnapshotCommand::Ensure(args) = args.command else {
-        panic!("expected ensure command");
+    let hw_cli::args::SnapshotCommand::Prune(args) = args.command else {
+        panic!("expected prune command");
     };
     assert_eq!(args.max_age.as_secs(), 7_200);
-    assert!(args.force);
-    assert!(args.reject_partial);
+    assert_eq!(args.keep_recent, 12);
 }
 
 #[test]
-fn only_snapshot_ensure_requires_hardware_access() {
-    let ensure = Cli::try_parse_from(["qurbrix-hw", "snapshot", "ensure"]).unwrap();
-    assert!(command_requires_hardware_access(&ensure.command));
+fn snapshot_maintenance_does_not_require_hardware_access() {
     let id = hw_model::SnapshotId::new_v7().to_string();
     let show = Cli::try_parse_from(["qurbrix-hw", "snapshot", "show", &id]).unwrap();
     assert!(!command_requires_hardware_access(&show.command));
@@ -130,21 +127,30 @@ fn parses_snapshot_prune_retention_defaults_and_overrides() {
 #[test]
 fn identifies_hardware_access_commands() {
     assert!(command_requires_hardware_access(&Command::Scan(ScanArgs {
+        state_dir: PathBuf::from("/tmp/state"),
+        force: false,
         format: OutputFormat::Json,
         pretty: false,
         kind: Vec::new(),
         exclude_kind: Vec::new(),
         timeout: Duration::from_secs(30),
-        no_optional_sources: false,
         no_sources: false,
         no_warnings: false,
     })));
-    assert!(command_requires_hardware_access(&Command::Summary));
+    assert!(command_requires_hardware_access(&Command::Summary(
+        hw_cli::args::SummaryArgs {
+            state_dir: PathBuf::from("/tmp/state"),
+        }
+    )));
     assert!(command_requires_hardware_access(&Command::Table(
-        TableArgs { kind: None }
+        TableArgs {
+            state_dir: PathBuf::from("/tmp/state"),
+            kind: None,
+        }
     )));
     assert!(command_requires_hardware_access(&Command::BindId(
         BindIdArgs {
+            state_dir: PathBuf::from("/tmp/state"),
             pretty: false,
             timeout: Duration::from_secs(30),
         }

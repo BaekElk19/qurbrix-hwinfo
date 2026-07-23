@@ -3,7 +3,9 @@ use clap::Parser;
 use hw_cli::args::{Cli, Command, ListFormat, OutputFormat};
 use hw_cli::exit::{classify_parse_error, exit_code_for_inventory, exit_code_for_status, ExitCode};
 use hw_cli::permission::{command_requires_hardware_access, ensure_root};
-use hw_model::ScanConfig;
+use hw_inventory::{observe_inventory, InventoryStore, ObserveInventoryOptions};
+use hw_model::{ScanConfig, ScanReport};
+use std::path::Path;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,19 +34,25 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Scan(args) => {
-            let config = ScanConfig {
-                kinds: if args.kind.is_empty() {
-                    None
-                } else {
-                    Some(args.kind)
+            let report = observe_or_exit(
+                &args.state_dir,
+                ObserveInventoryOptions {
+                    force_full_scan: args.force,
+                    scan_config: ScanConfig {
+                        timeout: args.timeout,
+                        ..ScanConfig::default()
+                    },
+                    ..ObserveInventoryOptions::default()
                 },
-                exclude_kinds: args.exclude_kind,
-                timeout: args.timeout,
-                optional_sources: !args.no_optional_sources,
-                include_sources: !args.no_sources,
-                include_warnings: !args.no_warnings,
-            };
-            let report = hw_collect::collect_scan_report(config).await?;
+            )
+            .await;
+            let report = filtered_report(
+                report,
+                &args.kind,
+                &args.exclude_kind,
+                args.no_sources,
+                args.no_warnings,
+            );
             match args.format {
                 OutputFormat::Json => {
                     let flat = hw_output::to_flat_report(&report);
@@ -72,16 +80,27 @@ async fn main() -> Result<()> {
                 std::process::exit(code.code());
             }
         }
-        Command::Summary => {
-            let report = hw_collect::collect_scan_report(ScanConfig::default()).await?;
+        Command::Summary(args) => {
+            let report = observe_or_exit(&args.state_dir, ObserveInventoryOptions::default()).await;
             print!("{}", hw_output::summary_text(&report));
         }
         Command::Table(args) => {
-            let report = hw_collect::collect_scan_report(ScanConfig::default()).await?;
+            let report = observe_or_exit(&args.state_dir, ObserveInventoryOptions::default()).await;
             print!("{}", hw_output::table_text(&report, args.kind));
         }
         Command::BindId(args) => {
-            let report = hw_bindid::collect_bindid_report(args.timeout).await?;
+            let report = observe_or_exit(
+                &args.state_dir,
+                ObserveInventoryOptions {
+                    scan_config: ScanConfig {
+                        timeout: args.timeout,
+                        ..ScanConfig::default()
+                    },
+                    ..ObserveInventoryOptions::default()
+                },
+            )
+            .await;
+            let report = hw_bindid::BindIdReport::from_scan_report(&report);
             if args.pretty {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
@@ -113,4 +132,45 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn observe_or_exit(state_dir: &Path, options: ObserveInventoryOptions) -> ScanReport {
+    let result = async {
+        let store = InventoryStore::open(state_dir).await?;
+        observe_inventory(&store, options).await
+    }
+    .await;
+    match result {
+        Ok(observation) => observation.report,
+        Err(error) => {
+            eprintln!("inventory error [{}]: {error}", error.code());
+            std::process::exit(exit_code_for_inventory(&error).code());
+        }
+    }
+}
+
+fn filtered_report(
+    mut report: ScanReport,
+    kinds: &[hw_model::DeviceKind],
+    excluded_kinds: &[hw_model::DeviceKind],
+    omit_sources: bool,
+    omit_warnings: bool,
+) -> ScanReport {
+    if !kinds.is_empty() {
+        report.devices.retain(|device| kinds.contains(&device.kind));
+    }
+    if !excluded_kinds.is_empty() {
+        report
+            .devices
+            .retain(|device| !excluded_kinds.contains(&device.kind));
+    }
+    if omit_sources {
+        for device in &mut report.devices {
+            device.sources.clear();
+        }
+    }
+    if omit_warnings {
+        report.warnings.clear();
+    }
+    report
 }

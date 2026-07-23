@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr, time::Duration};
+use std::{fmt, str::FromStr};
 use uuid::Uuid;
 
 pub const SNAPSHOT_SCHEMA_VERSION: &str = "qurbrix.hw.snapshot.v1";
@@ -40,23 +40,6 @@ pub enum PartialPolicy {
     #[default]
     PublishIfCoreComplete,
     Reject,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnsureSnapshotOptions {
-    pub force_full_scan: bool,
-    pub max_snapshot_age: Option<Duration>,
-    pub partial_policy: PartialPolicy,
-}
-
-impl Default for EnsureSnapshotOptions {
-    fn default() -> Self {
-        Self {
-            force_full_scan: false,
-            max_snapshot_age: Some(Duration::from_secs(24 * 60 * 60)),
-            partial_policy: PartialPolicy::PublishIfCoreComplete,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

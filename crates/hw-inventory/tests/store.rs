@@ -192,6 +192,47 @@ async fn publishes_projection_and_verified_artifact_atomically() {
 }
 
 #[tokio::test]
+async fn publishing_realistic_dangling_device_references_preserves_the_artifact() {
+    let (temp, store) = open_temp().await;
+    let mut expected_report = report();
+    expected_report.devices[0].parent_id = Some("missing:parent".into());
+    expected_report.devices[0]
+        .children
+        .push("missing:child".into());
+    expected_report.warnings.push(
+        hw_model::ScanWarning::new("source.warning", "unattributed source warning")
+            .with_device_id("missing:device"),
+    );
+
+    let id = store
+        .publish_snapshot(expected_report.clone(), probe())
+        .await
+        .unwrap();
+    assert_eq!(
+        store.load_scan_report(id).await.unwrap(),
+        Some(expected_report)
+    );
+
+    let connection = db(temp.path());
+    let parent: Option<String> = connection
+        .query_row(
+            "SELECT parent_device_id FROM snapshot_device WHERE snapshot_id = ?1",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let warning_device: Option<String> = connection
+        .query_row(
+            "SELECT device_id FROM snapshot_warning WHERE snapshot_id = ?1",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(parent, None);
+    assert_eq!(warning_device, None);
+}
+
+#[tokio::test]
 async fn transaction_failure_preserves_current_and_removes_new_artifact() {
     let (temp, store) = open_temp().await;
     let first = store.publish_snapshot(report(), probe()).await.unwrap();

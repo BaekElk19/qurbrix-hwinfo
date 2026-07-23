@@ -41,7 +41,7 @@ Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 
 The target platform is Linux.
 
-**Root is required for `scan`, `summary`, `table`, `bindid`, and `snapshot ensure`** — they refuse to run
+**Root is required for `scan`, `summary`, `table`, and `bindid`** — they refuse to run
 otherwise with `root access is required for this command; rerun with sudo`. Use `sudo`
 or run as root. The `list-kinds`, `schema`, and `sources` commands do not need root.
 
@@ -73,7 +73,7 @@ the archive matching your machine:
 Verify and install:
 
 ```bash
-ARCHIVE="qurbrix-hw-0.2.0-x86_64-unknown-linux-gnu-glibc2.28" # choose from the table above
+ARCHIVE="qurbrix-hw-0.2.2-x86_64-unknown-linux-gnu-glibc2.28" # choose from the table above
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "${ARCHIVE}.tar.gz"
 sudo install -m 0755 "${ARCHIVE}/qurbrix-hw" /usr/local/bin/
@@ -112,7 +112,7 @@ At a glance:
 | `list-kinds` | no    | List every device kind the scanner knows        | Text or JSON        |
 | `schema`     | no    | Print the scan output schema version            | JSON or text        |
 | `sources`    | no    | Print the currently empty source list           | JSON                |
-| `snapshot`   | ensure only | Ensure, query, diff, or export snapshots  | Stable JSON         |
+| `snapshot`   | no | Query, retain, diff, or export snapshots | Stable JSON         |
 
 Global: `qurbrix-hw --help`, `qurbrix-hw <command> --help`, `qurbrix-hw --version`.
 
@@ -132,7 +132,8 @@ Flags:
 - `--pretty` — pretty-print `json` and `typed-json` output
 - `--kind <k>` / `--exclude-kind <k>` — repeatable; e.g. `--kind cpu --kind memory`
 - `--timeout 30s` — per-source timeout
-- `--no-optional-sources` — skip optional/slow probes
+- `--state-dir <path>` — inventory state directory (default `/var/lib/qurbrix-hwinfo`)
+- `--force` — bypass a reusable snapshot and run the one full collector
 - `--no-sources` — omit the raw `sources` block from the report
 - `--no-warnings` — suppress non-fatal warnings
 
@@ -265,8 +266,8 @@ qurbrix-hw sources            # -> {"sources":[]}
 ## Hardware snapshots
 
 Snapshots are on-demand observations, not live monitoring. Nothing watches
-udev, netlink, USB, PCI, or network events between calls. Run `snapshot ensure`
-again when an application needs a current inventory. This project does not
+udev, netlink, USB, PCI, or network events between calls. Run `scan`, `summary`,
+`table`, or `bindid` again when an application needs a current inventory. This project does not
 depend on `qurbrix-monitor` and stores no metric or event time series.
 
 The default state directory is `/var/lib/qurbrix-hwinfo`:
@@ -282,8 +283,8 @@ directory. The complete `ScanReport` is an immutable SHA-256-checked artifact;
 SQLite contains normalized query tables and never a report/device JSON blob.
 
 ```bash
-sudo qurbrix-hw snapshot ensure
-sudo qurbrix-hw snapshot ensure --force --max-age 0s
+sudo qurbrix-hw scan --force
+sudo qurbrix-hw summary --state-dir /controlled/path
 qurbrix-hw snapshot show 01900000-0000-7000-8000-000000000000 --pretty
 qurbrix-hw snapshot list --limit 30 --offset 0
 qurbrix-hw snapshot diff <from-snapshot-id> <to-snapshot-id>
@@ -294,8 +295,10 @@ qurbrix-hw snapshot pin <snapshot-id>
 qurbrix-hw snapshot mark-uploaded <snapshot-id>
 ```
 
-`ensure` defaults to a 24-hour TTL and publishes a partial scan only when the
-core identity contract is complete. Add `--reject-partial` for strict callers.
+Every hardware-view command performs a quick probe and reuses a verified current
+snapshot for up to 24 hours. A changed fingerprint, `scan --force`, an expired
+snapshot, or a quick-probe failure invokes the one full collector. Partial scans
+are published only when the core identity contract is complete.
 `export` refuses to replace an existing path unless `--overwrite` is supplied.
 All snapshot stdout documents use schema `qurbrix.hw.snapshot.cli.v1`; diagnostics
 go only to stderr. Snapshot exit codes are `0` success, `1` CLI/serialization,
@@ -305,14 +308,14 @@ and `124` lease timeout. Existing command exit codes remain unchanged.
 Rust callers use the same store and artifact:
 
 ```rust,no_run
-use qurbrix_hw::{ensure_snapshot, EnsureSnapshotOptions, InventoryStore};
+use qurbrix_hw::{observe_inventory, InventoryStore, ObserveInventoryOptions};
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 let store = InventoryStore::open("/var/lib/qurbrix-hwinfo").await?;
-let id = ensure_snapshot(&store, EnsureSnapshotOptions::default()).await?;
-let snapshot = store.load_snapshot(id).await?.expect("published snapshot");
-let report = store.load_scan_report(id).await?.expect("verified artifact");
-assert_eq!(snapshot.snapshot_id, id);
+let observation = observe_inventory(&store, ObserveInventoryOptions::default()).await?;
+let snapshot = store.load_snapshot(observation.snapshot_id).await?.expect("published snapshot");
+let report = observation.report;
+assert_eq!(snapshot.snapshot_id, observation.snapshot_id);
 assert_eq!(snapshot.device_count as usize, report.devices.len());
 # Ok(()) }
 ```
@@ -340,7 +343,8 @@ For machine callers:
 
 - Prefer `qurbrix-hw scan --format json` for the flat external schema.
 - Use `qurbrix-hw bindid` and its `qurbrix.hw.bindid.v1` document for ordinary
-  reads or low-frequency hardware-binding checks; it is separate from the
+  reads or low-frequency hardware-binding checks. It is derived from the same
+  observed `ScanReport`; its short SHA-1 value remains distinct from the
   snapshot store's SHA-256 v2 machine bind ID.
 - Use `qurbrix-hw scan --format typed-json` only when you intentionally want the
   Rust model shape serialized as JSON.
@@ -352,12 +356,14 @@ For machine callers:
 Library usage:
 
 ```rust
-use hw_model::ScanConfig;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let report = qurbrix_hw::collect_scan_report(ScanConfig::default()).await?;
-    let flat = hw_output::to_flat_report(&report);
+    let store = qurbrix_hw::InventoryStore::open("/var/lib/qurbrix-hwinfo").await?;
+    let observation = qurbrix_hw::observe_inventory(
+        &store,
+        qurbrix_hw::ObserveInventoryOptions::default(),
+    ).await?;
+    let flat = hw_output::to_flat_report(&observation.report);
     println!("{}", serde_json::to_string_pretty(&flat)?);
     Ok(())
 }

@@ -9,7 +9,7 @@ fn documented_snapshot_help_and_temp_state_commands_run() {
     let english = include_str!("../README.md");
     let chinese = include_str!("../README.zh-CN.md");
     for command in [
-        "snapshot ensure",
+        "qurbrix-hw scan",
         "snapshot show",
         "snapshot list",
         "snapshot diff",
@@ -27,7 +27,6 @@ fn documented_snapshot_help_and_temp_state_commands_run() {
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
     for command in [
-        "ensure",
         "show",
         "list",
         "diff",
@@ -39,6 +38,7 @@ fn documented_snapshot_help_and_temp_state_commands_run() {
     ] {
         assert!(help.contains(command));
     }
+    assert!(!help.contains("ensure"));
 
     let state = tempfile::tempdir().unwrap();
     let list = binary()
