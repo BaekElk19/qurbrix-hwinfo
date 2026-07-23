@@ -2,8 +2,8 @@ use crate::{
     artifact,
     error::{InventoryError, Result},
     model::{
-        InventoryState, PageRequest, ProbeCompletion, ProbeKind, StoredDeviceSummary,
-        UploadSnapshotProjection,
+        ExportMetadata, InventoryState, PageRequest, ProbeCompletion, ProbeKind,
+        StoredDeviceSummary, UploadSnapshotProjection, SNAPSHOT_CLI_SCHEMA_VERSION,
     },
 };
 use hw_model::{
@@ -117,6 +117,29 @@ impl InventoryStore {
     pub async fn recover_orphan_artifacts(&self) -> Result<u64> {
         let store = self.clone();
         tokio::task::spawn_blocking(move || store.recover_orphans_sync()).await?
+    }
+
+    pub async fn export_scan_report(
+        &self,
+        snapshot_id: SnapshotId,
+        destination: PathBuf,
+        overwrite: bool,
+    ) -> Result<ExportMetadata> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let report = store
+                .load_report_sync(snapshot_id)?
+                .ok_or(InventoryError::SnapshotNotFound(snapshot_id))?;
+            let (sha256, size_bytes) = artifact::export_report(&destination, &report, overwrite)?;
+            Ok(ExportMetadata {
+                schema_version: SNAPSHOT_CLI_SCHEMA_VERSION.to_string(),
+                snapshot_id,
+                output_path: destination.display().to_string(),
+                sha256,
+                size_bytes,
+            })
+        })
+        .await?
     }
 
     pub async fn current_state(&self) -> Result<InventoryState> {

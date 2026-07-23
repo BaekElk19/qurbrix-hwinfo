@@ -1,3 +1,4 @@
+use hw_model::SnapshotId;
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +33,10 @@ pub enum InventoryError {
     CoreIdentityIncomplete,
     #[error("timed out waiting for the snapshot scan lease")]
     LeaseTimeout,
+    #[error("snapshot not found: {0}")]
+    SnapshotNotFound(SnapshotId),
+    #[error("destination already exists: {0}")]
+    DestinationExists(PathBuf),
 }
 
 impl InventoryError {
@@ -52,6 +57,8 @@ impl InventoryError {
             Self::PartialRejected => "inventory.partial_rejected",
             Self::CoreIdentityIncomplete => "inventory.core_identity_incomplete",
             Self::LeaseTimeout => "inventory.lease_timeout",
+            Self::SnapshotNotFound(_) => "inventory.snapshot_not_found",
+            Self::DestinationExists(_) => "inventory.destination_exists",
         }
     }
 }

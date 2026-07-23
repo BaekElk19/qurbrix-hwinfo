@@ -110,6 +110,49 @@ pub(crate) fn remove_report(state_dir: &Path, relative_path: &str) -> Result<()>
     }
 }
 
+pub(crate) fn export_report(
+    destination: &Path,
+    report: &ScanReport,
+    overwrite: bool,
+) -> Result<(String, u64)> {
+    if destination.exists() && !overwrite {
+        return Err(InventoryError::DestinationExists(destination.to_path_buf()));
+    }
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "export parent directory does not exist",
+        )
+        .into());
+    }
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("snapshot.json");
+    let temp = parent.join(format!(".{name}.{}.snapshot.tmp", std::process::id()));
+    let bytes = serde_json::to_vec(report)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temp)?;
+    let result = (|| -> Result<()> {
+        file.write_all(&bytes)?;
+        file.flush()?;
+        file.sync_all()?;
+        fs::rename(&temp, destination)?;
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result?;
+    ensure_private_file(destination)?;
+    Ok((hex::encode(Sha256::digest(&bytes)), bytes.len() as u64))
+}
+
 pub(crate) fn recover_orphans(state_dir: &Path, known_paths: &[String]) -> Result<u64> {
     let reports_dir = state_dir.join("reports");
     ensure_private_directory(&reports_dir)?;

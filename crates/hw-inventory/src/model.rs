@@ -1,4 +1,4 @@
-use hw_model::{SnapshotId, StoredSnapshot};
+use hw_model::{Device, SnapshotId, StoredSnapshot};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +66,36 @@ pub struct UploadSnapshotProjection {
     pub schema_version: String,
     pub snapshot: StoredSnapshot,
     pub devices: Vec<StoredDeviceSummary>,
+}
+
+pub const SNAPSHOT_CLI_SCHEMA_VERSION: &str = "qurbrix.hw.snapshot.cli.v1";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChangedDevice {
+    pub device_id: String,
+    pub before: Device,
+    pub after: Device,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotDiff {
+    pub schema_version: String,
+    pub from_snapshot_id: SnapshotId,
+    pub to_snapshot_id: SnapshotId,
+    pub machine_identity_changed: bool,
+    pub configuration_changed: bool,
+    pub added: Vec<Device>,
+    pub removed: Vec<Device>,
+    pub changed: Vec<ChangedDevice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportMetadata {
+    pub schema_version: String,
+    pub snapshot_id: SnapshotId,
+    pub output_path: String,
+    pub sha256: String,
+    pub size_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
