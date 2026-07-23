@@ -89,9 +89,9 @@ pub struct IdentityCoverage {
 
 impl IdentityCoverage {
     pub fn core_complete(&self) -> bool {
-        CoreIdentityGroup::REQUIRED.iter().all(|group| {
-            self.covered.contains(group) || self.trusted_absent.contains(group)
-        })
+        CoreIdentityGroup::REQUIRED
+            .iter()
+            .all(|group| self.covered.contains(group) || self.trusted_absent.contains(group))
     }
 }
 
