@@ -14,6 +14,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 - 为脚本和 agent 提供 flat JSON、JSONL、summary 和 table 输出。
 - 提供 `bindid` 轻量业务绑定 ID，用于常规读取和低频硬件绑定检查。
 - 提供 fake source runner 与 fixture 驱动的 parser/probe 测试。
+- 使用 UUIDv7、bindid v2、SHA-256 artifact 与 SQLite 历史保存不可变硬件快照。
 
 ## 目录结构
 
@@ -26,6 +27,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 │   ├── hw-parser/          # lscpu、dmidecode、lsblk、xrandr、ip、lspci、lsusb 等解析逻辑
 │   ├── hw-probe/           # 将解析结果转换为 Device 的分类 probe
 │   ├── hw-collect/         # 采集编排，生成 ScanReport
+│   ├── hw-inventory/       # 快照状态机、SQLite 投影和 artifact
 │   ├── hw-bindid/          # 生成轻量业务绑定 ID
 │   ├── hw-output/          # flat JSON、JSONL、summary、table 和 schema helper
 │   ├── hw-cli/             # qurbrix-hw CLI 参数和命令
@@ -44,7 +46,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 - 网络：`ip`
 
 缺少部分命令时，采集器会尽量回退到可用的数据源，返回的字段可能减少。
-`scan`、`summary`、`table` 和 `bindid` 这类硬件访问命令需要 root 权限；
+`scan`、`summary`、`table`、`bindid` 和 `snapshot ensure` 需要 root 权限；
 `schema`、`list-kinds` 和 `sources` 这类元数据命令不需要 root。
 
 ## 安装
@@ -99,6 +101,7 @@ cargo test --workspace
 | `list-kinds` | 否        | 列出扫描器支持的所有设备类别                | 文本或 JSON                           |
 | `schema`     | 否        | 打印扫描输出的 schema 版本                  | 文本                                  |
 | `sources`    | 否        | 列出采集过程用到的原始 source               | JSON                                  |
+| `snapshot`   | 仅 ensure | 确保、查询、对比或导出硬件快照              | 稳定 JSON                             |
 
 通用参数：`qurbrix-hw --help`、`qurbrix-hw <command> --help`、`qurbrix-hw --version`。
 
@@ -249,6 +252,58 @@ other-device
 qurbrix-hw schema             # -> qurbrix.hw.scan.v2
 qurbrix-hw sources            # -> {"sources":[]}
 ```
+
+## 硬件快照
+
+快照是按需观测，不是实时监控。两次调用之间不会监听 udev、netlink、USB、PCI
+或网络事件；上层需要新清单时再次调用 `snapshot ensure`。本项目不依赖
+`qurbrix-monitor`，也不保存指标或事件时间序列。
+
+默认状态目录是 `/var/lib/qurbrix-hwinfo`：
+
+```text
+/var/lib/qurbrix-hwinfo/qurbrix_hwinfo.db
+/var/lib/qurbrix-hwinfo/reports/<snapshot_id>.json
+```
+
+目录权限为 `0700`，数据库和报告 artifact 权限为 `0600`。测试、容器或由调用方
+管理的目录可使用 `--state-dir /controlled/path` 覆盖。完整 `ScanReport` 以不可变、
+SHA-256 校验的 JSON artifact 保存；SQLite 只保存关系化查询投影，不保存完整
+report/device JSON blob。
+
+```bash
+sudo qurbrix-hw snapshot ensure
+sudo qurbrix-hw snapshot ensure --force --max-age 0s
+qurbrix-hw snapshot show 01900000-0000-7000-8000-000000000000 --pretty
+qurbrix-hw snapshot list --limit 30 --offset 0
+qurbrix-hw snapshot diff <旧-snapshot-id> <新-snapshot-id>
+qurbrix-hw snapshot export <snapshot-id> --output ./scan-report.json
+```
+
+`ensure` 默认 TTL 为 24 小时；partial 只有在核心身份完整时才发布。严格调用方可加
+`--reject-partial`。`export` 默认拒绝覆盖已有文件，显式使用 `--overwrite` 才覆盖。
+所有 snapshot stdout JSON 使用 `qurbrix.hw.snapshot.cli.v1` schema，诊断只写
+stderr。退出码：`0` 成功、`1` CLI/序列化、`2` 扫描/策略失败、`4` 权限、
+`5` 未找到、`6` 存储/完整性、`124` 租约超时；旧命令退出码保持不变。
+
+Rust 调用方使用同一 store 和 artifact：
+
+```rust,no_run
+use qurbrix_hw::{ensure_snapshot, EnsureSnapshotOptions, InventoryStore};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let store = InventoryStore::open("/var/lib/qurbrix-hwinfo").await?;
+let id = ensure_snapshot(&store, EnsureSnapshotOptions::default()).await?;
+let snapshot = store.load_snapshot(id).await?.expect("已发布快照");
+let report = store.load_scan_report(id).await?.expect("已校验 artifact");
+assert_eq!(snapshot.snapshot_id, id);
+assert_eq!(snapshot.device_count as usize, report.devices.len());
+# Ok(()) }
+```
+
+如需删除全部本地历史，先停止调用方，再以目录所有者身份删除所选 state directory
+（或默认 `/var/lib/qurbrix-hwinfo`）。不要只删除数据库或只删除 `reports/`，完整性
+检查会有意拒绝这种分裂状态。维护命令启用后，自动有界保留规则见相应说明。
 
 ## 集成合约
 

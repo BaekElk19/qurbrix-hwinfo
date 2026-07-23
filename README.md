@@ -15,6 +15,8 @@ Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 - Emit a typed `ScanReport` model for Rust callers.
 - Emit flat JSON, JSONL, summary, and table views for scripts and agents.
 - Provide fake source runners and fixture-driven parser/probe tests.
+- Keep immutable, queryable hardware snapshots with UUIDv7 IDs, bindid v2,
+  checked JSON artifacts, and a local SQLite history.
 
 ## Layout
 
@@ -27,6 +29,7 @@ Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 │   ├── hw-parser/          # Parsers for lscpu, dmidecode, lsblk, xrandr, ip, lspci, lsusb, and more
 │   ├── hw-probe/           # Category probes that turn parsed data into Device values
 │   ├── hw-collect/         # Collection orchestration that builds ScanReport
+│   ├── hw-inventory/       # Snapshot state machine, SQLite projection, and artifacts
 │   ├── hw-output/          # Flat JSON, JSONL, summary, table, and schema helpers
 │   ├── hw-cli/             # qurbrix-hw CLI argument parsing and commands
 │   └── hw-testdata/        # Parser fixture helpers
@@ -37,7 +40,7 @@ Chinese documentation is available in [README.zh-CN.md](README.zh-CN.md).
 
 The target platform is Linux.
 
-**Root is required for `scan`, `summary`, `table`, and `bindid`** — they refuse to run
+**Root is required for `scan`, `summary`, `table`, `bindid`, and `snapshot ensure`** — they refuse to run
 otherwise with `root access is required for this command; rerun with sudo`. Use `sudo`
 or run as root. The `list-kinds`, `schema`, and `sources` commands do not need root.
 
@@ -108,6 +111,7 @@ At a glance:
 | `list-kinds` | no    | List every device kind the scanner knows        | Text or JSON        |
 | `schema`     | no    | Print scan output schema version                | Text                |
 | `sources`    | no    | List raw sources used during collection         | JSON                |
+| `snapshot`   | ensure only | Ensure, query, diff, or export snapshots  | Stable JSON         |
 
 Global: `qurbrix-hw --help`, `qurbrix-hw <command> --help`, `qurbrix-hw --version`.
 
@@ -241,6 +245,63 @@ other-device
 qurbrix-hw schema             # -> qurbrix.hw.scan.v2
 qurbrix-hw sources            # -> {"sources":[]}
 ```
+
+## Hardware snapshots
+
+Snapshots are on-demand observations, not live monitoring. Nothing watches
+udev, netlink, USB, PCI, or network events between calls. Run `snapshot ensure`
+again when an application needs a current inventory. This project does not
+depend on `qurbrix-monitor` and stores no metric or event time series.
+
+The default state directory is `/var/lib/qurbrix-hwinfo`:
+
+```text
+/var/lib/qurbrix-hwinfo/qurbrix_hwinfo.db
+/var/lib/qurbrix-hwinfo/reports/<snapshot_id>.json
+```
+
+Directories use mode `0700`; the database and report artifacts use `0600`.
+Use `--state-dir /controlled/path` for tests, containers, or a caller-owned
+directory. The complete `ScanReport` is an immutable SHA-256-checked artifact;
+SQLite contains normalized query tables and never a report/device JSON blob.
+
+```bash
+sudo qurbrix-hw snapshot ensure
+sudo qurbrix-hw snapshot ensure --force --max-age 0s
+qurbrix-hw snapshot show 01900000-0000-7000-8000-000000000000 --pretty
+qurbrix-hw snapshot list --limit 30 --offset 0
+qurbrix-hw snapshot diff <from-snapshot-id> <to-snapshot-id>
+qurbrix-hw snapshot export <snapshot-id> --output ./scan-report.json
+```
+
+`ensure` defaults to a 24-hour TTL and publishes a partial scan only when the
+core identity contract is complete. Add `--reject-partial` for strict callers.
+`export` refuses to replace an existing path unless `--overwrite` is supplied.
+All snapshot stdout documents use schema `qurbrix.hw.snapshot.cli.v1`; diagnostics
+go only to stderr. Snapshot exit codes are `0` success, `1` CLI/serialization,
+`2` scan/policy failure, `4` permission, `5` not found, `6` storage/integrity,
+and `124` lease timeout. Existing command exit codes remain unchanged.
+
+Rust callers use the same store and artifact:
+
+```rust,no_run
+use qurbrix_hw::{ensure_snapshot, EnsureSnapshotOptions, InventoryStore};
+
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let store = InventoryStore::open("/var/lib/qurbrix-hwinfo").await?;
+let id = ensure_snapshot(&store, EnsureSnapshotOptions::default()).await?;
+let snapshot = store.load_snapshot(id).await?.expect("published snapshot");
+let report = store.load_scan_report(id).await?.expect("verified artifact");
+assert_eq!(snapshot.snapshot_id, id);
+assert_eq!(snapshot.device_count as usize, report.devices.len());
+# Ok(()) }
+```
+
+To remove all local history, stop callers and remove the caller-selected state
+directory (or `/var/lib/qurbrix-hwinfo`) as its owning user. Do not delete the
+database separately from `reports/`; integrity checks intentionally reject that
+split state. Automatic bounded retention is described below in the maintenance
+commands once enabled.
 
 ## Integration Contract
 
