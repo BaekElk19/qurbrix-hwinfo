@@ -1,0 +1,11 @@
+run,serial_ms,parallel_ms,improvement_percent,status_equal,device_count_equal,warning_count_equal,cache_hits,peak_external
+1,6490,2075,68.03,true,true,true,47,4
+2,6350,2150,66.14,true,true,true,47,4
+3,6319,2144,66.07,true,true,true,47,4
+4,6336,2142,66.19,true,true,true,47,4
+5,6335,2153,66.01,true,true,true,47,4
+6,6367,2144,66.33,true,true,true,47,4
+7,6339,2139,66.26,true,true,true,47,4
+8,6328,2068,67.32,true,true,true,47,4
+9,6315,2157,65.84,true,true,true,47,4
+10,6342,2144,66.19,true,true,true,47,4

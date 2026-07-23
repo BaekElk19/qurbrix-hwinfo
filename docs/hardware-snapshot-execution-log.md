@@ -128,3 +128,12 @@ phase G release validation.
   exited 101 because `?` was applied to a borrowed `Option<&str>` in the
   canonical record iterator. Replaced it with explicit `as_ref().and_then`,
   added canonicalizer regression coverage, and reran the targeted gates.
+- Phase D test attempt 1: the chained source-cache/collector test command reached
+  `cargo test -p hw-collect --test execution` and exited 101 because the new
+  integration test implemented the async source trait without declaring the
+  direct `async-trait` dev dependency. Added the workspace dev dependency and
+  reran both dedicated test suites.
+- Phase D test attempt 2: `cargo test -p hw-collect --test execution` exited 101
+  because the performance fixture asserted a cache hit although its selected
+  probes did not request the same command. Kept the performance assertion
+  focused on latency and added a dedicated PCI/GPU `lspci` dedup regression test.
