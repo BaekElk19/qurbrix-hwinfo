@@ -101,7 +101,7 @@ cargo test --workspace
 | `list-kinds` | 否        | 列出扫描器支持的所有设备类别                | 文本或 JSON                           |
 | `schema`     | 否        | 打印扫描输出的 schema 版本                  | JSON 或文本                           |
 | `sources`    | 否        | 打印当前为空的 source 列表                  | JSON                                  |
-| `snapshot`   | 否 | 查询、保留、对比或导出硬件快照              | 稳定 JSON                             |
+| `snapshot`   | 否* | 查询、保留、对比或导出硬件快照              | 稳定 JSON                             |
 
 通用参数：`qurbrix-hw --help`、`qurbrix-hw <command> --help`、`qurbrix-hw --version`。
 
@@ -125,6 +125,8 @@ sudo qurbrix-hw scan --format json --pretty
 - `--timeout 30s`：单个 source 的超时
 - `--state-dir <path>`：库存状态目录，默认 `/var/lib/qurbrix-hwinfo`
 - `--force`：忽略可复用快照，执行唯一的全量采集器
+- `--no-optional-sources`：跳过非核心可选探针（monitor/audio/bluetooth/input/camera/battery/printer/cdrom/usb）
+- `--timeout` 也会约束 quick probe（上限 5s）
 - `--no-sources`：不在报告中输出原始 `sources` 段
 - `--no-warnings`：抑制非致命 warning
 
@@ -271,8 +273,11 @@ qurbrix-hw sources            # -> {"sources":[]}
 /var/lib/qurbrix-hwinfo/reports/<snapshot_id>.json
 ```
 
-目录权限为 `0700`，数据库和报告 artifact 权限为 `0600`。测试、容器或由调用方
-管理的目录可使用 `--state-dir /controlled/path` 覆盖。完整 `ScanReport` 以不可变、
+目录权限为 `0700`，数据库和报告 artifact 权限为 `0600`。默认路径通常由 root
+在首次特权扫描时创建并持有，因此普通用户对默认目录执行 `snapshot` 会因权限失败。
+测试、容器或由调用方管理的目录可使用 `--state-dir /controlled/path` 覆盖（调用者
+须能打开该目录与 SQLite 数据库）。当状态目录对调用者可读时，`snapshot` 本身不需要
+root。完整 `ScanReport` 以不可变、
 SHA-256 校验的 JSON artifact 保存；SQLite 只保存关系化查询投影，不保存完整
 report/device JSON blob。
 

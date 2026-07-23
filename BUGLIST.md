@@ -29,15 +29,14 @@ Status: **DONE** (2026-07-24)
 
 Status: **DONE** (2026-07-24)
 
-Locations: `crates/hw-inventory/src/service.rs`
-
-Fix: finish the open quick probe as failed with inventory.lease_timeout before
-returning LeaseTimeout.
-Regression: `lease_timeout_marks_quick_probe_failed`.
-
 ### Snapshot commands are documented as non-root but fail with the default state directory
 
-Status: open
+Status: **DONE** (2026-07-24)
+
+Locations: `README.md`, `README.zh-CN.md`
+
+Fix: document that default state dir is root-owned after privileged scans and
+that non-root snapshot use needs a readable `--state-dir`.
 
 ### CLI `--timeout` does not constrain quick probes
 

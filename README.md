@@ -112,7 +112,7 @@ At a glance:
 | `list-kinds` | no    | List every device kind the scanner knows        | Text or JSON        |
 | `schema`     | no    | Print the scan output schema version            | JSON or text        |
 | `sources`    | no    | Print the currently empty source list           | JSON                |
-| `snapshot`   | no | Query, retain, diff, or export snapshots | Stable JSON         |
+| `snapshot`   | no* | Query, retain, diff, or export snapshots | Stable JSON         |
 
 Global: `qurbrix-hw --help`, `qurbrix-hw <command> --help`, `qurbrix-hw --version`.
 
@@ -131,9 +131,10 @@ Flags:
   - `summary-json` — same counts as `summary` command in JSON
 - `--pretty` — pretty-print `json` and `typed-json` output
 - `--kind <k>` / `--exclude-kind <k>` — repeatable; e.g. `--kind cpu --kind memory`
-- `--timeout 30s` — per-source timeout
+- `--timeout 30s` — per-source timeout; also bounds the quick probe (capped at 5s)
 - `--state-dir <path>` — inventory state directory (default `/var/lib/qurbrix-hwinfo`)
 - `--force` — bypass a reusable snapshot and run the one full collector
+- `--no-optional-sources` — skip optional probes (monitor/audio/bluetooth/input/camera/battery/printer/cdrom/usb)
 - `--no-sources` — omit the raw `sources` block from the report
 - `--no-warnings` — suppress non-fatal warnings
 
@@ -278,8 +279,12 @@ The default state directory is `/var/lib/qurbrix-hwinfo`:
 ```
 
 Directories use mode `0700`; the database and report artifacts use `0600`.
-Use `--state-dir /controlled/path` for tests, containers, or a caller-owned
-directory. The complete `ScanReport` is an immutable SHA-256-checked artifact;
+The default path is typically created and owned by root after the first
+privileged scan, so non-root `snapshot` commands against the default directory
+will fail with a permission error. Use `--state-dir /controlled/path` for tests,
+containers, or a caller-owned directory (the process user must be able to open
+that directory and the SQLite database). Snapshot commands themselves do not
+require root when the state directory is readable by the caller. The complete `ScanReport` is an immutable SHA-256-checked artifact;
 SQLite contains normalized query tables and never a report/device JSON blob.
 
 ```bash
