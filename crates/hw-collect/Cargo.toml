@@ -7,10 +7,12 @@ publish.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+futures = { workspace = true }
 hw-model = { path = "../hw-model" }
 hw-probe = { path = "../hw-probe" }
 hw-source = { path = "../hw-source" }
 tokio = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 hw-source = { path = "../hw-source" }
