@@ -19,16 +19,16 @@ Status: **DONE** (2026-07-24)
 
 Status: **DONE** (2026-07-24)
 
-Locations: `crates/hw-cli/src/args.rs`, `crates/hw-cli/src/main.rs`,
-`crates/hw-collect/src/collector.rs`
-
-Fix: restore `--no-optional-sources` and skip non-core optional probes when set.
-
 ## P2
 
 ### Full probe history remains `running` when publication fails
 
-Status: open
+Status: **DONE** (2026-07-24)
+
+Locations: `crates/hw-inventory/src/service.rs`
+
+Fix: mark full probe failed on every publish/canonicalization error path.
+Regression: `publish_failure_marks_full_probe_failed`.
 
 ### Lease timeout leaves the quick probe history `running`
 
