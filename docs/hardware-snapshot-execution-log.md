@@ -35,8 +35,8 @@ validation includes an automated declaration and dependency-license audit.
 |---|---|---|---|
 | A | 0.2.0-alpha.1 | complete | `184d1a4` |
 | B | 0.2.0-alpha.2 | complete | `d7958d8` |
-| C | 0.2.0-alpha.3 | in progress | not created |
-| D | 0.2.0-alpha.4 | pending | not created |
+| C | 0.2.0-alpha.3 | complete | `993efcf` |
+| D | 0.2.0-alpha.4 | in progress | not created |
 | E | 0.2.0-beta.1 | pending | not created |
 | F | 0.2.0-rc.1 | pending | not created |
 | G | 0.2.0 | pending | not created |
@@ -100,6 +100,37 @@ validation includes an automated declaration and dependency-license audit.
 - Dependency/runtime audit: quick probe imports only existing probe/source APIs,
   executes a finite awaited sequence, and has no udev/netlink listener, daemon,
   monitor dependency, detached task or active source call after return.
+
+## Phase D Evidence
+
+- Source cache/semaphore/cancellation: `5125c4a`; deterministic probe execution:
+  `a62063f`; tests/benchmarks: `d06f319`; graph and initial measurements:
+  `ebf4eda`; prepared-statement batching: `b7a2aca`; single-core evidence:
+  `723b920`.
+- Dedicated gates: `cargo test -p hw-source --test cache` PASS (3 tests),
+  `cargo test -p hw-collect` PASS (13 tests including 6 execution tests),
+  `cargo test -p hw-inventory --test store` PASS (9 tests), and targeted clippy
+  with warnings denied PASS.
+- Fixture gates prove serial/concurrent report equality after excluding elapsed
+  measurement, command peak enforcement, same-scan `lspci` dedup, preserved kind
+  filters, deadline cancellation with zero residual source calls, and more than
+  25% delayed-fixture speedup.
+- Real-machine 10-round paired P95: serial 6490 ms, concurrent 2157 ms, a 66.76%
+  reduction. Every round preserved scan status, device count and warning count;
+  each concurrent run had 47 cache hits and peak external concurrency 4. Raw
+  data: `docs/hardware-snapshot-full-scan-performance.csv`.
+- Resource-constrained command ceiling 1: 10 rounds at 5433-5452 ms, peak exactly
+  1, which is 13.96% faster than the regular serial median and therefore does not
+  exceed the 10% regression limit. Raw data:
+  `docs/hardware-snapshot-constrained-performance.csv`.
+- True single-core validation used `taskset -c 0
+  target/debug/examples/scan_performance 10`. Serial P95 was 5060 ms and
+  concurrent P95 was 4328 ms (14.47% faster); all equivalence columns passed.
+  Raw data: `docs/hardware-snapshot-single-core-performance.csv`.
+- Correctness remains dominant: only explicit read-only commands are cached,
+  merge order remains the original probe order, command children are
+  `kill_on_drop`, and SQLite publication still occurs outside scanning in one
+  short transaction using cached prepared statements.
 
 ## Performance Evidence
 
