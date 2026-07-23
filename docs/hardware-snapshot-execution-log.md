@@ -39,7 +39,7 @@ validation includes an automated declaration and dependency-license audit.
 | D | 0.2.0-alpha.4 | complete | `0be142d` |
 | E | 0.2.0-beta.1 | complete | `e81c4db` |
 | F | 0.2.0-rc.1 | complete | `ab6bebd` |
-| G | 0.2.0 | release validation complete | version checkpoint pending |
+| G | 0.2.0 | complete | `d8ae8f5` |
 
 ## Baseline Gates
 
@@ -211,6 +211,30 @@ validation includes an automated declaration and dependency-license audit.
   workspace version/license declarations, complete locked license metadata,
   rejection of GPL-family-only expressions, monitor/udev/netlink dependency
   absence, runtime-file absence, whitespace and phase-A contract evidence.
+- Final 0.2.0 gates after checkpoint `d8ae8f5`: all four unified gates PASS;
+  `scripts/check-hardware-snapshot-release.sh 0.2.0` PASS; and `cargo build
+  --release --locked --offline` PASS. The final release binary is 12,944,464
+  bytes.
+
+## Final Delivery Audit
+
+- Workspace and all 11 local package entries in `Cargo.lock`: `0.2.0`.
+- Final version checkpoint: `d8ae8f5` (`chore(release): bump workspace version
+  to 0.2.0`).
+- Final evidence commit: the commit resolved by `v0.2.0^{commit}`; the annotated
+  local tag is created only after this log is committed.
+- Final unified gates, phase-G dedicated gates, 22 acceptance criteria, release
+  checker and release build: PASS.
+- Repository scan excludes `target/` and confirms no `.db`, `.db-wal`,
+  `.db-shm` or `.tmp` runtime artifact in the tracked work area.
+- License remains `MIT OR Apache-2.0`; no GPL-derived code or GPL-family-only
+  locked dependency is present, so no repository relicensing is required.
+- No push, pull request, crate publication or release publication was performed;
+  no real `/var/lib/qurbrix-hwinfo` path or repository-external system state was
+  modified.
+- Non-blocking environment limit: only `x86_64-unknown-linux-gnu` is installed
+  locally. Other target builds remain delegated to the existing CI matrix;
+  architecture-independent fixture and contract tests pass locally.
 
 ## Performance Evidence
 
