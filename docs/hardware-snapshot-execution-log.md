@@ -33,8 +33,8 @@ validation includes an automated declaration and dependency-license audit.
 
 | Phase | Version | Status | Checkpoint |
 |---|---|---|---|
-| A | 0.2.0-alpha.1 | in progress | not created |
-| B | 0.2.0-alpha.2 | pending | not created |
+| A | 0.2.0-alpha.1 | complete | `184d1a4` |
+| B | 0.2.0-alpha.2 | in progress | not created |
 | C | 0.2.0-alpha.3 | pending | not created |
 | D | 0.2.0-alpha.4 | pending | not created |
 | E | 0.2.0-beta.1 | pending | not created |
@@ -55,6 +55,30 @@ validation includes an automated declaration and dependency-license audit.
 - Artifact format: canonical UTF-8 JSON with SHA-256 metadata and same-filesystem
   atomic rename.
 - Public identifiers: UUIDv7 serialized as lowercase hyphenated text.
+
+## Phase A Evidence
+
+- Inputs: accepted ADR, field mapping, state transition matrix, two SHA-256
+  golden vectors and ten real-machine serial samples.
+- Implementation: `cceb861`; tests: `a254efd`; docs: `be572e8`;
+  checkpoint: `184d1a4`.
+- Dedicated gates: `bash scripts/verify-hardware-snapshot-contract.sh` PASS;
+  `cargo test --test hardware_snapshot_contract` PASS (4 tests).
+- Unified gates: fmt, workspace all-target check, clippy with warnings denied and
+  workspace tests all PASS after the formatting retry recorded below.
+
+## Phase B Evidence
+
+- Migration/schema commit: `332dd7e`; store/artifact implementation: `259e9ba`;
+  tests: `7d92f7c` (format-only follow-ups `d5a87f2`, `3182689`).
+- `cargo test -p hw-inventory`: PASS (10 tests: 1 unit, 9 integration).
+- `cargo clippy -p hw-inventory --all-targets -- -D warnings`: PASS.
+- The tests cover migration idempotence and V0 upgrade, future-version refusal,
+  WAL/foreign keys/indexes, immutable rows, typed property projection, pagination,
+  artifact round-trip, same-size tampering, missing files, transaction rollback,
+  temporary/renamed orphan recovery, path traversal and mode 0700/0600.
+- SQLite work is isolated in `spawn_blocking`; the complete report exists only as
+  an immutable checked JSON artifact, while database queries use relation tables.
 
 ## Performance Evidence
 
