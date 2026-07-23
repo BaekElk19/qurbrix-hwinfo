@@ -103,3 +103,7 @@ phase G release validation.
 - Phase A checkpoint attempt 1: `cargo fmt --all -- --check` exited 1 because
   rustfmt condensed `IdentityCoverage::core_complete`. Root cause was source
   formatting only; applied `cargo fmt --all`, then reran the full phase gates.
+- Phase C implementation attempt 1: `cargo check -p hw-inventory --all-targets`
+  exited 101 because `?` was applied to a borrowed `Option<&str>` in the
+  canonical record iterator. Replaced it with explicit `as_ref().and_then`,
+  added canonicalizer regression coverage, and reran the targeted gates.
