@@ -6,6 +6,7 @@ pub mod id;
 pub mod kind;
 pub mod properties;
 pub mod report;
+pub mod snapshot;
 
 pub use bus::*;
 pub use device::*;
@@ -15,3 +16,4 @@ pub use id as device_id;
 pub use kind::*;
 pub use properties::*;
 pub use report::*;
+pub use snapshot::*;
