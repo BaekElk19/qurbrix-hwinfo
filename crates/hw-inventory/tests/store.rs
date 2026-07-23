@@ -1,8 +1,8 @@
 use hw_inventory::{InventoryError, InventoryStore, PageRequest};
 use hw_model::{
     CoreIdentityGroup, Device, DeviceKind, DeviceProperties, IdentityCoverage, QuickProbeReport,
-    ScanReport, ScanStatus, SnapshotId, SystemDeviceInfo, BINDID_V2_ALGORITHM,
-    FINGERPRINT_VERSION, SNAPSHOT_SCHEMA_VERSION,
+    ScanReport, ScanStatus, SnapshotId, SystemDeviceInfo, BINDID_V2_ALGORITHM, FINGERPRINT_VERSION,
+    SNAPSHOT_SCHEMA_VERSION,
 };
 use rusqlite::Connection;
 use std::{fs, path::Path};
@@ -63,7 +63,9 @@ async fn open_temp() -> (TempDir, InventoryStore) {
 
 fn db(path: &Path) -> Connection {
     let connection = Connection::open(path.join("qurbrix_hwinfo.db")).unwrap();
-    connection.pragma_update(None, "foreign_keys", "ON").unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
     connection
 }
 
@@ -77,7 +79,9 @@ async fn migration_is_idempotent_and_has_required_schema() {
         .unwrap();
     assert_eq!(version, 1);
     let migration_count: i64 = connection
-        .query_row("SELECT count(*) FROM schema_migration", [], |row| row.get(0))
+        .query_row("SELECT count(*) FROM schema_migration", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(migration_count, 1);
 
@@ -127,7 +131,10 @@ async fn publishes_projection_and_verified_artifact_atomically() {
         .publish_snapshot(expected_report.clone(), probe())
         .await
         .unwrap();
-    assert_eq!(store.load_scan_report(id).await.unwrap(), Some(expected_report));
+    assert_eq!(
+        store.load_scan_report(id).await.unwrap(),
+        Some(expected_report)
+    );
     let stored = store.load_snapshot(id).await.unwrap().unwrap();
     assert_eq!(stored.snapshot_id, id);
     assert_eq!(stored.device_count, 1);
@@ -202,13 +209,20 @@ async fn transaction_failure_preserves_current_and_removes_new_artifact() {
         .unwrap();
     assert_eq!(current, first.to_string());
     let snapshots: i64 = connection
-        .query_row("SELECT count(*) FROM hardware_snapshot", [], |row| row.get(0))
+        .query_row("SELECT count(*) FROM hardware_snapshot", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(snapshots, 1);
     let reports = fs::read_dir(temp.path().join("reports"))
         .unwrap()
         .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|value| value == "json"))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|value| value == "json")
+        })
         .count();
     assert_eq!(reports, 1);
 }
@@ -250,9 +264,15 @@ async fn foreign_keys_indexes_and_immutability_are_enforced() {
 async fn detects_same_size_artifact_tampering_and_missing_files() {
     let (temp, store) = open_temp().await;
     let first = store.publish_snapshot(report(), probe()).await.unwrap();
-    let first_path = temp
-        .path()
-        .join(store.load_snapshot(first).await.unwrap().unwrap().artifact.relative_path);
+    let first_path = temp.path().join(
+        store
+            .load_snapshot(first)
+            .await
+            .unwrap()
+            .unwrap()
+            .artifact
+            .relative_path,
+    );
     let mut bytes = fs::read(&first_path).unwrap();
     bytes[0] ^= 1;
     fs::write(&first_path, bytes).unwrap();
@@ -262,9 +282,15 @@ async fn detects_same_size_artifact_tampering_and_missing_files() {
     ));
 
     let second = store.publish_snapshot(report(), probe()).await.unwrap();
-    let second_path = temp
-        .path()
-        .join(store.load_snapshot(second).await.unwrap().unwrap().artifact.relative_path);
+    let second_path = temp.path().join(
+        store
+            .load_snapshot(second)
+            .await
+            .unwrap()
+            .unwrap()
+            .artifact
+            .relative_path,
+    );
     fs::remove_file(second_path).unwrap();
     assert!(matches!(
         store.load_scan_report(second).await.unwrap_err(),
@@ -277,7 +303,11 @@ async fn startup_recovers_temp_and_renamed_orphan_artifacts() {
     let (temp, store) = open_temp().await;
     let reports = temp.path().join("reports");
     fs::write(reports.join(".crashed.snapshot.tmp"), b"partial").unwrap();
-    fs::write(reports.join("01900000-0000-7000-8000-000000000000.json"), b"{}").unwrap();
+    fs::write(
+        reports.join("01900000-0000-7000-8000-000000000000.json"),
+        b"{}",
+    )
+    .unwrap();
     fs::create_dir(reports.join("ignored-directory.json")).unwrap();
     assert_eq!(store.recover_orphan_artifacts().await.unwrap(), 2);
     assert!(reports.join("ignored-directory.json").is_dir());
@@ -290,9 +320,16 @@ async fn state_permissions_are_private() {
 
     let (temp, store) = open_temp().await;
     store.publish_snapshot(report(), probe()).await.unwrap();
-    assert_eq!(fs::metadata(temp.path()).unwrap().permissions().mode() & 0o777, 0o700);
     assert_eq!(
-        fs::metadata(store.database_path()).unwrap().permissions().mode() & 0o777,
+        fs::metadata(temp.path()).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(store.database_path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
         0o600
     );
     let report_path = fs::read_dir(temp.path().join("reports"))
@@ -300,7 +337,10 @@ async fn state_permissions_are_private() {
         .find_map(Result::ok)
         .unwrap()
         .path();
-    assert_eq!(fs::metadata(report_path).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(
+        fs::metadata(report_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 }
 
 #[tokio::test]
@@ -322,7 +362,10 @@ async fn snapshot_listing_filters_by_machine_and_pages() {
         .unwrap();
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].snapshot_id, first);
-    let all = store.list_snapshots(None, PageRequest::default()).await.unwrap();
+    let all = store
+        .list_snapshots(None, PageRequest::default())
+        .await
+        .unwrap();
     assert_eq!(all.len(), 2);
     assert!(all.iter().any(|snapshot| snapshot.snapshot_id == second));
 }
