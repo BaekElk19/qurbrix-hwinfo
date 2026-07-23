@@ -168,3 +168,11 @@ phase G release validation.
   because the performance fixture asserted a cache hit although its selected
   probes did not request the same command. Kept the performance assertion
   focused on latency and added a dedicated PCI/GPU `lspci` dedup regression test.
+- Phase E test attempt 1: `cargo test -p hw-inventory --test service` exited 101
+  at compile time because the optional quick report was moved into the leased
+  full-scan helper before probe-history finalization. Changed the helper to
+  borrow the report, preserving one canonical observation across both paths.
+- Phase E targeted gate attempt 2: clippy exited 101 on a derivable `Default`
+  implementation and `unwrap_or_else(BTreeSet::new)`. Applied the exact clippy
+  recommendations (`derive(Default)`, `unwrap_or_default`) and reran clippy plus
+  the full inventory test suite.
