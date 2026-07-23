@@ -272,6 +272,10 @@ qurbrix-hw snapshot show 01900000-0000-7000-8000-000000000000 --pretty
 qurbrix-hw snapshot list --limit 30 --offset 0
 qurbrix-hw snapshot diff <from-snapshot-id> <to-snapshot-id>
 qurbrix-hw snapshot export <snapshot-id> --output ./scan-report.json
+qurbrix-hw snapshot health --pretty
+qurbrix-hw snapshot prune --dry-run
+qurbrix-hw snapshot pin <snapshot-id>
+qurbrix-hw snapshot mark-uploaded <snapshot-id>
 ```
 
 `ensure` defaults to a 24-hour TTL and publishes a partial scan only when the
@@ -297,11 +301,18 @@ assert_eq!(snapshot.device_count as usize, report.devices.len());
 # Ok(()) }
 ```
 
+Automatic retention keeps the current snapshot, every pinned or unuploaded
+snapshot, and the newest 30 snapshots for each machine bind ID. `snapshot prune`
+may delete only uploaded snapshots older than 90 days and outside that recent
+window. Preview with `--dry-run`; adjust `--keep-recent` and `--max-age` when a
+different bound is required. Artifact deletion failures remain in a retry queue.
+`snapshot health` runs SQLite integrity/foreign-key checks, verifies every
+artifact, reports orphans and metrics, and performs a passive WAL checkpoint.
+
 To remove all local history, stop callers and remove the caller-selected state
 directory (or `/var/lib/qurbrix-hwinfo`) as its owning user. Do not delete the
 database separately from `reports/`; integrity checks intentionally reject that
-split state. Automatic bounded retention is described below in the maintenance
-commands once enabled.
+split state.
 
 ## Integration Contract
 

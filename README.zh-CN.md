@@ -278,6 +278,10 @@ qurbrix-hw snapshot show 01900000-0000-7000-8000-000000000000 --pretty
 qurbrix-hw snapshot list --limit 30 --offset 0
 qurbrix-hw snapshot diff <旧-snapshot-id> <新-snapshot-id>
 qurbrix-hw snapshot export <snapshot-id> --output ./scan-report.json
+qurbrix-hw snapshot health --pretty
+qurbrix-hw snapshot prune --dry-run
+qurbrix-hw snapshot pin <snapshot-id>
+qurbrix-hw snapshot mark-uploaded <snapshot-id>
 ```
 
 `ensure` 默认 TTL 为 24 小时；partial 只有在核心身份完整时才发布。严格调用方可加
@@ -301,9 +305,15 @@ assert_eq!(snapshot.device_count as usize, report.devices.len());
 # Ok(()) }
 ```
 
+自动保留规则保护当前快照、所有 pinned 或未上传快照，以及每个 machine bind ID
+最近 30 个快照。`snapshot prune` 只能清理超过 90 天且不在最近窗口内的已上传快照；
+先用 `--dry-run` 预览，需要其他边界时使用 `--keep-recent` 和 `--max-age`。artifact
+删除失败会进入可重试队列。`snapshot health` 会执行 SQLite 完整性/外键检查、逐个
+校验 artifact、报告孤儿与指标，并执行被动 WAL checkpoint。
+
 如需删除全部本地历史，先停止调用方，再以目录所有者身份删除所选 state directory
 （或默认 `/var/lib/qurbrix-hwinfo`）。不要只删除数据库或只删除 `reports/`，完整性
-检查会有意拒绝这种分裂状态。维护命令启用后，自动有界保留规则见相应说明。
+检查会有意拒绝这种分裂状态。
 
 ## 集成合约
 
