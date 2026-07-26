@@ -21,6 +21,8 @@ use std::{
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const INITIAL_MIGRATION: &str = include_str!("../migrations/0001_initial.sql");
+pub(crate) const SCAN_LEASE_DURATION: std::time::Duration = std::time::Duration::from_secs(2 * 60);
+const STALE_PROBE_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone)]
 pub struct InventoryStore {
@@ -54,11 +56,26 @@ impl InventoryStore {
         report: ScanReport,
         probe: QuickProbeReport,
     ) -> Result<SnapshotId> {
+        let owner_id = SnapshotId::new_v7().to_string();
+        if !self
+            .try_acquire_lease(owner_id.clone(), SCAN_LEASE_DURATION)
+            .await?
+        {
+            return Err(InventoryError::LeaseTimeout);
+        }
         let store = self.clone();
-        tokio::task::spawn_blocking(move || {
-            store.publish_sync(report, probe.clone(), probe, None, None)
+        let lease_owner_id = owner_id.clone();
+        let publish_result = tokio::task::spawn_blocking(move || {
+            store.publish_sync(report, probe.clone(), probe, None, Some(lease_owner_id))
         })
-        .await?
+        .await
+        .map_err(InventoryError::from)
+        .and_then(|result| result);
+        let release_result = self.release_lease(owner_id).await;
+        match (publish_result, release_result) {
+            (Ok(snapshot_id), Ok(())) => Ok(snapshot_id),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        }
     }
 
     pub async fn publish_snapshot_for_probe(
@@ -226,6 +243,11 @@ impl InventoryStore {
             .await?
     }
 
+    pub(crate) async fn active_lease(&self) -> Result<Option<(String, String)>> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || store.active_lease_sync()).await?
+    }
+
     fn initialize(&self) -> Result<()> {
         artifact::ensure_private_directory(&self.state_dir)?;
         let connection = self.connect()?;
@@ -240,7 +262,7 @@ impl InventoryStore {
         )?;
         connection.pragma_update(None, "user_version", 1)?;
         artifact::ensure_private_file(&self.db_path)?;
-        self.recover_stale_sync(std::time::Duration::from_secs(10 * 60))?;
+        self.recover_stale_sync(STALE_PROBE_AGE)?;
         self.recover_orphans_sync()?;
         Ok(())
     }
@@ -552,8 +574,8 @@ impl InventoryStore {
         let now_text = now
             .format(&Rfc3339)
             .map_err(|_| InventoryError::InvalidReport("UTC timestamp formatting failed"))?;
-        let seconds = i64::try_from(lease_duration.as_secs()).unwrap_or(i64::MAX);
-        let expires = (now + time::Duration::seconds(seconds))
+        let duration = precise_duration(lease_duration);
+        let expires = (now + duration)
             .format(&Rfc3339)
             .map_err(|_| InventoryError::InvalidReport("lease timestamp formatting failed"))?;
         transaction.execute("DELETE FROM scan_lease WHERE expires_at <= ?1", [&now_text])?;
@@ -583,8 +605,8 @@ impl InventoryStore {
         let now_text = now
             .format(&Rfc3339)
             .map_err(|_| InventoryError::InvalidReport("UTC timestamp formatting failed"))?;
-        let seconds = i64::try_from(lease_duration.as_secs()).unwrap_or(i64::MAX);
-        let expires = (now + time::Duration::seconds(seconds))
+        let duration = precise_duration(lease_duration);
+        let expires = (now + duration)
             .format(&Rfc3339)
             .map_err(|_| InventoryError::InvalidReport("lease timestamp formatting failed"))?;
         let updated = connection.execute(
@@ -594,20 +616,44 @@ impl InventoryStore {
         Ok(updated == 1)
     }
 
-    fn recover_stale_sync(&self, age: std::time::Duration) -> Result<()> {
+    fn active_lease_sync(&self) -> Result<Option<(String, String)>> {
         let connection = self.connect()?;
+        let now = now_rfc3339()?;
+        connection
+            .query_row(
+                "SELECT owner_id, expires_at FROM scan_lease WHERE id = 1 AND expires_at > ?1",
+                [now],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn recover_stale_sync(&self, age: std::time::Duration) -> Result<()> {
+        let mut connection = self.connect()?;
+        let transaction =
+            connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let seconds = i64::try_from(age.as_secs()).unwrap_or(i64::MAX);
-        let cutoff = (OffsetDateTime::now_utc() - time::Duration::seconds(seconds))
+        let now = OffsetDateTime::now_utc();
+        let now_text = now
             .format(&Rfc3339)
             .map_err(|_| InventoryError::InvalidReport("recovery timestamp formatting failed"))?;
-        connection.execute(
-            "UPDATE probe_history SET finished_at = ?1, status = 'failed', error_code = 'inventory.process_interrupted', error_message = 'stale running probe recovered' WHERE status = 'running' AND started_at < ?2",
-            params![now_rfc3339()?, cutoff],
+        let cutoff = (now - time::Duration::seconds(seconds))
+            .format(&Rfc3339)
+            .map_err(|_| InventoryError::InvalidReport("recovery timestamp formatting failed"))?;
+        transaction.execute("DELETE FROM scan_lease WHERE expires_at <= ?1", [&now_text])?;
+        let active_lease: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM scan_lease WHERE id = 1 AND expires_at > ?1)",
+            [&now_text],
+            |row| row.get(0),
         )?;
-        connection.execute(
-            "DELETE FROM scan_lease WHERE expires_at <= ?1",
-            [now_rfc3339()?],
-        )?;
+        if !active_lease {
+            transaction.execute(
+                "UPDATE probe_history SET finished_at = ?1, status = 'failed', error_code = 'inventory.process_interrupted', error_message = 'stale running probe recovered' WHERE status = 'running' AND started_at < ?2",
+                params![now_text, cutoff],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 }
@@ -616,6 +662,11 @@ fn now_rfc3339() -> Result<String> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(|_| InventoryError::InvalidReport("UTC timestamp formatting failed"))
+}
+
+fn precise_duration(duration: std::time::Duration) -> time::Duration {
+    let seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
+    time::Duration::seconds(seconds) + time::Duration::nanoseconds(duration.subsec_nanos().into())
 }
 
 fn redact_error(message: &str) -> String {

@@ -1,6 +1,6 @@
 # Hardware Collection Call Graph
 
-This is the production collection boundary for v0.2.2. Tests may provide an
+This is the production collection boundary for v0.2.3. Tests may provide an
 `InventoryScanner` fake, but do not add another production collection path.
 
 ```text
@@ -15,7 +15,7 @@ qurbrix-hw scan / summary / table / bindid
 quick_probe                RealInventoryScanner::full_scan
 hw-inventory::probe                  |
        |                              v
-       |                    hw-collect::collect_scan_report
+       |              hw-collect::collect_scan_report_with_options
        |                              |
        |                              v
        |                       hw-probe -> hw-parser -> hw-source
@@ -31,7 +31,7 @@ hw-inventory::probe                  |
 | `bindid` | `observe_inventory` | No | Derives SHA-1 business ID from observation | Yes | Keep |
 | `snapshot` query/maintenance | Store query APIs | No | Loads verified stored report when needed | As requested | Keep |
 | `quick_probe` | `hw-inventory::probe::quick_probe` | Yes, limited identity sources | No | Probe history only | Keep |
-| `RealInventoryScanner::full_scan` | `hw-collect::collect_scan_report` | Indirectly | Yes | Via observer | Keep |
+| `RealInventoryScanner::full_scan` | `hw-collect::collect_scan_report_with_options` | Indirectly | Yes | Via observer | Keep |
 | `hw-collect::collect_scan_report` | Probe graph | Indirectly | Yes | No | Keep as the sole collector |
 | Former `snapshot ensure` | Removed | N/A | N/A | N/A | Delete |
 | Former bindid collector | Removed | N/A | N/A | N/A | Delete |

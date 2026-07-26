@@ -73,7 +73,7 @@ the archive matching your machine:
 Verify and install:
 
 ```bash
-ARCHIVE="qurbrix-hw-0.2.2-x86_64-unknown-linux-gnu-glibc2.28" # choose from the table above
+ARCHIVE="qurbrix-hw-0.2.3-x86_64-unknown-linux-gnu-glibc2.28" # choose from the table above
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "${ARCHIVE}.tar.gz"
 sudo install -m 0755 "${ARCHIVE}/qurbrix-hw" /usr/local/bin/
@@ -130,13 +130,18 @@ Flags:
   - `typed-json` — internal Rust model shape (may change; not the stable contract)
   - `summary-json` — same counts as `summary` command in JSON
 - `--pretty` — pretty-print `json` and `typed-json` output
-- `--kind <k>` / `--exclude-kind <k>` — repeatable; e.g. `--kind cpu --kind memory`
-- `--timeout 30s` — per-source timeout; also bounds the quick probe (capped at 5s)
+- `--kind <k>` / `--exclude-kind <k>` — stdout filter only (repeatable);
+  inventory always full-updates
+- `--timeout 30s` — bounds every source and the full scan; the quick probe uses
+  the same timeout capped at 5s
 - `--state-dir <path>` — inventory state directory (default `/var/lib/qurbrix-hwinfo`)
 - `--force` — bypass a reusable snapshot and run the one full collector
-- `--no-optional-sources` — skip optional probes (monitor/audio/bluetooth/input/camera/battery/printer/cdrom/usb)
-- `--no-sources` — omit the raw `sources` block from the report
-- `--no-warnings` — suppress non-fatal warnings
+- `--no-optional-sources` — hide optional peripheral kinds from stdout only;
+  collection and storage stay full
+- `--no-sources` — omit the raw `sources` block from stdout only; stored
+  snapshots keep sources
+- `--no-warnings` — suppress non-fatal warnings from stdout only; stored
+  snapshots keep warnings
 
 Example (truncated):
 
@@ -302,8 +307,12 @@ qurbrix-hw snapshot mark-uploaded <snapshot-id>
 
 Every hardware-view command performs a quick probe and reuses a verified current
 snapshot for up to 24 hours. A changed fingerprint, `scan --force`, an expired
-snapshot, or a quick-probe failure invokes the one full collector. Partial scans
-are published only when the core identity contract is complete.
+snapshot, or a quick-probe failure invokes the one full collector. **Published
+snapshots are always complete inventories** — CLI `--kind` / `--exclude-kind` /
+`--no-sources` / `--no-warnings` / `--no-optional-sources` filter stdout only and
+never narrow collection or storage. Partial scans are published only when the
+core identity contract is complete. Filtered output keeps the observation's
+original status, even when no devices match or warnings are hidden.
 `export` refuses to replace an existing path unless `--overwrite` is supplied.
 All snapshot stdout documents use schema `qurbrix.hw.snapshot.cli.v1`; diagnostics
 go only to stderr. Snapshot exit codes are `0` success, `1` CLI/serialization,

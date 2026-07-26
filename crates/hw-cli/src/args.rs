@@ -160,17 +160,22 @@ pub struct ScanArgs {
     pub format: OutputFormat,
     #[arg(long)]
     pub pretty: bool,
+    /// Display filter only; inventory still collects and stores a complete snapshot.
     #[arg(long, value_parser = parse_kind)]
     pub kind: Vec<DeviceKind>,
+    /// Display filter only; inventory still collects and stores a complete snapshot.
     #[arg(long, value_parser = parse_kind)]
     pub exclude_kind: Vec<DeviceKind>,
+    /// Bound each source and the full scan; the quick probe is additionally capped at 5s.
     #[arg(long, default_value = "30s", value_parser = parse_duration)]
     pub timeout: Duration,
-    /// Skip optional hardware probes that are not required for core identity.
+    /// Hide optional peripheral kinds from stdout only. Collection and storage stay full.
     #[arg(long)]
     pub no_optional_sources: bool,
+    /// Omit the raw `sources` block from stdout only. Stored snapshots keep sources.
     #[arg(long)]
     pub no_sources: bool,
+    /// Suppress non-fatal warnings from stdout only. Stored snapshots keep warnings.
     #[arg(long)]
     pub no_warnings: bool,
 }
@@ -189,6 +194,7 @@ pub struct BindIdArgs {
     pub state_dir: PathBuf,
     #[arg(long)]
     pub pretty: bool,
+    /// Bound each source and the full scan; the quick probe is additionally capped at 5s.
     #[arg(long, default_value = "30s", value_parser = parse_duration)]
     pub timeout: Duration,
 }

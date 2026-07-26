@@ -2,6 +2,7 @@ use crate::{
     canonicalize_devices,
     error::{InventoryError, Result},
     probe::{quick_probe, QuickProbeConfig},
+    store::SCAN_LEASE_DURATION,
     InventoryState, InventoryStore, ProbeCompletion, ProbeKind,
 };
 use async_trait::async_trait;
@@ -9,10 +10,8 @@ use hw_model::{PartialPolicy, QuickProbeReport, ScanConfig, ScanReport, ScanStat
 use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-/// How long a full-scan holder may retain the exclusive lease between renewals.
-const LEASE_DURATION: Duration = Duration::from_secs(2 * 60);
-/// Waiters may wait as long as a healthy holder is allowed to keep the lease.
-const LEASE_WAIT_TIMEOUT: Duration = LEASE_DURATION;
+/// Maximum time without an acquisition or renewal before a waiter declares the lease stalled.
+const LEASE_STALL_TIMEOUT: Duration = SCAN_LEASE_DURATION;
 const LEASE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Renew the lease well before expiry so a slow healthy scan keeps ownership.
 const LEASE_RENEW_INTERVAL: Duration = Duration::from_secs(30);
@@ -41,9 +40,17 @@ impl InventoryScanner for RealInventoryScanner {
 }
 
 async fn full_scan(config: ScanConfig) -> Result<ScanReport> {
-    hw_collect::collect_scan_report(config)
+    let execution_options = inventory_execution_options(config.timeout);
+    hw_collect::collect_scan_report_with_options(config, execution_options)
         .await
         .map_err(|_| InventoryError::FullScanFailed)
+}
+
+fn inventory_execution_options(timeout: Duration) -> hw_collect::ScanExecutionOptions {
+    hw_collect::ScanExecutionOptions {
+        global_deadline: Some(timeout),
+        ..hw_collect::ScanExecutionOptions::default()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,7 +59,7 @@ pub struct ObserveInventoryOptions {
     pub scan_config: ScanConfig,
     pub max_snapshot_age: Option<Duration>,
     pub partial_policy: PartialPolicy,
-    /// Maximum time to wait for a peer's full-scan lease. Defaults to the lease duration.
+    /// Maximum time to wait without observing lease progress. Renewals reset this timeout.
     pub lease_wait_timeout: Option<Duration>,
 }
 
@@ -160,11 +167,12 @@ pub async fn observe_inventory_with_scanner(
     let open_quick_history = quick.as_ref().map(|_| quick_history);
 
     let owner_id = SnapshotId::new_v7().to_string();
-    let lease_wait_timeout = options.lease_wait_timeout.unwrap_or(LEASE_WAIT_TIMEOUT);
-    let lease_wait_started = std::time::Instant::now();
+    let lease_wait_timeout = options.lease_wait_timeout.unwrap_or(LEASE_STALL_TIMEOUT);
+    let mut observed_lease = None;
+    let mut lease_progress_started = std::time::Instant::now();
     loop {
         if store
-            .try_acquire_lease(owner_id.clone(), LEASE_DURATION)
+            .try_acquire_lease(owner_id.clone(), SCAN_LEASE_DURATION)
             .await?
         {
             break;
@@ -199,7 +207,12 @@ pub async fn observe_inventory_with_scanner(
                 .await;
             }
         }
-        if lease_wait_started.elapsed() >= lease_wait_timeout {
+        let active_lease = store.active_lease().await?;
+        if active_lease != observed_lease {
+            observed_lease = active_lease;
+            lease_progress_started = std::time::Instant::now();
+        }
+        if lease_progress_started.elapsed() >= lease_wait_timeout {
             if let Some(history) = open_quick_history {
                 let _ = store
                     .finish_probe(
@@ -443,9 +456,26 @@ async fn scan_with_lease_renewal(
     scanner: &dyn InventoryScanner,
     owner_id: &str,
 ) -> Result<ScanReport> {
+    scan_with_lease_policy(
+        store,
+        scanner,
+        owner_id,
+        SCAN_LEASE_DURATION,
+        LEASE_RENEW_INTERVAL,
+    )
+    .await
+}
+
+async fn scan_with_lease_policy(
+    store: &InventoryStore,
+    scanner: &dyn InventoryScanner,
+    owner_id: &str,
+    lease_duration: Duration,
+    renew_interval: Duration,
+) -> Result<ScanReport> {
     let scan = scanner.full_scan();
     tokio::pin!(scan);
-    let mut renew = tokio::time::interval(LEASE_RENEW_INTERVAL);
+    let mut renew = tokio::time::interval(renew_interval);
     renew.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // Skip the immediate first tick so we do not renew right after acquire.
     renew.tick().await;
@@ -454,7 +484,7 @@ async fn scan_with_lease_renewal(
             report = &mut scan => return report,
             _ = renew.tick() => {
                 if !store
-                    .renew_lease(owner_id.to_string(), LEASE_DURATION)
+                    .renew_lease(owner_id.to_string(), lease_duration)
                     .await?
                 {
                     return Err(InventoryError::StaleLease);
@@ -559,4 +589,59 @@ fn now_rfc3339() -> String {
 
 fn elapsed_ms(started: std::time::Instant) -> u64 {
     started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+
+    struct SlowScanner;
+
+    #[async_trait]
+    impl InventoryScanner for SlowScanner {
+        async fn quick_probe(&self) -> Result<QuickProbeReport> {
+            unreachable!("quick probe is not used by the lease renewal test")
+        }
+
+        async fn full_scan(&self) -> Result<ScanReport> {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            Err(InventoryError::FullScanFailed)
+        }
+    }
+
+    #[test]
+    fn inventory_full_scan_deadline_matches_source_timeout() {
+        let timeout = Duration::from_secs(7);
+        let options = inventory_execution_options(timeout);
+        assert_eq!(options.global_deadline, Some(timeout));
+    }
+
+    #[tokio::test]
+    async fn slow_scan_renews_lease_beyond_original_expiry() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = InventoryStore::open(temp.path()).await.unwrap();
+        let owner_id = "slow-owner".to_string();
+        let lease_duration = Duration::from_millis(50);
+        assert!(store
+            .try_acquire_lease(owner_id.clone(), lease_duration)
+            .await
+            .unwrap());
+
+        scan_with_lease_policy(
+            &store,
+            &SlowScanner,
+            &owner_id,
+            lease_duration,
+            Duration::from_millis(15),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(store
+            .renew_lease(owner_id.clone(), lease_duration)
+            .await
+            .unwrap());
+        store.release_lease(owner_id).await.unwrap();
+    }
 }

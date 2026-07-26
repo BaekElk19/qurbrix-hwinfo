@@ -266,6 +266,33 @@ async fn transaction_failure_preserves_current_and_removes_new_artifact() {
         })
         .count();
     assert_eq!(reports, 1);
+    assert!(store
+        .try_acquire_lease("after-failure".into(), std::time::Duration::from_secs(1))
+        .await
+        .unwrap());
+    store.release_lease("after-failure".into()).await.unwrap();
+}
+
+#[tokio::test]
+async fn direct_publication_respects_the_scan_lease() {
+    let (temp, store) = open_temp().await;
+    assert!(store
+        .try_acquire_lease("active-observer".into(), std::time::Duration::from_secs(60))
+        .await
+        .unwrap());
+
+    let error = store.publish_snapshot(report(), probe()).await.unwrap_err();
+    assert!(matches!(error, InventoryError::LeaseTimeout));
+    let connection = db(temp.path());
+    let snapshots: i64 = connection
+        .query_row("SELECT count(*) FROM hardware_snapshot", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(snapshots, 0);
+
+    store.release_lease("active-observer".into()).await.unwrap();
+    store.publish_snapshot(report(), probe()).await.unwrap();
 }
 
 #[tokio::test]

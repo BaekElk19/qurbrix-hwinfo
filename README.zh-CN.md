@@ -65,7 +65,7 @@ Qurbrix HW Info 是一组用于 Linux 硬件信息采集、解析、归一化和
 校验并安装：
 
 ```bash
-ARCHIVE="qurbrix-hw-0.2.2-x86_64-unknown-linux-gnu-glibc2.28" # 从上表选择
+ARCHIVE="qurbrix-hw-0.2.3-x86_64-unknown-linux-gnu-glibc2.28" # 从上表选择
 sha256sum -c SHA256SUMS --ignore-missing
 tar -xzf "${ARCHIVE}.tar.gz"
 sudo install -m 0755 "${ARCHIVE}/qurbrix-hw" /usr/local/bin/
@@ -121,13 +121,13 @@ sudo qurbrix-hw scan --format json --pretty
   - `typed-json`：Rust 内部模型形状（可能变更，非稳定合约）
   - `summary-json`：`summary` 命令的 JSON 版
 - `--pretty`：格式化 `json` 和 `typed-json` 输出
-- `--kind <k>` / `--exclude-kind <k>`：可重复，如 `--kind cpu --kind memory`
-- `--timeout 30s`：单个 source 的超时；同时约束 quick probe（上限 5s）
+- `--kind <k>` / `--exclude-kind <k>`：仅过滤 stdout（可重复）；库存始终全量更新入库
+- `--timeout 30s`：同时约束每个 source 和全量扫描；quick probe 使用同一超时且上限为 5s
 - `--state-dir <path>`：库存状态目录，默认 `/var/lib/qurbrix-hwinfo`
 - `--force`：忽略可复用快照，执行唯一的全量采集器
-- `--no-optional-sources`：跳过非核心可选探针（monitor/audio/bluetooth/input/camera/battery/printer/cdrom/usb）
-- `--no-sources`：不在报告中输出原始 `sources` 段
-- `--no-warnings`：抑制非致命 warning
+- `--no-optional-sources`：仅从 stdout 隐藏可选外设类别；采集与入库仍完整
+- `--no-sources`：仅从 stdout 省略 `sources`；已入库快照仍保留 sources
+- `--no-warnings`：仅从 stdout 抑制非致命 warning；已入库快照仍保留 warnings
 
 示例（截断）：
 
@@ -294,8 +294,11 @@ qurbrix-hw snapshot mark-uploaded <snapshot-id>
 ```
 
 每个硬件视图命令都会执行 quick probe，并在 24 小时内复用已验证的当前快照。指纹变化、
-`scan --force`、快照过期或 quick probe 失败时才调用唯一全量采集器。partial 只有在核心身份
-完整时才发布。`export` 默认拒绝覆盖已有文件，显式使用 `--overwrite` 才覆盖。
+`scan --force`、快照过期或 quick probe 失败时才调用唯一全量采集器。**入库快照始终是完整
+硬件清单**——CLI 的 `--kind` / `--exclude-kind` / `--no-sources` / `--no-warnings` /
+`--no-optional-sources` 只过滤 stdout，绝不缩小采集或存储。即使没有设备匹配或隐藏了
+warning，过滤后的输出仍保留底层观测状态。partial 只有在核心身份完整时才发布。
+`export` 默认拒绝覆盖已有文件，显式使用 `--overwrite` 才覆盖。
 所有 snapshot stdout JSON 使用 `qurbrix.hw.snapshot.cli.v1` schema，诊断只写
 stderr。退出码：`0` 成功、`1` CLI/序列化、`2` 扫描/策略失败、`4` 权限、
 `5` 未找到、`6` 存储/完整性、`124` 租约超时；旧命令退出码保持不变。

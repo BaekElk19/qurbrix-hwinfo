@@ -569,6 +569,50 @@ async fn startup_marks_old_running_probe_failed() {
     assert_eq!(code.as_deref(), Some("inventory.process_interrupted"));
 }
 
+#[tokio::test]
+async fn startup_preserves_old_running_probe_while_lease_is_active() {
+    let (temp, store) = store().await;
+    let id = store
+        .start_probe(hw_inventory::ProbeKind::Full, None)
+        .await
+        .unwrap();
+    let connection = Connection::open(store.database_path()).unwrap();
+    connection
+        .execute(
+            "UPDATE probe_history SET started_at = '1970-01-01T00:00:00Z' WHERE probe_id = ?1",
+            [id],
+        )
+        .unwrap();
+    drop(connection);
+    assert!(store
+        .try_acquire_lease("healthy-holder".into(), Duration::from_secs(60))
+        .await
+        .unwrap());
+
+    InventoryStore::open(temp.path()).await.unwrap();
+    let connection = Connection::open(store.database_path()).unwrap();
+    let status: String = connection
+        .query_row(
+            "SELECT status FROM probe_history WHERE probe_id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "running");
+    drop(connection);
+
+    store.release_lease("healthy-holder".into()).await.unwrap();
+    InventoryStore::open(temp.path()).await.unwrap();
+    let connection = Connection::open(store.database_path()).unwrap();
+    let status: String = connection
+        .query_row(
+            "SELECT status FROM probe_history WHERE probe_id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "failed");
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn stale_scan_cannot_overwrite_after_lease_expiry() {
@@ -581,12 +625,8 @@ async fn stale_scan_cannot_overwrite_after_lease_expiry() {
 
     let store_a = store.clone();
     let task_a = tokio::spawn(async move {
-        observe_inventory_with_scanner(
-            &store_a,
-            ObserveInventoryOptions::default(),
-            &scanner_a,
-        )
-        .await
+        observe_inventory_with_scanner(&store_a, ObserveInventoryOptions::default(), &scanner_a)
+            .await
     });
 
     entered_a.notified().await;
@@ -636,12 +676,8 @@ async fn waiter_survives_slow_healthy_scan_beyond_thirty_seconds() {
 
     let store_holder = store.clone();
     let holder_task = tokio::spawn(async move {
-        observe_inventory_with_scanner(
-            &store_holder,
-            ObserveInventoryOptions::default(),
-            &holder,
-        )
-        .await
+        observe_inventory_with_scanner(&store_holder, ObserveInventoryOptions::default(), &holder)
+            .await
     });
     entered.notified().await;
 
@@ -669,6 +705,46 @@ async fn waiter_survives_slow_healthy_scan_beyond_thirty_seconds() {
     let waiter_obs = waiter_task.await.unwrap().unwrap();
     assert_eq!(holder_obs.snapshot_id, waiter_obs.snapshot_id);
     assert_eq!(waiter_obs.result_source, ObservationSource::ReusedSnapshot);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lease_renewal_resets_waiter_stall_timeout() {
+    let (_temp, store) = store().await;
+    let holder = "renewing-holder".to_string();
+    assert!(store
+        .try_acquire_lease(holder.clone(), Duration::from_millis(100))
+        .await
+        .unwrap());
+
+    let renewal_store = store.clone();
+    let renewal_holder = holder.clone();
+    let renewal_task = tokio::spawn(async move {
+        for _ in 0..6 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            assert!(renewal_store
+                .renew_lease(renewal_holder.clone(), Duration::from_millis(100))
+                .await
+                .unwrap());
+        }
+        renewal_store.release_lease(renewal_holder).await.unwrap();
+    });
+
+    let scanner = FakeScanner::new(complete_report("6.6", "00:11:22:33:44:55"));
+    let started = std::time::Instant::now();
+    let observation = observe_inventory_with_scanner(
+        &store,
+        ObserveInventoryOptions {
+            lease_wait_timeout: Some(Duration::from_millis(60)),
+            ..ObserveInventoryOptions::default()
+        },
+        &scanner,
+    )
+    .await
+    .unwrap();
+    renewal_task.await.unwrap();
+
+    assert!(started.elapsed() > Duration::from_millis(100));
+    assert_eq!(observation.result_source, ObservationSource::NewFullScan);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

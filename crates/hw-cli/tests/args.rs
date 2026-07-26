@@ -193,7 +193,6 @@ fn maps_unsupported_kind_parse_error_to_contract_exit_code() {
     assert_eq!(classify_parse_error(&err), ExitCode::Unsupported);
 }
 
-
 #[test]
 fn parses_scan_no_optional_sources() {
     let cli = Cli::parse_from(["qurbrix-hw", "scan", "--no-optional-sources"]);

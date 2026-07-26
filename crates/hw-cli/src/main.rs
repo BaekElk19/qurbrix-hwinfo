@@ -34,30 +34,22 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Scan(args) => {
+            // Iron rule: inventory always collects and publishes a complete snapshot.
+            // --kind / --exclude-kind / --no-* only filter stdout after observation.
             let report = observe_or_exit(
                 &args.state_dir,
                 ObserveInventoryOptions {
                     force_full_scan: args.force,
-                    scan_config: ScanConfig {
-                        kinds: if args.kind.is_empty() {
-                            None
-                        } else {
-                            Some(args.kind.clone())
-                        },
-                        exclude_kinds: args.exclude_kind.clone(),
-                        timeout: args.timeout,
-                        optional_sources: !args.no_optional_sources,
-                        include_sources: !args.no_sources,
-                        include_warnings: !args.no_warnings,
-                    },
+                    scan_config: hw_cli::view::inventory_scan_config(args.timeout),
                     ..ObserveInventoryOptions::default()
                 },
             )
             .await;
-            let report = filtered_report(
+            let report = hw_cli::view::filtered_report(
                 report,
                 &args.kind,
                 &args.exclude_kind,
+                args.no_optional_sources,
                 args.no_sources,
                 args.no_warnings,
             );
@@ -155,30 +147,4 @@ async fn observe_or_exit(state_dir: &Path, options: ObserveInventoryOptions) -> 
             std::process::exit(exit_code_for_inventory(&error).code());
         }
     }
-}
-
-fn filtered_report(
-    mut report: ScanReport,
-    kinds: &[hw_model::DeviceKind],
-    excluded_kinds: &[hw_model::DeviceKind],
-    omit_sources: bool,
-    omit_warnings: bool,
-) -> ScanReport {
-    if !kinds.is_empty() {
-        report.devices.retain(|device| kinds.contains(&device.kind));
-    }
-    if !excluded_kinds.is_empty() {
-        report
-            .devices
-            .retain(|device| !excluded_kinds.contains(&device.kind));
-    }
-    if omit_sources {
-        for device in &mut report.devices {
-            device.sources.clear();
-        }
-    }
-    if omit_warnings {
-        report.warnings.clear();
-    }
-    report
 }
