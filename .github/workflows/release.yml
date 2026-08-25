@@ -99,6 +99,7 @@ jobs:
           name: qurbrix-hw-${{ matrix.target }}-glibc${{ matrix.glibc }}
           path: qurbrix-hw-*.tar.gz
           if-no-files-found: error
+          retention-days: 7
 
   release:
     name: publish release
